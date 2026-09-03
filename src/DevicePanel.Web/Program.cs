@@ -34,6 +34,9 @@ builder.Services.AddHostedService<AccountSeeder>();
 
 var app = builder.Build();
 
+app.UseMiddleware<DevicePanel.Web.Auth.AuthenticationGateMiddleware>();
+app.UseStaticFiles();
+
 app.MapHealthEndpoints();
 app.MapAuthEndpoints();
 
