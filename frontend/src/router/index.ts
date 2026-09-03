@@ -71,6 +71,12 @@ const router = createRouter({
           component: () => import('@/views/LogsView.vue'),
           meta: { title: '日志查看' },
         },
+        {
+          path: 'alerts',
+          name: 'alerts',
+          component: () => import('@/views/AlertsView.vue'),
+          meta: { title: '告警配置' },
+        },
       ],
     },
     {
