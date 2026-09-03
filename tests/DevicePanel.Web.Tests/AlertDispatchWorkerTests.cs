@@ -86,7 +86,9 @@ public class AlertDispatchWorkerTests : IDisposable
         var outbox = new AlertOutboxStore(_db.Factory);
         var settings = new AlertSettingsStore(_db.Factory);
         settings.Save(new AlertDeliverySettings(napcat.BaseUrl, "secret", "private", "10001"));
-        var notifier = new NapcatNotifier(settings, new HttpClient { Timeout = TimeSpan.FromSeconds(5) });
+        var notifier = new NapcatNotifier(
+            settings,
+            new HttpClient(new SocketsHttpHandler { UseProxy = false }) { Timeout = TimeSpan.FromSeconds(5) });
         var dispatcher = new AlertDispatcher(outbox, [notifier]);
         var worker = CreateWorker(outbox, notifier);
 
@@ -180,10 +182,31 @@ public class AlertDispatchWorkerTests : IDisposable
 
         public FakeNapcatServer()
         {
-            var port = Random.Shared.Next(30000, 60000);
-            BaseUrl = $"http://127.0.0.1:{port}";
-            _listener.Prefixes.Add($"{BaseUrl}/");
-            _listener.Start();
+            // 随机端口可能撞上出站临时端口（Linux 默认 32768-60999）：连续换端口重试
+            HttpListenerException? lastError = null;
+            for (var attempt = 0; attempt < 8; attempt++)
+            {
+                var port = Random.Shared.Next(20000, 60000);
+                BaseUrl = $"http://127.0.0.1:{port}";
+                _listener.Prefixes.Clear();
+                _listener.Prefixes.Add($"{BaseUrl}/");
+                try
+                {
+                    _listener.Start();
+                    lastError = null;
+                    break;
+                }
+                catch (HttpListenerException ex)
+                {
+                    lastError = ex;
+                }
+            }
+
+            if (lastError is not null)
+            {
+                throw lastError;
+            }
+
             _loop = Task.Run(ListenAsync);
         }
 

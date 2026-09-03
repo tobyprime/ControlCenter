@@ -77,7 +77,6 @@ public class NapcatNotifierTests : IDisposable
         store.Save(settings);
         return new NapcatNotifier(store, new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(5) });
     }
-
     private sealed record RecordedRequest(string Url, string? Authorization, string Body);
 
     private sealed class FakeNapcatHandler(HttpStatusCode status) : HttpMessageHandler
