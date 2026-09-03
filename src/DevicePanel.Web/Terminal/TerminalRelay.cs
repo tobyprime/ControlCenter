@@ -16,7 +16,8 @@ namespace DevicePanel.Web.Terminal;
 /// </summary>
 public sealed class TerminalRelay
 {
-    private const int BrowserFrameLimit = 64 * 1024;
+    /// <summary>单帧上限：覆盖一次性粘贴的场景（base64 膨胀后仍有余量）；超限帧整条丢弃，不终止会话。</summary>
+    private const int BrowserFrameLimit = 256 * 1024;
 
     private readonly long _deviceId;
     private readonly string _operatorName;
@@ -30,6 +31,8 @@ public sealed class TerminalRelay
     private readonly TimeProvider _clock;
     private readonly ILogger _logger;
     private readonly SemaphoreSlim _browserSendLock = new(1, 1);
+    /// <summary>增量 UTF-8 解码器：term.output 按字节分块，跨块切断的多字节序列由此暂存，避免 U+FFFD 乱码。</summary>
+    private readonly Decoder _outputDecoder = Encoding.UTF8.GetDecoder();
     private long _seq;
     private int _closed;
 
@@ -63,13 +66,25 @@ public sealed class TerminalRelay
 
     public string SessionId { get; }
 
+    /// <summary>通道绑定校验：仅接受本会话所属设备通道的下行信封（防跨设备注入）。</summary>
+    public bool AcceptsFrom(IDeviceChannel channel) => ReferenceEquals(channel, _agentChannel);
+
     /// <summary>主循环：浏览器 → agent 泵；浏览器断开即结束会话（operator 关闭）。</summary>
     public async Task RunAsync()
     {
         _connections.ConnectionClosed += OnConnectionClosed;
         try
         {
+            // 留痕先行：无论后续走哪条收尾路径，会话元数据先落库
             RecordOpen();
+
+            // 订阅后复核通道仍是在线通道：封住端点 GetChannel → 此处的断连窗口（agent 恰先断开）
+            if (!ReferenceEquals(_connections.GetChannel(_deviceId), _agentChannel))
+            {
+                await OnAgentDisconnectedAsync().ConfigureAwait(false);
+                return;
+            }
+
             await SendToAgentAsync(AgentMessageTypes.TermOpen, new { sessionId = SessionId, cols = _cols, rows = _rows })
                 .ConfigureAwait(false);
 
@@ -147,13 +162,30 @@ public sealed class TerminalRelay
     {
         var buffer = new byte[BrowserFrameLimit];
         var received = 0;
+        var draining = false;
+        var drainedBytes = 0;
         while (_browser.State == WebSocketState.Open)
         {
-            var result = await _browser.ReceiveAsync(new ArraySegment<byte>(buffer, received, buffer.Length - received), CancellationToken.None)
+            var result = await _browser.ReceiveAsync(new ArraySegment<byte>(buffer, 0, buffer.Length), CancellationToken.None)
                 .ConfigureAwait(false);
             if (result.MessageType == WebSocketMessageType.Close)
             {
                 return; // operator 关闭，finally 兜底收尾
+            }
+
+            if (draining)
+            {
+                // 超长帧的剩余分段继续读完并整条丢弃，会话不受影响
+                drainedBytes += result.Count;
+                if (result.EndOfMessage)
+                {
+                    _logger.LogWarning("终端会话 {SessionId} 丢弃超长浏览器消息（{Bytes} 字节），会话继续", SessionId, received + drainedBytes);
+                    draining = false;
+                    drainedBytes = 0;
+                    received = 0;
+                }
+
+                continue;
             }
 
             received += result.Count;
@@ -161,7 +193,7 @@ public sealed class TerminalRelay
             {
                 if (received >= buffer.Length)
                 {
-                    throw new InvalidOperationException("浏览器消息超长");
+                    draining = true; // 超出上限：本条消息作废
                 }
 
                 continue;
@@ -186,20 +218,30 @@ public sealed class TerminalRelay
         }
 
         if (message.ValueKind != JsonValueKind.Object ||
-            !message.TryGetProperty("type", out var type) ||
-            type.GetString() != "input" ||
-            !message.TryGetProperty("data", out var data) ||
-            data.GetString() is not { } text)
+            !message.TryGetProperty("type", out var type))
         {
             return;
         }
 
-        await SendToAgentAsync(AgentMessageTypes.TermInput, new
+        switch (type.GetString())
         {
-            sessionId = SessionId,
-            data = Convert.ToBase64String(Encoding.UTF8.GetBytes(text)),
-        }).ConfigureAwait(false);
-        Record(TerminalEntryDirections.Input, text);
+            case "input" when message.TryGetProperty("data", out var data) && data.GetString() is { } text:
+                await SendToAgentAsync(AgentMessageTypes.TermInput, new
+                {
+                    sessionId = SessionId,
+                    data = Convert.ToBase64String(Encoding.UTF8.GetBytes(text)),
+                }).ConfigureAwait(false);
+                Record(TerminalEntryDirections.Input, text);
+                break;
+            case "resize" when message.TryGetProperty("cols", out var cols) && message.TryGetProperty("rows", out var rows):
+                await SendToAgentAsync(AgentMessageTypes.TermResize, new
+                {
+                    sessionId = SessionId,
+                    cols = cols.ValueKind == JsonValueKind.Number ? cols.GetInt32() : 80,
+                    rows = rows.ValueKind == JsonValueKind.Number ? rows.GetInt32() : 24,
+                }).ConfigureAwait(false);
+                break;
+        }
     }
 
     private async Task HandleOutputAsync(JsonElement payload)
@@ -222,7 +264,17 @@ public sealed class TerminalRelay
             return;
         }
 
-        var text = Encoding.UTF8.GetString(bytes);
+        // 增量解码：分块边界上的多字节 UTF-8 残缺尾序列由解码器保留到下一帧。
+        // 注意 GetCharCount/GetChars 必须成对调用（即使 count 为 0），否则暂存的残缺序列会被丢弃
+        var charCount = _outputDecoder.GetCharCount(bytes, 0, bytes.Length, flush: false);
+        var chars = new char[charCount];
+        _ = _outputDecoder.GetChars(bytes, 0, bytes.Length, chars, 0, flush: false);
+        if (charCount == 0)
+        {
+            return; // 整帧都是残缺序列的前缀
+        }
+
+        var text = new string(chars);
         Record(TerminalEntryDirections.Output, text);
         await SendToBrowserAsync(new { type = "output", data = text }).ConfigureAwait(false);
     }
@@ -234,26 +286,46 @@ public sealed class TerminalRelay
             return;
         }
 
-        RecordClose(reason);
-        if (sendTermClose && _agentChannel.IsOpen)
-        {
-            await SendToAgentAsync(AgentMessageTypes.TermClose, new { sessionId = SessionId }).ConfigureAwait(false);
-        }
-
         try
         {
-            if (_browser.State == WebSocketState.Open)
+            RecordClose(reason);
+            if (sendTermClose && _agentChannel.IsOpen)
             {
-                await _browser.CloseAsync(WebSocketCloseStatus.NormalClosure, "会话结束", CancellationToken.None)
-                    .ConfigureAwait(false);
+                try
+                {
+                    await SendToAgentAsync(AgentMessageTypes.TermClose, new { sessionId = SessionId }).ConfigureAwait(false);
+                }
+                catch (Exception ex)
+                {
+                    // agent 侧关闭失败（通道已死）不阻断收尾
+                    _logger.LogWarning(ex, "终端会话 {SessionId} 发送 term.close 失败", SessionId);
+                }
+            }
+
+            // 关闭与在途浏览器发送经同一把锁串行化：托管 WS 同一时刻只允许一个 send/close 操作
+            await _browserSendLock.WaitAsync(CancellationToken.None).ConfigureAwait(false);
+            try
+            {
+                if (_browser.State == WebSocketState.Open)
+                {
+                    await _browser.CloseAsync(WebSocketCloseStatus.NormalClosure, "会话结束", CancellationToken.None)
+                        .ConfigureAwait(false);
+                }
+            }
+            finally
+            {
+                _browserSendLock.Release();
             }
         }
-        catch (WebSocketException)
+        catch (Exception ex)
         {
-            // 浏览器侧已断开，忽略
+            // 任何收尾异常（并发操作冲突/WS 异常）都不得影响登记表清理
+            _logger.LogWarning(ex, "终端会话 {SessionId} 浏览器侧关闭失败（会话已按 {Reason} 收尾）", SessionId, reason);
         }
-
-        _sessions.TryRemove(this);
+        finally
+        {
+            _sessions.TryRemove(this);
+        }
     }
 
     private void RecordOpen()

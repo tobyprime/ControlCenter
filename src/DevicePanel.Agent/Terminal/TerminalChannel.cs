@@ -44,6 +44,9 @@ internal sealed class TerminalChannel : ITerminalChannel
                 case AgentMessageTypes.TermInput:
                     await HandleInputAsync(envelope.Payload).ConfigureAwait(false);
                     break;
+                case AgentMessageTypes.TermResize:
+                    HandleResize(envelope.Payload);
+                    break;
                 case AgentMessageTypes.TermClose:
                     HandleClose(envelope.Payload);
                     break;
@@ -147,6 +150,23 @@ internal sealed class TerminalChannel : ITerminalChannel
         }
 
         state.Pty.Write(data);
+    }
+
+    private void HandleResize(JsonElement payload)
+    {
+        var request = JsonSerializer.Deserialize(payload.GetRawText(), AgentJsonContext.Default.TermResizePayload);
+        if (request?.SessionId is not { } sessionId)
+        {
+            return;
+        }
+
+        SessionState? state;
+        lock (_lock)
+        {
+            _sessions.TryGetValue(sessionId, out state);
+        }
+
+        state?.Pty.SetWindowSize(Math.Clamp(request.Cols, 2, 500), Math.Clamp(request.Rows, 2, 200));
     }
 
     private void HandleClose(JsonElement payload)

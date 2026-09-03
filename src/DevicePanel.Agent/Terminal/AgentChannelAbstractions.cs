@@ -11,6 +11,9 @@ internal sealed record TermOpenPayload(string SessionId, int Cols, int Rows);
 /// <summary>term.input 输入负载：data 为 base64 UTF-8 字节（保分块边界）。</summary>
 internal sealed record TermInputPayload(string SessionId, string Data);
 
+/// <summary>term.resize 尺寸变更负载（面板 → agent）。</summary>
+internal sealed record TermResizePayload(string SessionId, int Cols, int Rows);
+
 /// <summary>term.opened 确认负载（agent → 面板）。</summary>
 internal sealed record TermOpenedPayload(string SessionId);
 

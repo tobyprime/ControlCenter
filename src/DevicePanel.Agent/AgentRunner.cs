@@ -13,6 +13,7 @@ namespace DevicePanel.Agent;
 [JsonSerializable(typeof(AuthOkPayload))]
 [JsonSerializable(typeof(TermOpenPayload))]
 [JsonSerializable(typeof(TermInputPayload))]
+[JsonSerializable(typeof(TermResizePayload))]
 [JsonSerializable(typeof(TermOpenedPayload))]
 [JsonSerializable(typeof(TermOutputPayload))]
 [JsonSerializable(typeof(TermClosedPayload))]

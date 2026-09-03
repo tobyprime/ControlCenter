@@ -20,7 +20,7 @@ public abstract class TerminalAgentMessageHandler : IAgentMessageHandler
 
     public Task HandleAsync(AgentChannelContext context, CancellationToken cancellationToken)
     {
-        _sessions.Dispatch(context.Envelope);
+        _sessions.Dispatch(context.Channel, context.Envelope);
         return Task.CompletedTask;
     }
 }

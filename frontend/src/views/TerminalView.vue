@@ -46,6 +46,10 @@ function fitTerminal() {
   if (term && fitAddon && termHost.value) {
     try {
       fitAddon.fit()
+      // 尺寸变更同步到 PTY（term.resize），vim/htop 等 TUI 随窗口重排
+      if (socket?.readyState === WebSocket.OPEN) {
+        socket.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }))
+      }
     } catch {
       // 容器尚未完成布局时忽略
     }

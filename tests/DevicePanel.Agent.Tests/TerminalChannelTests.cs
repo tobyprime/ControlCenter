@@ -79,6 +79,18 @@ public class TerminalChannelTests
     }
 
     [Fact]
+    public async Task Resize_Updates_Pty_Winsize()
+    {
+        var (channel, downlink, factory) = CreateChannel();
+        await channel.HandleAsync(TermOpen("s1", 80, 24), CancellationToken.None);
+        var pty = factory.LastSession!;
+
+        await channel.HandleAsync(TermResize("s1", cols: 132, rows: 43), CancellationToken.None);
+
+        Assert.Equal((132, 43), pty.Resized);
+    }
+
+    [Fact]
     public async Task Close_Kills_Pty()
     {
         var (channel, downlink, factory) = CreateChannel();
@@ -131,6 +143,11 @@ public class TerminalChannelTests
             System.Text.Json.JsonSerializer.SerializeToElement(
                 new TermInputPayload(sessionId, Convert.ToBase64String(Encoding.UTF8.GetBytes(text))),
                 AgentJsonContext.Default.TermInputPayload));
+
+    private static AgentEnvelope TermResize(string sessionId, int cols, int rows) =>
+        AgentEnvelope.Create(AgentMessageTypes.TermResize, 4,
+            System.Text.Json.JsonSerializer.SerializeToElement(new TermResizePayload(sessionId, cols, rows),
+                AgentJsonContext.Default.TermResizePayload));
 
     private static AgentEnvelope TermClose(string sessionId) =>
         AgentEnvelope.Create(AgentMessageTypes.TermClose, 3,
@@ -238,6 +255,7 @@ public class TerminalChannelTests
 
         public List<byte> Written { get; } = new();
         public bool Killed { get; private set; }
+        public (int Cols, int Rows)? Resized { get; private set; }
 
         public void EnqueueOutput(byte[] data)
         {
@@ -263,6 +281,8 @@ public class TerminalChannelTests
             // 与真实实现一致：终止即释放主端流（读端收到 EOF）
             CloseStream();
         }
+
+        public void SetWindowSize(int cols, int rows) => Resized = (cols, rows);
 
         public int Read(byte[] buffer, int offset, int count)
         {

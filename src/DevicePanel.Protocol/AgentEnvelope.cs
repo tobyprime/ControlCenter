@@ -31,6 +31,9 @@ public static class AgentMessageTypes
     /// <summary>终端输出：agent → 面板，payload {sessionId, data}（base64 UTF-8 字节）。</summary>
     public const string TermOutput = "term.output";
 
+    /// <summary>终端尺寸变更：面板 → agent，payload {sessionId, cols, rows}；agent 调整 PTY winsize。</summary>
+    public const string TermResize = "term.resize";
+
     /// <summary>终端关闭请求：面板 → agent，payload {sessionId}。</summary>
     public const string TermClose = "term.close";
 

@@ -105,6 +105,106 @@ public class TerminalWsTests : IDisposable
     }
 
     [Fact]
+    public async Task Multi_Byte_Utf8_Split_Across_Output_Frames_Is_Reassembled()
+    {
+        // 审查问题 1：多字节 UTF-8 字符被 term.output 分块切断时，显示与留痕都不得出现 U+FFFD
+        var (deviceId, agent) = await ConnectAgentAsync();
+        using var browser = await ConnectBrowserAsync(deviceId);
+        var sessionId = (await ReceiveBrowserMessageAsync(browser)).GetProperty("sessionId").GetString()!;
+
+        // "终端ok" 的 UTF-8 字节在第一个字符中间切开（"终" = E7 BB 88）
+        var bytes = Encoding.UTF8.GetBytes("终端ok");
+        var frame1 = Convert.ToBase64String(bytes[..2]);
+        var frame2 = Convert.ToBase64String(bytes[2..]);
+        await agent.SendEnvelopeAsync(AgentEnvelope.Create(AgentMessageTypes.TermOutput, 1,
+            JsonSerializer.SerializeToElement(new { sessionId, data = frame1 })));
+        await agent.SendEnvelopeAsync(AgentEnvelope.Create(AgentMessageTypes.TermOutput, 2,
+            JsonSerializer.SerializeToElement(new { sessionId, data = frame2 })));
+
+        var outputs = new List<string>();
+        while (string.Join("", outputs) != "终端ok")
+        {
+            var message = await ReceiveBrowserMessageAsync(browser);
+            if (message.GetProperty("type").GetString() == "output")
+            {
+                outputs.Add(message.GetProperty("data").GetString() ?? string.Empty);
+            }
+        }
+
+        Assert.Equal("终端ok", string.Join("", outputs));
+        var parts = Store().QueryEntries(sessionId)
+            .Where(e => e.Direction == TerminalEntryDirections.Output)
+            .Select(e => e.Data);
+        var recorded = string.Join("", parts);
+        Assert.Equal("终端ok", recorded);
+        Assert.DoesNotContain('\uFFFD', recorded);
+    }
+
+    [Fact]
+    public async Task Term_Output_From_Other_Device_Channel_Is_Dropped()
+    {
+        // 审查问题 3：设备 A 的通道不得向设备 B 的会话注入输出/记录
+        var (deviceA, agentA) = await ConnectAgentAsync();
+        var (deviceB, agentB) = await ConnectAgentAsync();
+        using var browserB = await ConnectBrowserAsync(deviceB);
+        var sessionB = (await ReceiveBrowserMessageAsync(browserB)).GetProperty("sessionId").GetString()!;
+
+        var injected = Convert.ToBase64String(Encoding.UTF8.GetBytes("injected"));
+        await agentA.SendEnvelopeAsync(AgentEnvelope.Create(AgentMessageTypes.TermOutput, 1,
+            JsonSerializer.SerializeToElement(new { sessionId = sessionB, data = injected })));
+
+        // 合法输出（来自 B 自己的通道）正常到达：证明通道活着，且注入被丢弃
+        var legit = Convert.ToBase64String(Encoding.UTF8.GetBytes("legit"));
+        await agentB.SendEnvelopeAsync(AgentEnvelope.Create(AgentMessageTypes.TermOutput, 2,
+            JsonSerializer.SerializeToElement(new { sessionId = sessionB, data = legit })));
+
+        var received = await ReceiveBrowserMessageAsync(browserB);
+        Assert.Equal("output", received.GetProperty("type").GetString());
+        Assert.Equal("legit", received.GetProperty("data").GetString());
+
+        var recorded = Store().QueryEntries(sessionB)
+            .Where(e => e.Direction == TerminalEntryDirections.Output)
+            .Select(e => e.Data);
+        Assert.DoesNotContain("injected", string.Join("", recorded));
+    }
+
+    [Fact]
+    public async Task Oversized_Browser_Frame_Does_Not_Kill_Session()
+    {
+        // 审查问题 7：超过单帧上限的输入（如一次性粘贴大文本）应被丢弃并告警，不得终止会话
+        var (deviceId, agent) = await ConnectAgentAsync();
+        using var browser = await ConnectBrowserAsync(deviceId);
+        await ReceiveBrowserMessageAsync(browser); // opened
+
+        var bigInput = new string('a', 300 * 1024); // 一帧 ~300KB，超出 256KB 单帧上限
+        await SendBrowserMessageAsync(browser, new { type = "input", data = bigInput });
+        await SendBrowserMessageAsync(browser, new { type = "input", data = "alive" });
+
+        var input = await agent.ReceiveUntilAsync(AgentMessageTypes.TermInput);
+        Assert.Equal("alive", Encoding.UTF8.GetString(Convert.FromBase64String(input.Payload.GetProperty("data").GetString()!)));
+
+        // 后续输入仍可中继：会话未死
+        await SendBrowserMessageAsync(browser, new { type = "input", data = "still" });
+        var next = await agent.ReceiveUntilAsync(AgentMessageTypes.TermInput);
+        Assert.Equal("still", Encoding.UTF8.GetString(Convert.FromBase64String(next.Payload.GetProperty("data").GetString()!)));
+    }
+
+    [Fact]
+    public async Task Browser_Resize_Is_Relayed_As_term_resize()
+    {
+        // 审查问题 5：浏览器窗口尺寸变更 → term.resize 调整 PTY winsize
+        var (deviceId, agent) = await ConnectAgentAsync();
+        using var browser = await ConnectBrowserAsync(deviceId);
+        await ReceiveBrowserMessageAsync(browser); // opened
+
+        await SendBrowserMessageAsync(browser, new { type = "resize", cols = 150, rows = 48 });
+
+        var resize = await agent.ReceiveUntilAsync(AgentMessageTypes.TermResize);
+        Assert.Equal(150, resize.Payload.GetProperty("cols").GetInt32());
+        Assert.Equal(48, resize.Payload.GetProperty("rows").GetInt32());
+    }
+
+    [Fact]
     public async Task Agent_Exit_Notifies_Browser_And_Closes_Session()
     {
         var (deviceId, agent) = await ConnectAgentAsync();

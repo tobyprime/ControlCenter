@@ -9,7 +9,7 @@ internal interface IPtySessionFactory
     IPtySession Create(int cols, int rows);
 }
 
-/// <summary>单个终端会话：可读（shell 输出）、可写（键盘输入）、可终止。</summary>
+/// <summary>单个终端会话：可读（shell 输出）、可写（键盘输入）、可调整窗口、可终止。</summary>
 internal interface IPtySession
 {
     /// <summary>阻塞读取 shell 输出；返回 0 表示会话结束（EOF）。读阻塞期间会话被 Kill 时以 EOF 返回。</summary>
@@ -17,6 +17,9 @@ internal interface IPtySession
 
     /// <summary>写入键盘输入，立即到达 shell。</summary>
     void Write(byte[] data);
+
+    /// <summary>调整 PTY 窗口尺寸（TIOCSWINSZ），驱动 shell 重绘（vim/htop 等 TUI）。</summary>
+    void SetWindowSize(int cols, int rows);
 
     /// <summary>终止会话：释放 PTY 主端并确保子进程被回收。</summary>
     void Kill();
@@ -297,6 +300,16 @@ internal sealed class LinuxPtySessionFactory : IPtySessionFactory
 
                 offset += written;
             }
+        }
+
+        public void SetWindowSize(int cols, int rows)
+        {
+            var winsize = new Winsize
+            {
+                ws_col = (ushort)Math.Clamp(cols, 2, 500),
+                ws_row = (ushort)Math.Clamp(rows, 2, 200),
+            };
+            _ = ioctl(_masterFd, Tiocswinsz, ref winsize);
         }
 
         public void Kill()

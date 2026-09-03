@@ -87,7 +87,7 @@ onMounted(async () => {
     <div class="records-header">
       <div>
         <h1 class="records-title">终端留痕</h1>
-        <p class="records-description">回答「何时在哪台设备执行过什么」：会话元数据 + 命令与输出留档。</p>
+        <p class="records-description">回答「何时在哪台设备执行过什么」：会话元数据 + 命令与输出留档。注意：键盘输入逐字入档，口令类输入也会以明文留痕，请留意敏感操作。</p>
       </div>
       <div class="records-controls">
         <select v-model.number="selectedDeviceId" class="control-select">

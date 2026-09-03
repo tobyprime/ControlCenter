@@ -52,7 +52,10 @@ src/DevicePanel.Agent/Terminal  终端通道（TOB-339）
 ### 终端通道 term.*（TOB-339 已实现）
 
 会话由面板侧发起并生成 `sessionId`（GUID 文本），agent 按 sessionId 维护 PTY shell；
-`data` 一律为 base64 编码字节（UTF-8 分块边界安全），响应沿用请求的 `seq`。
+`data` 一律为 base64 编码字节（UTF-8 分块边界安全）。seq 约定：term.* 各端均使用自身单调自增序号，
+不做请求-响应 seq 关联（会话消息靠 sessionId 关联，与 auth 这类请求型消息不同）。
+面板中继对 `term.output` 做增量 UTF-8 解码，多字节字符跨分块不产生乱码；下行投递校验来源设备通道，
+仅接受会话所属通道的信封（防跨设备注入）。
 
 | type | 方向 | payload | 说明 |
 |---|---|---|---|
@@ -60,6 +63,7 @@ src/DevicePanel.Agent/Terminal  终端通道（TOB-339）
 | `term.opened` | agent → 面板 | `{sessionId}` | PTY 就绪确认 |
 | `term.input` | 面板 → agent | `{sessionId, data}` | 键盘输入（base64） |
 | `term.output` | agent → 面板 | `{sessionId, data}` | shell 输出（base64，≤4KB/帧流式回发） |
+| `term.resize` | 面板 → agent | `{sessionId, cols, rows}` | 浏览器视口变更时调整 PTY winsize（TIOCSWINSZ） |
 | `term.close` | 面板 → agent | `{sessionId}` | 关闭会话（PTY 主端释放 + SIGTERM→SIGKILL 回收） |
 | `term.closed` | agent → 面板 | `{sessionId}` | 会话结束（shell 退出或关闭完成） |
 | `term.error` | agent → 面板 | `{sessionId, message}` | 打开失败等错误（不中断连接与节拍） |
