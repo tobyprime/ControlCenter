@@ -54,11 +54,13 @@ builder.Configuration.GetSection(MetricsOptions.SectionName).Bind(metricsOptions
 builder.Services.AddSingleton(metricsOptions);
 builder.Services.AddSingleton<IMetricsStore, MetricsStore>();
 builder.Services.AddSingleton<IAgentMessageHandler, MetricsMessageHandler>();
-builder.Services.AddSingleton<MetricsRetentionService>();
-builder.Services.AddHostedService(sp => sp.GetRequiredService<MetricsRetentionService>());
 
 builder.Services.AddHostedService<DatabaseInitializer>();
 builder.Services.AddHostedService<AccountSeeder>();
+
+// 清理任务依赖迁移完成后的表结构：必须排在 DatabaseInitializer 之后启动
+builder.Services.AddSingleton<MetricsRetentionService>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<MetricsRetentionService>());
 
 var app = builder.Build();
 

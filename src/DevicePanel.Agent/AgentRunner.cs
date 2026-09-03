@@ -120,40 +120,64 @@ public sealed class AgentRunner
         await _output.WriteLineAsync($"认证成功：设备 #{authOk?.DeviceId}（{authOk?.Name}），心跳与指标上报周期 {_options.HeartbeatIntervalSeconds}s")
             .ConfigureAwait(false);
 
-        // 消息循环：心跳到期即发送心跳与指标快照；收到面板下行消息按 type 处理（后续终端/日志在此扩展）
+        await MessageLoopAsync(socket, startedAt, cancellationToken).ConfigureAwait(false);
+        return ConnectResult.ConnectionLost;
+    }
+
+    /// <summary>
+    /// 消息循环：下行接收用独立任务持续等待，心跳/指标按 PeriodicTimer 节拍发送，两者并发（ClientWebSocket 允许一收一发并行）。
+    /// 关键约束：不能取消挂起的 ReceiveAsync——取消会直接中止 ClientWebSocket 连接（State=Aborted），
+    /// 心跳与指标将永远不会发出（回归锚：AgentRunnerLoopTests）。
+    /// </summary>
+    private async Task MessageLoopAsync(ClientWebSocket socket, DateTimeOffset startedAt, CancellationToken cancellationToken)
+    {
         var heartbeatInterval = TimeSpan.FromSeconds(_options.HeartbeatIntervalSeconds);
-        var nextHeartbeat = DateTimeOffset.UtcNow + heartbeatInterval;
-        while (socket.State == WebSocketState.Open && !cancellationToken.IsCancellationRequested)
+        using var heartbeatTimer = new PeriodicTimer(heartbeatInterval);
+        using var sessionCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        var seq = 0L;
+        Task<AgentEnvelope?>? inboundTask = null;
+        try
         {
-            AgentEnvelope? inbound;
-            var dueIn = nextHeartbeat - DateTimeOffset.UtcNow;
-            if (dueIn > TimeSpan.Zero)
+            while (socket.State == WebSocketState.Open && !cancellationToken.IsCancellationRequested)
             {
-                inbound = await ReceiveAsync(socket, cancellationToken, dueIn).ConfigureAwait(false);
-                if (inbound is null && socket.State != WebSocketState.Open)
+                inboundTask ??= ReceiveAsync(socket, sessionCts.Token);
+                var tickTask = heartbeatTimer.WaitForNextTickAsync(cancellationToken).AsTask();
+                var completed = await Task.WhenAny(inboundTask, tickTask).ConfigureAwait(false);
+                if (completed == inboundTask)
                 {
-                    break;
+                    var inbound = await inboundTask.ConfigureAwait(false);
+                    inboundTask = null;
+                    if (inbound is null)
+                    {
+                        break; // 连接关闭或异常断开
+                    }
+
+                    await HandleInboundAsync(inbound).ConfigureAwait(false);
+                    continue;
+                }
+
+                await SendAsync(socket, AgentMessageTypes.Heartbeat, ++seq,
+                    new HeartbeatPayload((long)(DateTimeOffset.UtcNow - startedAt).TotalSeconds),
+                    AgentJsonContext.Default.HeartbeatPayload, cancellationToken).ConfigureAwait(false);
+                await SendMetricsReportAsync(socket, ++seq, cancellationToken).ConfigureAwait(false);
+            }
+        }
+        finally
+        {
+            // 收尾：取消仍挂起的接收并等待其结束（取消在连接关闭场景才发生，中止无需顾虑）
+            sessionCts.Cancel();
+            if (inboundTask is not null)
+            {
+                try
+                {
+                    await inboundTask.ConfigureAwait(false);
+                }
+                catch (Exception)
+                {
+                    // 收尾排空：连接已无关紧要
                 }
             }
-            else
-            {
-                inbound = null;
-            }
-
-            if (inbound is not null)
-            {
-                await HandleInboundAsync(inbound).ConfigureAwait(false);
-                continue;
-            }
-
-            await SendAsync(socket, AgentMessageTypes.Heartbeat, ++seq,
-                new HeartbeatPayload((long)(DateTimeOffset.UtcNow - startedAt).TotalSeconds),
-                AgentJsonContext.Default.HeartbeatPayload, cancellationToken).ConfigureAwait(false);
-            await SendMetricsReportAsync(socket, ++seq, cancellationToken).ConfigureAwait(false);
-            nextHeartbeat = DateTimeOffset.UtcNow + heartbeatInterval;
         }
-
-        return ConnectResult.ConnectionLost;
     }
 
     /// <summary>采集指标并按 metrics.report 上报；采集失败时跳过本周期，不影响心跳与连接。</summary>
@@ -195,17 +219,15 @@ public sealed class AgentRunner
         await socket.SendAsync(bytes, WebSocketMessageType.Text, endOfMessage: true, ct).ConfigureAwait(false);
     }
 
-    private static async Task<AgentEnvelope?> ReceiveAsync(ClientWebSocket socket, CancellationToken ct, TimeSpan? timeout = null)
+    private async Task<AgentEnvelope?> ReceiveAsync(ClientWebSocket socket, CancellationToken ct)
     {
-        using var receiveCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        receiveCts.CancelAfter(timeout ?? Timeout.InfiniteTimeSpan);
         var buffer = new byte[64 * 1024];
         var received = 0;
         try
         {
             while (true)
             {
-                var result = await socket.ReceiveAsync(new ArraySegment<byte>(buffer, received, buffer.Length - received), receiveCts.Token)
+                var result = await socket.ReceiveAsync(new ArraySegment<byte>(buffer, received, buffer.Length - received), ct)
                     .ConfigureAwait(false);
                 if (result.MessageType == WebSocketMessageType.Close)
                 {
@@ -219,9 +241,13 @@ public sealed class AgentRunner
                 }
             }
         }
-        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        catch (OperationCanceledException)
         {
-            return null; // 等待下行消息超时 → 视为心跳到期
+            return null; // 会话收尾时被取消
+        }
+        catch (WebSocketException)
+        {
+            return null; // 连接异常断开，由外层按断线处理
         }
     }
 }
