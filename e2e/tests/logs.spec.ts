@@ -9,6 +9,17 @@ interface TailRequestRecord {
   lines: number
 }
 
+interface FakeLogService {
+  name: string
+  kind: string
+  description: string
+}
+
+const DEFAULT_LOG_SERVICES: FakeLogService[] = [
+  { name: 'nginx.service', kind: 'systemd', description: 'A high performance web server' },
+  { name: 'web', kind: 'docker', description: 'nginx:1.27（Up 2 hours）' },
+]
+
 declare global {
   interface Window {
     __logTailRequests?: TailRequestRecord[]
@@ -36,9 +47,9 @@ async function createDeviceViaApi(page: Page, name: string): Promise<{ id: numbe
  * 收到 logs.services.request → 回服务清单；收到 logs.tail.request → 回两行日志（1 error + 1 info），
  * 并把请求参数记录到 window.__logTailRequests 供断言 N 可调与查询参数正确。
  */
-async function startLogsAgent(page: Page, token: string) {
+async function startLogsAgent(page: Page, token: string, services: FakeLogService[] = DEFAULT_LOG_SERVICES) {
   await page.evaluate(
-    (token) =>
+    ({ token, services }) =>
       new Promise<void>((resolve, reject) => {
         window.__logTailRequests = []
         const ws = new WebSocket(`ws://${location.host}/agent/ws`)
@@ -55,12 +66,7 @@ async function startLogsAgent(page: Page, token: string) {
               JSON.stringify({
                 type: 'logs.services.response',
                 seq: envelope.seq,
-                payload: {
-                  services: [
-                    { name: 'nginx.service', kind: 'systemd', description: 'A high performance web server' },
-                    { name: 'web', kind: 'docker', description: 'nginx:1.27（Up 2 hours）' },
-                  ],
-                },
+                payload: { services },
               }),
             )
           } else if (envelope.type === 'logs.tail.request') {
@@ -80,7 +86,7 @@ async function startLogsAgent(page: Page, token: string) {
           }
         }
       }),
-    token,
+    { token, services },
   )
 }
 
@@ -159,5 +165,39 @@ test.describe('日志查看（TOB-340）', () => {
     await deviceSelect.selectOption({ label: `${deviceName}（离线）` })
 
     await expect(page.getByText('设备离线，无法获取日志')).toBeVisible({ timeout: 15_000 })
+  })
+
+  test('跨来源同名服务可分别选中，拉取 kind 与所选条目一致（阶段 1 审查问题 1）', async ({ page }) => {
+    await login(page)
+
+    const deviceName = `同名服务验收机 ${Date.now()}`
+    const device = await createDeviceViaApi(page, deviceName)
+    // systemd unit 与 docker 容器同名（容器名允许含 "."）：两个条目 name 相同、kind 不同
+    await startLogsAgent(page, device.agentToken, [
+      { name: 'nginx.service', kind: 'systemd', description: 'A high performance web server' },
+      { name: 'nginx.service', kind: 'docker', description: 'nginx:1.27（Up 2 hours）' },
+    ])
+
+    await page.getByRole('link', { name: '日志查看' }).click()
+    await expect(page.getByRole('heading', { name: '日志查看' })).toBeVisible()
+
+    const deviceSelect = page.locator('.logs-controls .control-select').first()
+    await deviceSelect.selectOption({ label: deviceName })
+
+    const serviceSelect = page.locator('.control-service select')
+    await expect(serviceSelect.locator('option')).toHaveCount(2)
+
+    // 选中 docker 条目：发出的拉取请求 kind 必须是 docker
+    await serviceSelect.selectOption({ label: 'nginx.service（docker · nginx:1.27（Up 2 hours））' })
+    await expect(page.getByText('connect() failed (111: Connection refused)')).toBeVisible()
+    let tailRequests = await page.evaluate(() => window.__logTailRequests ?? [])
+    expect(tailRequests.length).toBeGreaterThanOrEqual(1)
+    expect(tailRequests[tailRequests.length - 1]).toMatchObject({ service: 'nginx.service', kind: 'docker', lines: 200 })
+
+    // 选回 systemd 条目：kind 跟随所选条目变化
+    await serviceSelect.selectOption({ label: 'nginx.service（systemd · A high performance web server）' })
+    await expect(page.getByText('connect() failed (111: Connection refused)')).toBeVisible()
+    tailRequests = await page.evaluate(() => window.__logTailRequests ?? [])
+    expect(tailRequests[tailRequests.length - 1]).toMatchObject({ service: 'nginx.service', kind: 'systemd' })
   })
 })

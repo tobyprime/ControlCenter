@@ -28,8 +28,14 @@ const errorMessage = ref('')
 const tailError = ref('')
 let fetchToken = 0
 
+// 服务条目以 kind+name 唯一确定：systemd unit 与 docker 容器跨来源同名时（容器名允许含 "."）
+// 仅按 name 定位会静默命中另一来源的条目；kind 取值限定 systemd/docker，不含分隔符 '/'
+function serviceKey(service: LogServiceInfo): string {
+  return `${service.kind}/${service.name}`
+}
+
 const selectedServiceInfo = computed<LogServiceInfo | null>(
-  () => services.value.find((s) => s.name === selectedService.value) ?? null,
+  () => services.value.find((s) => serviceKey(s) === selectedService.value) ?? null,
 )
 
 function serviceLabel(service: LogServiceInfo): string {
@@ -86,7 +92,7 @@ async function loadServices(): Promise<void> {
   try {
     services.value = await listLogServices(deviceId)
     if (services.value.length > 0) {
-      await selectService(services.value[0].name)
+      await selectService(serviceKey(services.value[0]))
     }
   } catch (e) {
     tailError.value = e instanceof Error ? e.message : '服务清单获取失败'
@@ -95,8 +101,8 @@ async function loadServices(): Promise<void> {
   }
 }
 
-async function selectService(name: string): Promise<void> {
-  selectedService.value = name
+async function selectService(key: string): Promise<void> {
+  selectedService.value = key
   await refresh()
 }
 
@@ -177,7 +183,7 @@ onBeforeUnmount(() => {
         >
           <option v-if="loadingServices" value="">服务清单加载中…</option>
           <option v-else-if="services.length === 0" value="">（无可查看的服务）</option>
-          <option v-for="service in services" :key="service.kind + service.name" :value="service.name">
+          <option v-for="service in services" :key="serviceKey(service)" :value="serviceKey(service)">
             {{ serviceLabel(service) }}
           </option>
         </select>
