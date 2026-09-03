@@ -1,3 +1,5 @@
+using DevicePanel.Protocol;
+
 namespace DevicePanel.Web.Devices;
 
 /// <summary>
@@ -6,8 +8,6 @@ namespace DevicePanel.Web.Devices;
 /// </summary>
 public sealed class HeartbeatMessageHandler : IAgentMessageHandler
 {
-    public const string Type = "heartbeat";
-
     private readonly IDeviceRegistry _devices;
     private readonly AgentConnectionRegistry _connections;
     private readonly TimeProvider _clock;
@@ -19,7 +19,8 @@ public sealed class HeartbeatMessageHandler : IAgentMessageHandler
         _clock = clock;
     }
 
-    public string MessageType => Type;
+    // 协议字符串以 DevicePanel.Protocol.AgentMessageTypes 为唯一事实源，处理器不重复定义
+    public string MessageType => AgentMessageTypes.Heartbeat;
 
     public Task HandleAsync(AgentChannelContext context, CancellationToken cancellationToken)
     {
