@@ -1,0 +1,71 @@
+using DevicePanel.Web.Devices;
+using DevicePanel.Web.Metrics;
+using Microsoft.Extensions.Time.Testing;
+using Xunit;
+
+namespace DevicePanel.Web.Tests;
+
+/// <summary>保留策略：超过保留期（默认 30 天）的明细与聚合被清理任务删除，期内数据保留（验收 4）。</summary>
+public class MetricsRetentionTests : IDisposable
+{
+    private readonly TempSqliteDatabase _database = new();
+    private readonly FakeTimeProvider _clock = new(new DateTimeOffset(2026, 9, 3, 12, 0, 0, TimeSpan.Zero));
+    private readonly long _deviceId;
+
+    public MetricsRetentionTests()
+    {
+        _deviceId = new DeviceRegistry(_database.Factory, _clock).Create("保留期设备", []).Device.Id;
+    }
+
+    public void Dispose() => _database.Dispose();
+
+    private MetricsRetentionService CreateService(int retentionDays = 30)
+    {
+        var options = new MetricsOptions { RetentionDays = retentionDays };
+        return new MetricsRetentionService(_database.Factory, options, _clock);
+    }
+
+    [Fact]
+    public void CleanupOnce_Deletes_Expired_Data_And_Keeps_Recent()
+    {
+        var store = new MetricsStore(_database.Factory);
+        var recent = _clock.GetUtcNow().AddDays(-2);
+        var expired = _clock.GetUtcNow().AddDays(-45);
+        store.Insert(_deviceId, recent, new MetricsPoint(recent, 10, 20, 30, 100, 200));
+        store.Insert(_deviceId, expired, new MetricsPoint(expired, 99, 20, 30, 100, 200));
+
+        var service = CreateService();
+        var result = service.CleanupOnceAsync(CancellationToken.None).GetAwaiter().GetResult();
+
+        Assert.Equal(1, result.DetailDeleted);
+        Assert.Equal(1, result.HourlyDeleted);
+        Assert.Equal(1, result.DailyDeleted);
+        Assert.Single(store.QueryRaw(_deviceId, recent.AddMinutes(-1), recent.AddMinutes(1)));
+        Assert.Empty(store.QueryRaw(_deviceId, expired.AddMinutes(-1), expired.AddMinutes(1)));
+    }
+
+    [Fact]
+    public void CleanupOnce_Respects_Configured_Retention_Days()
+    {
+        var store = new MetricsStore(_database.Factory);
+        var withinDefault = _clock.GetUtcNow().AddDays(-20);
+        store.Insert(1, withinDefault, new MetricsPoint(withinDefault, 10, 20, 30, 100, 200));
+
+        // 保留期缩到 7 天后，20 天前的数据应被清理
+        var service = CreateService(retentionDays: 7);
+        var result = service.CleanupOnceAsync(CancellationToken.None).GetAwaiter().GetResult();
+
+        Assert.Equal(1, result.DetailDeleted);
+        Assert.Empty(store.QueryRaw(_deviceId, withinDefault.AddMinutes(-1), withinDefault.AddMinutes(1)));
+    }
+
+    [Fact]
+    public async Task CleanupOnce_On_Empty_Database_Is_Noop()
+    {
+        var service = CreateService();
+
+        var result = await service.CleanupOnceAsync(CancellationToken.None);
+
+        Assert.Equal(new MetricsCleanupResult(0, 0, 0), result);
+    }
+}

@@ -2,6 +2,7 @@ using DevicePanel.Web.Auth;
 using DevicePanel.Web.Devices;
 using DevicePanel.Web.Endpoints;
 using DevicePanel.Web.Infrastructure;
+using DevicePanel.Web.Metrics;
 
 // wwwroot 双候选解析：发布产物从仓库根目录运行时，静态文件回退到应用目录自带的 wwwroot。
 // 解析不到时保持宿主默认探测（如 WebApplicationFactory 场景）；ContentRoot 一律不覆盖。
@@ -47,6 +48,15 @@ builder.Services.AddSingleton<AgentMessageDispatcher>();
 builder.Services.AddSingleton<HeartbeatMonitor>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<HeartbeatMonitor>());
 
+// 指标采集：入库（明细 + 小时/天聚合）、查询与过期清理
+var metricsOptions = new MetricsOptions();
+builder.Configuration.GetSection(MetricsOptions.SectionName).Bind(metricsOptions);
+builder.Services.AddSingleton(metricsOptions);
+builder.Services.AddSingleton<IMetricsStore, MetricsStore>();
+builder.Services.AddSingleton<IAgentMessageHandler, MetricsMessageHandler>();
+builder.Services.AddSingleton<MetricsRetentionService>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<MetricsRetentionService>());
+
 builder.Services.AddHostedService<DatabaseInitializer>();
 builder.Services.AddHostedService<AccountSeeder>();
 
@@ -59,6 +69,7 @@ app.UseWebSockets();
 app.MapHealthEndpoints();
 app.MapAuthEndpoints();
 app.MapDeviceEndpoints();
+app.MapMetricsEndpoints();
 app.MapAgentWsEndpoints();
 
 app.Run();
