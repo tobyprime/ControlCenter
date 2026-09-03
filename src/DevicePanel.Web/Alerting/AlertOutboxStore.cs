@@ -27,8 +27,6 @@ public interface IAlertOutboxStore
     void RecordFailure(long id, string error, DateTimeOffset nowUtc);
 
     IReadOnlyList<AlertOutboxEntry> List();
-
-    long Count();
 }
 
 /// <summary>
@@ -97,14 +95,6 @@ public sealed class AlertOutboxStore : IAlertOutboxStore
         }
 
         return entries;
-    }
-
-    public long Count()
-    {
-        using var connection = _connectionFactory.CreateOpenConnection();
-        using var command = connection.CreateCommand();
-        command.CommandText = "SELECT COUNT(*) FROM alert_outbox";
-        return (long)(command.ExecuteScalar() ?? 0L);
     }
 
     private AlertOutboxEntry? ReadOne(string sql)

@@ -39,7 +39,7 @@ public class OfflineAlertScannerTests : IDisposable
         // 复用离线判定：连续 2 个心跳周期（默认 60s）无心跳即离线
         _clock.Advance(_agentOptions.OfflineAfter + TimeSpan.FromSeconds(1));
         await _scanner.ScanOnceAsync(CancellationToken.None);
-        Assert.Equal(1, _outbox.Count());
+        Assert.Single(_outbox.List());
         var alert = _outbox.PeekOldest()!;
         Assert.Contains("边界路由", alert.Message.Content);
         Assert.Equal(NapcatNotifier.ChannelNameValue, alert.Channel);
@@ -48,7 +48,7 @@ public class OfflineAlertScannerTests : IDisposable
         _clock.Advance(TimeSpan.FromMinutes(30));
         await _scanner.ScanOnceAsync(CancellationToken.None);
         await _scanner.ScanOnceAsync(CancellationToken.None);
-        Assert.Equal(1, _outbox.Count());
+        Assert.Single(_outbox.List());
     }
 
     [Fact]
@@ -58,17 +58,17 @@ public class OfflineAlertScannerTests : IDisposable
 
         _clock.Advance(_agentOptions.OfflineAfter + TimeSpan.FromSeconds(1));
         await _scanner.ScanOnceAsync(CancellationToken.None);
-        Assert.Equal(1, _outbox.Count());
+        Assert.Single(_outbox.List());
 
         // 恢复在线
         _devices.Touch(deviceId, _clock.GetUtcNow());
         await _scanner.ScanOnceAsync(CancellationToken.None);
-        Assert.Equal(1, _outbox.Count());
+        Assert.Single(_outbox.List());
 
         // 再次离线：新事件重新告警
         _clock.Advance(_agentOptions.OfflineAfter + TimeSpan.FromSeconds(1));
         await _scanner.ScanOnceAsync(CancellationToken.None);
-        Assert.Equal(2, _outbox.Count());
+        Assert.Equal(2, _outbox.List().Count());
     }
 
     [Fact]
@@ -77,7 +77,7 @@ public class OfflineAlertScannerTests : IDisposable
         _devices.Create("从未接入的设备", ["待部署"]);
         _clock.Advance(TimeSpan.FromHours(1));
         await _scanner.ScanOnceAsync(CancellationToken.None);
-        Assert.Equal(0, _outbox.Count());
+        Assert.Empty(_outbox.List());
     }
 
     [Fact]
@@ -86,7 +86,7 @@ public class OfflineAlertScannerTests : IDisposable
         await CreateOnlineDeviceAsync("在线设备");
         _clock.Advance(TimeSpan.FromSeconds(30));
         await _scanner.ScanOnceAsync(CancellationToken.None);
-        Assert.Equal(0, _outbox.Count());
+        Assert.Empty(_outbox.List());
     }
 
     [Fact]
@@ -95,7 +95,7 @@ public class OfflineAlertScannerTests : IDisposable
         await CreateOnlineDeviceAsync("重启存活设备");
         _clock.Advance(_agentOptions.OfflineAfter + TimeSpan.FromSeconds(1));
         await _scanner.ScanOnceAsync(CancellationToken.None);
-        Assert.Equal(1, _outbox.Count());
+        Assert.Single(_outbox.List());
 
         var restarted = new OfflineAlertScanner(
             _devices,
@@ -107,7 +107,7 @@ public class OfflineAlertScannerTests : IDisposable
             Microsoft.Extensions.Logging.Abstractions.NullLogger<OfflineAlertScanner>.Instance);
         await restarted.ScanOnceAsync(CancellationToken.None);
 
-        Assert.Equal(1, _outbox.Count());
+        Assert.Single(_outbox.List());
     }
 
     private async Task<long> CreateOnlineDeviceAsync(string name)

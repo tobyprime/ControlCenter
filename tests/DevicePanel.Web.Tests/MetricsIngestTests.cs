@@ -92,7 +92,7 @@ public class MetricsIngestTests : IDisposable
         Assert.Contains("96", entry.Message.Content);
 
         // 恢复（回落到阈值下）后，新一轮事件才重新告警；持续越限期间不重发
-        Assert.Equal(1, outbox.Count());
+        Assert.Single(outbox.List());
     }
 
     [Fact]

@@ -41,7 +41,7 @@ public class AlertDispatchWorkerTests : IDisposable
         ShouldBe(await worker.ProcessOnceAsync(CancellationToken.None), HadPending: false, Success: false);
 
         Assert.Equal(["告警一", "告警二"], notifier.Sent.Select(m => m.Title));
-        Assert.Equal(0, outbox.Count());
+        Assert.Empty(outbox.List());
     }
 
     [Fact]
@@ -101,7 +101,7 @@ public class AlertDispatchWorkerTests : IDisposable
         ShouldBe(await worker.ProcessOnceAsync(CancellationToken.None), HadPending: true, Success: false);
         ShouldBe(await worker.ProcessOnceAsync(CancellationToken.None), HadPending: true, Success: false);
         // 核心契约（FIFO）：napcat 停止期间只重试队头，但两条都完整保留在队列可见
-        Assert.Equal(2, outbox.Count());
+        Assert.Equal(2, outbox.List().Count());
         var queued = outbox.List();
         Assert.Equal(2, queued[0].Attempts);
         Assert.Equal(0, queued[1].Attempts);
@@ -114,7 +114,7 @@ public class AlertDispatchWorkerTests : IDisposable
         ShouldBe(await worker.ProcessOnceAsync(CancellationToken.None), HadPending: true, Success: true);
         ShouldBe(await worker.ProcessOnceAsync(CancellationToken.None), HadPending: false, Success: false);
 
-        Assert.Equal(0, outbox.Count());
+        Assert.Empty(outbox.List());
         var delivered = napcat.Requests.ToArray();
         // 4 次 = 停机期 2 次失败重试 + 恢复后 2 次补发成功；补发顺序与产生顺序一致
         Assert.Equal(4, delivered.Length);
@@ -137,7 +137,7 @@ public class AlertDispatchWorkerTests : IDisposable
         var restarted = CreateWorker(new AlertOutboxStore(_db.Factory), notifier);
         ShouldBe(await restarted.ProcessOnceAsync(CancellationToken.None), HadPending: true, Success: true);
         Assert.Equal("停机告警", Assert.Single(notifier.Sent).Title);
-        Assert.Equal(0, outbox.Count());
+        Assert.Empty(outbox.List());
     }
 
     private static void ShouldBe(DispatchOutcome outcome, bool HadPending, bool Success)
@@ -182,31 +182,7 @@ public class AlertDispatchWorkerTests : IDisposable
 
         public FakeNapcatServer()
         {
-            // 随机端口可能撞上出站临时端口（Linux 默认 32768-60999）：连续换端口重试
-            HttpListenerException? lastError = null;
-            for (var attempt = 0; attempt < 8; attempt++)
-            {
-                var port = Random.Shared.Next(20000, 60000);
-                BaseUrl = $"http://127.0.0.1:{port}";
-                _listener.Prefixes.Clear();
-                _listener.Prefixes.Add($"{BaseUrl}/");
-                try
-                {
-                    _listener.Start();
-                    lastError = null;
-                    break;
-                }
-                catch (HttpListenerException ex)
-                {
-                    lastError = ex;
-                }
-            }
-
-            if (lastError is not null)
-            {
-                throw lastError;
-            }
-
+            BaseUrl = StartOnFreePort();
             _loop = Task.Run(ListenAsync);
         }
 
@@ -220,6 +196,28 @@ public class AlertDispatchWorkerTests : IDisposable
         {
             get => (HttpStatusCode)Interlocked.CompareExchange(ref _status, 0, 0);
             set => Interlocked.Exchange(ref _status, (int)value);
+        }
+
+        /// <summary>随机端口可能撞上出站临时端口（Linux 默认 32768-60999）：连续换端口重试。</summary>
+        private string StartOnFreePort()
+        {
+            for (var attempt = 0; attempt < 8; attempt++)
+            {
+                var baseUrl = $"http://127.0.0.1:{Random.Shared.Next(20000, 60000)}";
+                _listener.Prefixes.Clear();
+                _listener.Prefixes.Add($"{baseUrl}/");
+                try
+                {
+                    _listener.Start();
+                    return baseUrl;
+                }
+                catch (HttpListenerException)
+                {
+                    // 端口被占：换下一个候选端口
+                }
+            }
+
+            throw new InvalidOperationException("无法为假 napcat 分配可用监听端口");
         }
 
         private async Task ListenAsync()

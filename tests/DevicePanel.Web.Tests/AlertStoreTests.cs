@@ -29,7 +29,7 @@ public class AlertStoreTests : IDisposable
         var second = store.PeekOldest();
         Assert.NotNull(second);
         Assert.Equal("标题二", second!.Message.Title);
-        Assert.Equal(1, store.Count());
+        Assert.Single(store.List());
     }
 
     [Fact]
@@ -47,7 +47,7 @@ public class AlertStoreTests : IDisposable
         var after = store.PeekOldest()!;
         Assert.Equal(2, after.Attempts);
         Assert.Equal("连接被拒绝", after.LastError);
-        Assert.Equal(1, store.Count());
+        Assert.Single(store.List());
     }
 
     [Fact]
@@ -60,7 +60,7 @@ public class AlertStoreTests : IDisposable
 
         // 模拟面板重启：同一数据库上的新实例必须看到全部待发行（无丢失契约）
         var reopened = new AlertOutboxStore(_db.Factory);
-        Assert.Equal(2, reopened.Count());
+        Assert.Equal(2, reopened.List().Count());
         Assert.Equal("告警一", reopened.PeekOldest()!.Message.Content);
         Assert.Equal(1, reopened.PeekOldest()!.Attempts);
     }

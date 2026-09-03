@@ -48,7 +48,7 @@ public class ThresholdAlertEvaluatorTests : IDisposable
             _clock.Advance(TimeSpan.FromSeconds(30));
         }
 
-        Assert.Equal(0, _outbox.Count());
+        Assert.Empty(_outbox.List());
     }
 
     [Fact]
@@ -59,7 +59,7 @@ public class ThresholdAlertEvaluatorTests : IDisposable
         _evaluator.Evaluate(_deviceId, Point(cpu: 95), _clock.GetUtcNow());
 
         // 30s < 默认持续 60s：尚不告警
-        Assert.Equal(0, _outbox.Count());
+        Assert.Empty(_outbox.List());
     }
 
     [Fact]
@@ -71,7 +71,7 @@ public class ThresholdAlertEvaluatorTests : IDisposable
         _clock.Advance(TimeSpan.FromSeconds(31));
         _evaluator.Evaluate(_deviceId, Point(cpu: 97), _clock.GetUtcNow());
 
-        Assert.Equal(1, _outbox.Count());
+        Assert.Single(_outbox.List());
         var alert = _outbox.PeekOldest()!;
         Assert.Equal(NapcatNotifier.ChannelNameValue, alert.Channel);
         Assert.Contains(_deviceName, alert.Message.Content);
@@ -84,7 +84,7 @@ public class ThresholdAlertEvaluatorTests : IDisposable
         _evaluator.Evaluate(_deviceId, Point(cpu: 98), _clock.GetUtcNow());
         _clock.Advance(TimeSpan.FromMinutes(10));
         _evaluator.Evaluate(_deviceId, Point(cpu: 99), _clock.GetUtcNow());
-        Assert.Equal(1, _outbox.Count());
+        Assert.Single(_outbox.List());
     }
 
     [Fact]
@@ -93,7 +93,7 @@ public class ThresholdAlertEvaluatorTests : IDisposable
         _evaluator.Evaluate(_deviceId, Point(cpu: 95), _clock.GetUtcNow());
         _clock.Advance(TimeSpan.FromSeconds(61));
         _evaluator.Evaluate(_deviceId, Point(cpu: 95), _clock.GetUtcNow());
-        Assert.Equal(1, _outbox.Count());
+        Assert.Single(_outbox.List());
 
         // 恢复：回落到阈值以下，事件关闭
         _evaluator.Evaluate(_deviceId, Point(cpu: 50), _clock.GetUtcNow());
@@ -101,10 +101,10 @@ public class ThresholdAlertEvaluatorTests : IDisposable
 
         // 新一轮越限：再次触发（不受上一事件防刷屏影响）
         _evaluator.Evaluate(_deviceId, Point(cpu: 96), _clock.GetUtcNow());
-        Assert.Equal(1, _outbox.Count());
+        Assert.Single(_outbox.List());
         _clock.Advance(TimeSpan.FromSeconds(61));
         _evaluator.Evaluate(_deviceId, Point(cpu: 96), _clock.GetUtcNow());
-        Assert.Equal(2, _outbox.Count());
+        Assert.Equal(2, _outbox.List().Count());
     }
 
     [Fact]
@@ -117,13 +117,13 @@ public class ThresholdAlertEvaluatorTests : IDisposable
         _evaluator.Evaluate(_deviceId, Point(cpu: 55), _clock.GetUtcNow());
         _clock.Advance(TimeSpan.FromSeconds(61));
         _evaluator.Evaluate(_deviceId, Point(cpu: 55), _clock.GetUtcNow());
-        Assert.Equal(1, _outbox.Count());
+        Assert.Single(_outbox.List());
 
         // 另一台设备同值不告警（按全局 90）
         _evaluator.Evaluate(otherId, Point(cpu: 55), _clock.GetUtcNow());
         _clock.Advance(TimeSpan.FromSeconds(61));
         _evaluator.Evaluate(otherId, Point(cpu: 55), _clock.GetUtcNow());
-        Assert.Equal(1, _outbox.Count());
+        Assert.Single(_outbox.List());
     }
 
     [Fact]
@@ -132,7 +132,7 @@ public class ThresholdAlertEvaluatorTests : IDisposable
         _evaluator.Evaluate(_deviceId, Point(cpu: 95), _clock.GetUtcNow());
         _clock.Advance(TimeSpan.FromSeconds(61));
         _evaluator.Evaluate(_deviceId, Point(cpu: 95), _clock.GetUtcNow());
-        Assert.Equal(1, _outbox.Count());
+        Assert.Single(_outbox.List());
 
         // 模拟面板重启：同库新实例，越限事件仍在持续
         var restarted = new ThresholdAlertEvaluator(
@@ -145,7 +145,7 @@ public class ThresholdAlertEvaluatorTests : IDisposable
             Microsoft.Extensions.Logging.Abstractions.NullLogger<ThresholdAlertEvaluator>.Instance);
         restarted.Evaluate(_deviceId, Point(cpu: 96), _clock.GetUtcNow());
 
-        Assert.Equal(1, _outbox.Count());
+        Assert.Single(_outbox.List());
     }
 
     [Fact]
@@ -163,12 +163,12 @@ public class ThresholdAlertEvaluatorTests : IDisposable
         evaluator.Evaluate(_deviceId, Point(cpu: 95), _clock.GetUtcNow());
         _clock.Advance(TimeSpan.FromSeconds(61));
         evaluator.Evaluate(_deviceId, Point(cpu: 95), _clock.GetUtcNow());
-        Assert.Equal(1, _outbox.Count());
+        Assert.Single(_outbox.List());
 
         // 持续越限 5 分钟后允许重发一次（防刷屏间隔可调）
         _clock.Advance(TimeSpan.FromMinutes(6));
         evaluator.Evaluate(_deviceId, Point(cpu: 96), _clock.GetUtcNow());
-        Assert.Equal(2, _outbox.Count());
+        Assert.Equal(2, _outbox.List().Count());
     }
 
     [Fact]
@@ -179,7 +179,7 @@ public class ThresholdAlertEvaluatorTests : IDisposable
         _evaluator.Evaluate(tempId, Point(cpu: 99), _clock.GetUtcNow());
         _clock.Advance(TimeSpan.FromSeconds(61));
         _evaluator.Evaluate(tempId, Point(cpu: 99), _clock.GetUtcNow());
-        Assert.Equal(0, _outbox.Count());
+        Assert.Empty(_outbox.List());
     }
 
     private sealed class StubNotifier : INotifier
