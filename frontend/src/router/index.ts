@@ -65,6 +65,12 @@ const router = createRouter({
           component: () => import('@/views/TerminalRecordsView.vue'),
           meta: { title: '终端留痕' },
         },
+        {
+          path: 'logs',
+          name: 'logs',
+          component: () => import('@/views/LogsView.vue'),
+          meta: { title: '日志查看' },
+        },
       ],
     },
     {
