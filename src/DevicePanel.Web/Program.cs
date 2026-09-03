@@ -1,3 +1,4 @@
+using DevicePanel.Web.Alerting;
 using DevicePanel.Web.Auth;
 using DevicePanel.Web.Devices;
 using DevicePanel.Web.Endpoints;
@@ -57,6 +58,21 @@ builder.Services.AddSingleton(metricsOptions);
 builder.Services.AddSingleton<IMetricsStore, MetricsStore>();
 builder.Services.AddSingleton<IAgentMessageHandler, MetricsMessageHandler>();
 
+// 告警分发：规则（离线 / 阈值越限）→ 渠道抽象（QQ/napcat 首实现）→ 本地待发队列断线补发（无丢失）
+var alertOptions = new AlertOptions();
+builder.Configuration.GetSection(AlertOptions.SectionName).Bind(alertOptions);
+builder.Services.AddSingleton(alertOptions);
+builder.Services.AddSingleton<IAlertOutboxStore, AlertOutboxStore>();
+builder.Services.AddSingleton<IAlertSettingsStore, AlertSettingsStore>();
+builder.Services.AddSingleton<IAlertThresholdStore, AlertThresholdStore>();
+builder.Services.AddSingleton<IAlertStateStore, AlertStateStore>();
+builder.Services.AddSingleton<HttpClient>(_ => new HttpClient { Timeout = TimeSpan.FromSeconds(10) });
+builder.Services.AddSingleton<INotifier, NapcatNotifier>();
+builder.Services.AddSingleton<AlertDispatcher>();
+builder.Services.AddSingleton<IThresholdAlertEvaluator, ThresholdAlertEvaluator>();
+builder.Services.AddSingleton<AlertDispatchWorker>();
+builder.Services.AddSingleton<OfflineAlertScanner>();
+
 // Web 终端：浏览器 ↔ agent 中继、留痕存储与 term.* 下行处理
 builder.Services.AddSingleton<ITerminalStore, TerminalStore>();
 builder.Services.AddSingleton<TerminalSessionRegistry>();
@@ -77,6 +93,10 @@ builder.Services.AddSingleton<IAgentMessageHandler, LogsErrorHandler>();
 builder.Services.AddHostedService<DatabaseInitializer>();
 builder.Services.AddHostedService<AccountSeeder>();
 
+// 告警分发 worker 依赖迁移完成后的表结构：必须排在 DatabaseInitializer 之后启动
+builder.Services.AddHostedService(sp => sp.GetRequiredService<AlertDispatchWorker>());
+builder.Services.AddHostedService(sp => sp.GetRequiredService<OfflineAlertScanner>());
+
 // 清理任务依赖迁移完成后的表结构：必须排在 DatabaseInitializer 之后启动
 builder.Services.AddSingleton<MetricsRetentionService>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<MetricsRetentionService>());
@@ -91,6 +111,7 @@ app.MapHealthEndpoints();
 app.MapAuthEndpoints();
 app.MapDeviceEndpoints();
 app.MapMetricsEndpoints();
+app.MapAlertEndpoints();
 app.MapTerminalEndpoints();
 app.MapLogEndpoints();
 app.MapAgentWsEndpoints();

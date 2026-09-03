@@ -49,6 +49,53 @@ public class MetricsIngestTests : IDisposable
     }
 
     [Fact]
+    public async Task Sustained_Threshold_Violation_Via_Ingest_Chain_Enqueues_Alert()
+    {
+        // TOB-341 挂接点：指标入库链路同步喂阈值越限评估，持续越限超过 60s 触发待发告警
+        var (token, deviceId) = await CreateDeviceWithTokenAsync();
+        using var socket = await ConnectAsync(_factory);
+        await SendAuthAsync(socket, token);
+
+        await SendAsync(socket, AgentEnvelope.Create(AgentMessageTypes.MetricsReport, 2, Payload(cpu: 95, mem: 40, disk: 55, netRx: 2048, netTx: 4096)));
+
+        // WS 入站处理与测试线程并发：先等首点确认入库（消除时钟推进竞态），再推进时钟发第二个点
+        var metricsStore = _factory.Services.GetRequiredService<IMetricsStore>();
+        var deviceRowId = deviceId;
+        for (var i = 0; i < 50; i++)
+        {
+            var points = metricsStore.QueryRaw(deviceRowId, _factory.Clock.GetUtcNow().AddMinutes(-5), _factory.Clock.GetUtcNow().AddMinutes(5));
+            if (points.Count > 0)
+            {
+                break;
+            }
+
+            await Task.Delay(50);
+        }
+
+        _factory.Clock.Advance(TimeSpan.FromSeconds(61));
+        await SendAsync(socket, AgentEnvelope.Create(AgentMessageTypes.MetricsReport, 3, Payload(cpu: 96, mem: 40, disk: 55, netRx: 2048, netTx: 4096)));
+
+        // 轮询等待评估链路完成（上限 5s）
+        var outbox = _factory.Services.GetRequiredService<DevicePanel.Web.Alerting.IAlertOutboxStore>();
+        DevicePanel.Web.Alerting.AlertOutboxEntry? entry = null;
+        for (var i = 0; i < 50 && entry is null; i++)
+        {
+            entry = outbox.PeekOldest();
+            if (entry is null)
+            {
+                await Task.Delay(100);
+            }
+        }
+
+        Assert.NotNull(entry);
+        Assert.Contains("指标越限告警", entry!.Message.Title);
+        Assert.Contains("96", entry.Message.Content);
+
+        // 恢复（回落到阈值下）后，新一轮事件才重新告警；持续越限期间不重发
+        Assert.Equal(1, outbox.Count());
+    }
+
+    [Fact]
     public async Task Malformed_Metrics_Payload_Is_Ignored_Without_Killing_Connection()
     {
         var (token, deviceId) = await CreateDeviceWithTokenAsync();
