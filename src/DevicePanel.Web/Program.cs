@@ -25,6 +25,9 @@ var authOptions = new AuthOptions();
 builder.Configuration.GetSection(AuthOptions.SectionName).Bind(authOptions);
 builder.Services.AddSingleton(authOptions);
 builder.Services.AddSingleton<IPasswordHasher, PasswordHasher>();
+builder.Services.AddSingleton(TimeProvider.System);
+builder.Services.AddSingleton<ISessionService, SessionService>();
+builder.Services.AddSingleton<ILoginRateLimiter, LoginRateLimiter>();
 
 builder.Services.AddHostedService<DatabaseInitializer>();
 builder.Services.AddHostedService<AccountSeeder>();
@@ -32,6 +35,7 @@ builder.Services.AddHostedService<AccountSeeder>();
 var app = builder.Build();
 
 app.MapHealthEndpoints();
+app.MapAuthEndpoints();
 
 app.Run();
 

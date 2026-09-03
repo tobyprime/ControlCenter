@@ -5,7 +5,7 @@ using Xunit;
 
 namespace DevicePanel.Web.Tests;
 
-public class SessionServiceTests
+public class SessionServiceTests : IDisposable
 {
     private readonly TempSqliteDatabase _db = new();
     private readonly FakeTimeProvider _clock = new(new DateTimeOffset(2026, 9, 3, 12, 0, 0, TimeSpan.Zero));

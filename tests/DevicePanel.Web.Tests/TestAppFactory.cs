@@ -4,7 +4,7 @@ using Microsoft.Extensions.Hosting;
 
 namespace DevicePanel.Web.Tests;
 
-public sealed class TestAppFactory : WebApplicationFactory<Program>
+public class TestAppFactory : WebApplicationFactory<Program>
 {
     public string DataDir { get; } = Path.Combine(Path.GetTempPath(), "device-panel-tests", Guid.NewGuid().ToString("N"));
 
