@@ -2,7 +2,13 @@ using DevicePanel.Web.Auth;
 using DevicePanel.Web.Endpoints;
 using DevicePanel.Web.Infrastructure;
 
-var builder = WebApplication.CreateBuilder(args);
+// wwwroot 双候选解析：发布产物从仓库根目录运行时，静态文件回退到应用目录自带的 wwwroot。
+// 解析不到时保持宿主默认探测（如 WebApplicationFactory 场景）；ContentRoot 一律不覆盖。
+var builder = WebApplication.CreateBuilder(new WebApplicationOptions
+{
+    Args = args,
+    WebRootPath = WebRootResolver.ResolveWebRoot(Directory.GetCurrentDirectory(), AppContext.BaseDirectory),
+});
 
 var databaseOptions = new DatabaseOptions();
 builder.Configuration.GetSection(DatabaseOptions.SectionName).Bind(databaseOptions);

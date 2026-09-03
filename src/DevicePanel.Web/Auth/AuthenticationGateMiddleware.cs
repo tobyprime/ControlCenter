@@ -1,3 +1,5 @@
+using DevicePanel.Web.Infrastructure;
+
 namespace DevicePanel.Web.Auth;
 
 /// <summary>
@@ -81,9 +83,7 @@ public sealed class AuthenticationGateMiddleware
         var roots = new[]
         {
             environment.WebRootPath,
-            Path.Combine(environment.ContentRootPath, "wwwroot"),
-            Path.Combine(baseDirectoryOverride ?? AppContext.BaseDirectory, "wwwroot"),
-        };
+        }.Concat(WebRootResolver.CandidateRoots(environment.ContentRootPath, baseDirectoryOverride));
 
         return roots
             .Where(root => !string.IsNullOrEmpty(root))

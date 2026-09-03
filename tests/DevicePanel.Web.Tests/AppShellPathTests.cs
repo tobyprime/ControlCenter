@@ -53,9 +53,9 @@ public class AppShellPathTests
         return (contentRoot, shellPath);
     }
 
-    private sealed class FakeEnv(string? webRootPath, string contentRootPath) : IWebHostEnvironment
+    internal sealed class FakeEnv(string? webRootPath, string contentRootPath) : IWebHostEnvironment
     {
-        public string? WebRootPath { get; set; } = webRootPath;
+        public string WebRootPath { get; set; } = webRootPath ?? null!;
         public string ContentRootPath { get; set; } = contentRootPath;
         public string ApplicationName { get; set; } = "test";
         public string EnvironmentName { get; set; } = "Development";
