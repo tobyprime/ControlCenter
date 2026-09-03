@@ -1,7 +1,9 @@
+using System.Linq;
 using System.Net.Http.Json;
 using System.Net.WebSockets;
 using System.Text.Json;
 using DevicePanel.Protocol;
+using DevicePanel.Web.Metrics;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Time.Testing;
 using Xunit;
@@ -11,7 +13,7 @@ namespace DevicePanel.Web.Tests;
 /// <summary>指标上报链路集成测试：agent 经 WS 通道上报 metrics.report → 入库 → 查询 API 可见。</summary>
 public class MetricsIngestTests : IDisposable
 {
-    public sealed class Factory : TestAppFactory
+    public class Factory : TestAppFactory
     {
         public FakeTimeProvider Clock { get; } = new(new DateTimeOffset(2026, 9, 3, 12, 0, 0, TimeSpan.Zero));
 
@@ -30,7 +32,7 @@ public class MetricsIngestTests : IDisposable
     public async Task Metrics_Report_From_Agent_Is_Stored_And_Visible_Via_Api()
     {
         var (token, deviceId) = await CreateDeviceWithTokenAsync();
-        using var socket = await ConnectAsync();
+        using var socket = await ConnectAsync(_factory);
         await SendAuthAsync(socket, token);
 
         await SendAsync(socket, AgentEnvelope.Create(AgentMessageTypes.MetricsReport, 2, Payload(cpu: 12.5, mem: 40, disk: 55, netRx: 20480, netTx: 4096)));
@@ -50,7 +52,7 @@ public class MetricsIngestTests : IDisposable
     public async Task Malformed_Metrics_Payload_Is_Ignored_Without_Killing_Connection()
     {
         var (token, deviceId) = await CreateDeviceWithTokenAsync();
-        using var socket = await ConnectAsync();
+        using var socket = await ConnectAsync(_factory);
         await SendAuthAsync(socket, token);
 
         // 缺字段 / 非数值 / 布尔值：均应忽略，不影响连接
@@ -68,18 +70,76 @@ public class MetricsIngestTests : IDisposable
         Assert.True(device.GetProperty("online").GetBoolean());
     }
 
+    [Fact]
+    public async Task Store_Failure_Drops_Point_But_Keeps_Session_Alive()
+    {
+        // 回归（TOB-338 审查问题 2）：落库失败必须"丢点保连"——Insert 抛异常只丢该点，
+        // 不允许穿过 DispatchAsync 结束 WS 会话（否则一次存储抖动即设备离线 + agent 重连）。
+        using var factory = new ThrowingStoreFactory();
+        var client0 = factory.CreateClient();
+        var login = await client0.PostAsJsonAsync("/api/auth/login", new { username = "admin", password = "test-password-1" });
+        login.EnsureSuccessStatusCode();
+        var created = await client0.PostAsJsonAsync("/api/devices", new { name = "故障注入设备", tags = new[] { "机房F" } });
+        created.EnsureSuccessStatusCode();
+        var payload = await created.Content.ReadFromJsonAsync<JsonElement>();
+        var token = payload.GetProperty("agentToken").GetString()!;
+        var deviceId = payload.GetProperty("id").GetInt64();
+
+        using var socket = await ConnectAsync(factory);
+        await SendAuthAsync(socket, token);
+
+        // 连续两条上报均落库失败：不终止会话
+        await SendAsync(socket, AgentEnvelope.Create(AgentMessageTypes.MetricsReport, 2, Payload(cpu: 12.5, mem: 40, disk: 55, netRx: 20480, netTx: 4096)));
+        await SendAsync(socket, AgentEnvelope.Create(AgentMessageTypes.MetricsReport, 3, Payload(cpu: 13.5, mem: 41, disk: 56, netRx: 21480, netTx: 4196)));
+
+        // 心跳链路仍活着：推进 2 个心跳周期（60s）后设备仍在线（会话若被结束，last_seen 停在 auth 时刻，此时已离线）
+        await SendAsync(socket, new AgentEnvelope { Type = AgentMessageTypes.Heartbeat, Seq = 4 });
+        factory.Clock.Advance(TimeSpan.FromSeconds(61));
+        var client = await AuthenticatedClientAsync(factory);
+        var list = await (await client.GetAsync("/api/devices")).Content.ReadFromJsonAsync<JsonElement>();
+        var device = list.EnumerateArray().Single(d => d.GetProperty("id").GetInt64() == deviceId);
+        Assert.True(device.GetProperty("online").GetBoolean(), "落库失败不应终止 WS 会话：心跳链路必须存活");
+    }
+
+    private sealed class ThrowingStoreFactory : Factory
+    {
+        public ThrowingStoreFactory()
+        {
+            TestServices = services =>
+            {
+                services.AddSingleton<TimeProvider>(Clock);
+                services.AddSingleton<IMetricsStore>(new ThrowingOnInsertStore());
+            };
+        }
+    }
+
+    /// <summary>仅在 Insert 时抛 SQLite 异常的存储（模拟 busy_timeout 耗尽/磁盘故障）。</summary>
+    private sealed class ThrowingOnInsertStore : IMetricsStore
+    {
+        public void Insert(long deviceId, DateTimeOffset collectedAtUtc, MetricsPoint point) =>
+            throw new Microsoft.Data.Sqlite.SqliteException("模拟存储故障", 11);
+
+        public IReadOnlyList<MetricsPoint> QueryRaw(long deviceId, DateTimeOffset fromUtc, DateTimeOffset toUtc) => [];
+
+        public IReadOnlyList<MetricsBucket> QueryHourly(long deviceId, DateTimeOffset fromUtc, DateTimeOffset toUtc) => [];
+
+        public IReadOnlyList<MetricsBucket> QueryDaily(long deviceId, DateTimeOffset fromUtc, DateTimeOffset toUtc) => [];
+
+        public MetricsCleanupResult DeleteOlderThan(DateTimeOffset cutoffUtc) => new(0, 0, 0);
+    }
+
     private async Task<(string Token, long DeviceId)> CreateDeviceWithTokenAsync()
     {
-        var client = await AuthenticatedClientAsync();
+        var client = await AuthenticatedClientAsync(_factory);
         var response = await client.PostAsJsonAsync("/api/devices", new { name = "指标设备", tags = new[] { "机房M" } });
         response.EnsureSuccessStatusCode();
         var payload = await response.Content.ReadFromJsonAsync<JsonElement>();
         return (payload.GetProperty("agentToken").GetString()!, payload.GetProperty("id").GetInt64());
     }
 
-    private async Task<HttpClient> AuthenticatedClientAsync()
+    private async Task<HttpClient> AuthenticatedClientAsync(TestAppFactory factory)
     {
-        var client = _factory.CreateClient();
+        var client = factory.CreateClient();
         var login = await client.PostAsJsonAsync("/api/auth/login", new { username = "admin", password = "test-password-1" });
         login.EnsureSuccessStatusCode();
         return client;
@@ -87,7 +147,7 @@ public class MetricsIngestTests : IDisposable
 
     private async Task<JsonElement> GetSeriesAsync(long deviceId)
     {
-        var client = await AuthenticatedClientAsync();
+        var client = await AuthenticatedClientAsync(_factory);
         var from = Uri.EscapeDataString("2026-09-03T11:00:00Z");
         var to = Uri.EscapeDataString("2026-09-03T13:00:00Z");
         var response = await client.GetAsync($"/api/metrics/{deviceId}/series?from={from}&to={to}");
@@ -97,17 +157,17 @@ public class MetricsIngestTests : IDisposable
 
     private async Task<JsonElement[]> ListDevicesAsync()
     {
-        var client = await AuthenticatedClientAsync();
+        var client = await AuthenticatedClientAsync(_factory);
         var response = await client.GetAsync("/api/devices");
         response.EnsureSuccessStatusCode();
         var list = await response.Content.ReadFromJsonAsync<JsonElement>();
         return list.EnumerateArray().ToArray();
     }
 
-    private Task<WebSocket> ConnectAsync()
+    private Task<WebSocket> ConnectAsync(TestAppFactory factory)
     {
-        var wsClient = _factory.Server.CreateWebSocketClient();
-        var uri = new Uri(_factory.Server.BaseAddress, "/agent/ws");
+        var wsClient = factory.Server.CreateWebSocketClient();
+        var uri = new Uri(factory.Server.BaseAddress, "/agent/ws");
         return wsClient.ConnectAsync(uri, CancellationToken.None);
     }
 
