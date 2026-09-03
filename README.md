@@ -66,4 +66,5 @@ cd e2e && npm test                           # Playwright 端到端验证
 - 设备台账：登录后在「设备管理」页登记/编辑/删除设备（名称、多标签），创建/重置时签发 agent token（明文仅显示一次）
 - 轻量 agent：`scripts/build-agent.sh` 构建 Linux amd64/arm64 静态单二进制，目标机仅出站 WSS 回连 `/agent/ws`，30s 心跳与指标上报
 - 指标曲线：「指标曲线」页选择设备与时间范围查看 CPU/内存/磁盘/网络历史曲线；30s 明细 + 小时/天级预聚合（长跨度自动切换），保留约 30 天，删除设备级联清理
+- Web 终端：「Web 终端」页对在线设备打开浏览器内 shell（xterm.js，经面板与 agent 回连通道转发到目标 PTY，目标设备零入站端口）；「终端留痕」页可按设备/时间查会话元数据与命令、输出留档，删除设备级联清理
 - 通道协议与扩展点：见 [docs/agent-channel.md](docs/agent-channel.md)

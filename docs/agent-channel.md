@@ -14,7 +14,17 @@ src/DevicePanel.Web/Devices
   ├─ AgentMessageDispatcher  按 type 路由；未注册类型忽略（向前兼容）
   ├─ AgentConnectionRegistry  设备 ID → 在线连接；删除断连 / 重置断连 / 心跳超时清理
   └─ HeartbeatMessageHandler  内置心跳处理器（也是新增处理器的参考实现）
+src/DevicePanel.Web/Terminal  Web 终端（TOB-339）
+  ├─ TerminalEndpoints     浏览器 WS 入口 /api/devices/{id}/terminal + 留痕查询 API
+  ├─ TerminalRelay         浏览器 ↔ agent 双向中继（会话收尾 + 留痕落库）
+  ├─ TerminalSessionRegistry  sessionId → 活跃中继（term.* 下行投递）
+  ├─ TerminalMessageHandlers  term.opened/output/closed/error 处理器
+  └─ TerminalStore         会话元数据与命令/输出留痕（SQLite，随设备级联删除）
 src/DevicePanel.Agent      轻量 agent：出站 WSS 回连、auth、心跳；消息循环按 type 可扩展
+src/DevicePanel.Agent/Terminal  终端通道（TOB-339）
+  ├─ TerminalChannel       term.* 下行处理：会话登记、输入写入、输出泵
+  ├─ LinuxPtySession       PTY shell 会话（openpty + posix_spawn，raw fd 读写）
+  └─ AgentDownlink         每连接下行发送器（与节拍共用发送锁）
 ```
 
 ## 消息信封
@@ -37,8 +47,38 @@ src/DevicePanel.Agent      轻量 agent：出站 WSS 回连、auth、心跳；�
 
 预留前缀（后续 issue 只留扩展点，不做业务）：
 
-- `term.*` —— Web 终端（如 `term.open` / `term.input` / `term.output` / `term.close`）
 - `logs.*` —— 日志拉取（如 `logs.request` / `logs.response`）
+
+### 终端通道 term.*（TOB-339 已实现）
+
+会话由面板侧发起并生成 `sessionId`（GUID 文本），agent 按 sessionId 维护 PTY shell；
+`data` 一律为 base64 编码字节（UTF-8 分块边界安全），响应沿用请求的 `seq`。
+
+| type | 方向 | payload | 说明 |
+|---|---|---|---|
+| `term.open` | 面板 → agent | `{sessionId, cols, rows}` | 请求打开 PTY shell（/bin/sh -i 或 $SHELL） |
+| `term.opened` | agent → 面板 | `{sessionId}` | PTY 就绪确认 |
+| `term.input` | 面板 → agent | `{sessionId, data}` | 键盘输入（base64） |
+| `term.output` | agent → 面板 | `{sessionId, data}` | shell 输出（base64，≤4KB/帧流式回发） |
+| `term.close` | 面板 → agent | `{sessionId}` | 关闭会话（PTY 主端释放 + SIGTERM→SIGKILL 回收） |
+| `term.closed` | agent → 面板 | `{sessionId}` | 会话结束（shell 退出或关闭完成） |
+| `term.error` | agent → 面板 | `{sessionId, message}` | 打开失败等错误（不中断连接与节拍） |
+
+会话生命周期契约：
+
+- 目标设备零入站端口不变：终端数据全部走既有出站 WS 通道。
+- agent 断连/重连：该连接上的全部 PTY 随 `ITerminalChannel.ShutdownAsync` 终止并回收，重连后是全新会话（无跨连接残留）。
+- 节拍契约延伸：term.* 处理与输出泵全部兜异常——终端故障不打断心跳/指标（TOB-338 回归锚的延伸场景，见 AgentTerminalIntegrationTests）。
+- 留痕：面板侧对每个会话记录元数据（设备/操作者/起止/关闭原因）与输入输出留档（`terminal_sessions`/`terminal_entries`，随设备级联删除）；
+  存储故障只丢留痕不断会话（沿用「存储故障不杀 WS 会话」契约）。
+- 浏览器入口：`WS /api/devices/{deviceId}/terminal?cols&rows`（会话 Cookie 认证）→ 面板中继到 agent；
+  留痕查询：`GET /api/terminal/sessions`、`GET /api/terminal/sessions/{id}/records`。
+
+后续扩展方式（预留，未实现）：
+
+- **预设命令**：面板侧定义命令模板，下发即转发为 `term.input`（无需新消息类型）；如需服务端执行语义，可扩 `term.preset` `{sessionId, commandId}`。
+- **文件传输**：沿用同一信封扩展 `file.*` 前缀（如 `file.offer` / `file.chunk` / `file.ack`，payload 带 sessionId 关联终端会话），复用 term.input 的通道与留痕模式。
+- **会话参数**：`term.open` 负载追加字段（如环境变量、初始目录），信封与既有消费者不受影响（payload 不透明原则）。
 
 ## WebSocket 关闭码
 
@@ -80,7 +120,7 @@ services.AddSingleton<IAgentMessageHandler, MetricsReportHandler>();
 
 面板下行主动消息：从 `AgentConnectionRegistry` 取设备连接（或经自己的会话管理），`IDeviceChannel.SendAsync(AgentEnvelope.Create("term.open", seq, payload), ct)`。
 
-agent 侧：在 `AgentRunner` 消息循环的 `HandleInboundAsync` 处按 type 分发；上报类消息参照 `heartbeat`/`metrics.report` 的定时发送方式扩展（信封与连接层不动）。
+agent 侧：实现 `ITerminalChannel`（如 `TerminalChannel` 对 term.* 的处理），由构造注入 AgentRunner 的 `terminalChannelFactory` 接入消息循环；下行主动发送经每连接的 `AgentDownlink`（与节拍共用一把发送锁，ClientWebSocket 不允许并发发送）。上报类消息参照 `heartbeat`/`metrics.report` 的定时发送方式扩展（信封与连接层不动）。
 
 ## 指标上报与面板存储（TOB-338）
 
