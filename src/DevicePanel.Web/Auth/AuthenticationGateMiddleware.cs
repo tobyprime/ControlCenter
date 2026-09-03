@@ -76,17 +76,32 @@ public sealed class AuthenticationGateMiddleware
         await _next(context);
     }
 
+    internal static string? ResolveShellPath(IWebHostEnvironment environment, string? baseDirectoryOverride = null)
+    {
+        var roots = new[]
+        {
+            environment.WebRootPath,
+            Path.Combine(environment.ContentRootPath, "wwwroot"),
+            Path.Combine(baseDirectoryOverride ?? AppContext.BaseDirectory, "wwwroot"),
+        };
+
+        return roots
+            .Where(root => !string.IsNullOrEmpty(root))
+            .Select(root => Path.Combine(root!, "index.html"))
+            .FirstOrDefault(File.Exists);
+    }
+
     private static async Task ServeAppShellAsync(HttpContext context, IWebHostEnvironment environment)
     {
-        context.Response.ContentType = "text/html; charset=utf-8";
-        var shellPath = Path.Combine(environment.WebRootPath ?? "wwwroot", "index.html");
-        if (!File.Exists(shellPath))
+        var shellPath = ResolveShellPath(environment);
+        if (shellPath is null)
         {
             context.Response.StatusCode = StatusCodes.Status404NotFound;
-            await context.Response.WriteAsync("前端资源未构建");
+            await context.Response.WriteAsync("前端资源未构建，请先运行 scripts/build.sh");
             return;
         }
 
+        context.Response.ContentType = "text/html; charset=utf-8";
         await context.Response.SendFileAsync(shellPath);
     }
 }
