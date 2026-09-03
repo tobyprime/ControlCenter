@@ -12,7 +12,6 @@ public sealed class TempSqliteDatabase : IDisposable
         Options = new DatabaseOptions { DataDir = DataDir };
         Factory = new SqliteConnectionFactory(Options);
         using var connection = Factory.CreateOpenConnection();
-        DatabaseInitializer.SetPragmas(connection);
         DatabaseMigrator.Migrate(connection);
     }
 

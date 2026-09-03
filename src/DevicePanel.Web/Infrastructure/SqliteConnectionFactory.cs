@@ -23,6 +23,17 @@ public sealed class SqliteConnectionFactory
         Directory.CreateDirectory(_options.DataDir);
         var connection = new SqliteConnection(ConnectionString);
         connection.Open();
+        // per-connection 设置必须随每条物理连接：WAL（幂等，持久化到库文件头）、外键强制、忙等
+        ExecutePragma(connection, "PRAGMA journal_mode = WAL;");
+        ExecutePragma(connection, "PRAGMA foreign_keys = ON;");
+        ExecutePragma(connection, "PRAGMA busy_timeout = 5000;");
         return connection;
+    }
+
+    private static void ExecutePragma(SqliteConnection connection, string pragma)
+    {
+        using var command = connection.CreateCommand();
+        command.CommandText = pragma;
+        command.ExecuteNonQuery();
     }
 }
