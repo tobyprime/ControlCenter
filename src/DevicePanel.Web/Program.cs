@@ -1,3 +1,4 @@
+using DevicePanel.Web.Auth;
 using DevicePanel.Web.Endpoints;
 using DevicePanel.Web.Infrastructure;
 
@@ -19,7 +20,14 @@ if (!Path.IsPathRooted(databaseOptions.DataDir))
 
 builder.Services.AddSingleton(databaseOptions);
 builder.Services.AddSingleton<SqliteConnectionFactory>();
+
+var authOptions = new AuthOptions();
+builder.Configuration.GetSection(AuthOptions.SectionName).Bind(authOptions);
+builder.Services.AddSingleton(authOptions);
+builder.Services.AddSingleton<IPasswordHasher, PasswordHasher>();
+
 builder.Services.AddHostedService<DatabaseInitializer>();
+builder.Services.AddHostedService<AccountSeeder>();
 
 var app = builder.Build();
 
