@@ -55,5 +55,12 @@ cd e2e && npm test                           # Playwright 端到端验证
 | `DevicePanel:Auth:MaxFailedAttempts` | `DevicePanel__Auth__MaxFailedAttempts` | `5` | 登录失败锁定阈值 |
 | `DevicePanel:Auth:LockoutSeconds` | `DevicePanel__Auth__LockoutSeconds` | `600` | 锁定时长（秒） |
 | `DevicePanel:Auth:SessionHours` | `DevicePanel__Auth__SessionHours` | `24` | 会话有效期（小时） |
+| `DevicePanel:Agent:HeartbeatIntervalSeconds` | `DevicePanel__Agent__HeartbeatIntervalSeconds` | `30` | agent 心跳周期（秒），离线阈值 = 2×该值 |
 
 数据库约定：SQLite 以 WAL 模式运行；所有时间列 UTC 存储（ISO-8601 文本）；表结构变更走 `src/DevicePanel.Web/Infrastructure/Migrations/` 手写迁移。
+
+## 设备与 Agent
+
+- 设备台账：登录后在「设备管理」页登记/编辑/删除设备（名称、多标签），创建/重置时签发 agent token（明文仅显示一次）
+- 轻量 agent：`scripts/build-agent.sh` 构建 Linux amd64/arm64 静态单二进制，目标机仅出站 WSS 回连 `/agent/ws`，30s 心跳
+- 通道协议与扩展点：见 [docs/agent-channel.md](docs/agent-channel.md)

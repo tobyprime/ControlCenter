@@ -1,23 +1,48 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { onBeforeUnmount, onMounted, ref } from 'vue'
 import { fetchSession } from '@/router'
+import { listDevices, type Device } from '@/api/devices'
 
 const username = ref('')
 fetchSession().then((session) => {
   username.value = session.username
 })
 
-const overviewItems = ref([
-  { label: '设备总数', value: '—', hint: '设备管理功能建设中' },
-  { label: '在线设备', value: '—', hint: '设备管理功能建设中' },
-  { label: '活跃告警', value: '—', hint: '告警功能建设中' },
-])
+const overview = ref({ total: '—', online: '—', alerts: '—' })
+let refreshTimer: number | undefined
+
+async function refreshOverview() {
+  try {
+    const devices: Device[] = await listDevices()
+    overview.value.total = String(devices.length)
+    overview.value.online = String(devices.filter((device) => device.online).length)
+  } catch {
+    // 首页概览加载失败不打断页面，保留占位
+  }
+}
+
+onMounted(() => {
+  refreshOverview()
+  refreshTimer = window.setInterval(refreshOverview, 15000)
+})
+
+onBeforeUnmount(() => {
+  if (refreshTimer) {
+    window.clearInterval(refreshTimer)
+  }
+})
+
+const overviewItems = [
+  { label: '设备总数', hint: '去设备管理页查看', get value() { return overview.value.total } },
+  { label: '在线设备', hint: '每 15 秒自动刷新', get value() { return overview.value.online } },
+  { label: '活跃告警', hint: '告警功能建设中', get value() { return overview.value.alerts } },
+]
 </script>
 
 <template>
   <section class="home">
     <h1 class="home-title">欢迎，{{ username || '管理员' }}</h1>
-    <p class="home-description">当前为一期骨架版本，设备、终端、日志与告警功能将陆续上线。</p>
+    <p class="home-description">当前为一期骨架版本，终端、日志与告警功能将陆续上线。</p>
 
     <div class="overview-grid">
       <div v-for="item in overviewItems" :key="item.label" class="overview-card">

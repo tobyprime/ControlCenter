@@ -1,0 +1,202 @@
+using System.Net.WebSockets;
+using System.Text.Json;
+using System.Text.Json.Serialization;
+using System.Text.Json.Serialization.Metadata;
+using DevicePanel.Protocol;
+
+namespace DevicePanel.Agent;
+
+[JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]
+[JsonSerializable(typeof(AuthPayload))]
+[JsonSerializable(typeof(HeartbeatPayload))]
+[JsonSerializable(typeof(AuthOkPayload))]
+internal sealed partial class AgentJsonContext : JsonSerializerContext;
+
+internal sealed record AuthPayload(string Token);
+
+internal sealed record HeartbeatPayload(long UptimeSec);
+
+internal sealed record AuthOkPayload(long DeviceId, string Name);
+
+/// <summary>
+/// 轻量 agent：出站 WSS 回连面板 → auth 信封认证 → 每 HeartbeatIntervalSeconds 发送一次心跳。
+/// 断线按指数退避重连；token 类拒绝（认证失败/设备删除/token 重置）不重试，需更换 token 后重启。
+/// 扩展点：后续指标/终端/日志通道在消息循环中按信封 type 接入处理器即可，不改信封与连接层。
+/// </summary>
+public sealed class AgentRunner
+{
+    private readonly AgentOptions _options;
+    private readonly TextWriter _output;
+
+    public AgentRunner(AgentOptions options, TextWriter output)
+    {
+        _options = options;
+        _output = output;
+    }
+
+    public async Task<int> RunAsync(CancellationToken cancellationToken)
+    {
+        if (!_options.IsValid(out var error))
+        {
+            await _output.WriteLineAsync(error).ConfigureAwait(false);
+            return 2;
+        }
+
+        var backoff = TimeSpan.FromSeconds(1);
+        var startedAt = DateTimeOffset.UtcNow;
+        while (!cancellationToken.IsCancellationRequested)
+        {
+            try
+            {
+                var result = await ConnectOnceAsync(startedAt, cancellationToken).ConfigureAwait(false);
+                if (result == ConnectResult.TokenRejected)
+                {
+                    await _output.WriteLineAsync("token 已被面板拒绝（无效/已重置/设备已删除），请更换 token 后重新启动。").ConfigureAwait(false);
+                    return 3;
+                }
+
+                backoff = TimeSpan.FromSeconds(1);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                break;
+            }
+            catch (Exception ex)
+            {
+                await _output.WriteLineAsync($"连接断开：{ex.Message}，{backoff.TotalSeconds}s 后重连").ConfigureAwait(false);
+            }
+
+            try
+            {
+                await Task.Delay(backoff, cancellationToken).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                break;
+            }
+
+            if (backoff < TimeSpan.FromSeconds(30))
+            {
+                backoff = TimeSpan.FromSeconds(Math.Min(backoff.TotalSeconds * 2, 30));
+            }
+        }
+
+        return 0;
+    }
+
+    private async Task<ConnectResult> ConnectOnceAsync(DateTimeOffset startedAt, CancellationToken cancellationToken)
+    {
+        using var socket = new ClientWebSocket();
+        socket.Options.KeepAliveInterval = TimeSpan.FromSeconds(15);
+        await _output.WriteLineAsync($"正在连接 {_options.Url} …").ConfigureAwait(false);
+        await socket.ConnectAsync(new Uri(_options.Url), cancellationToken).ConfigureAwait(false);
+
+        var seq = 0L;
+        await SendAsync(socket, AgentMessageTypes.Auth, ++seq, new AuthPayload(_options.Token), AgentJsonContext.Default.AuthPayload, cancellationToken)
+            .ConfigureAwait(false);
+        var reply = await ReceiveAsync(socket, cancellationToken).ConfigureAwait(false);
+        if (reply is null || reply.Type != AgentMessageTypes.AuthOk)
+        {
+            var message = reply is { Type: AgentMessageTypes.AuthError, Payload.ValueKind: JsonValueKind.Object } &&
+                          reply.Payload.TryGetProperty("message", out var m)
+                ? m.GetString()
+                : null;
+            await _output.WriteLineAsync($"认证失败：{message ?? "面板拒绝接入"}").ConfigureAwait(false);
+            return ConnectResult.TokenRejected;
+        }
+
+        var authOk = JsonSerializer.Deserialize(reply.Payload.GetRawText(), AgentJsonContext.Default.AuthOkPayload);
+        await _output.WriteLineAsync($"认证成功：设备 #{authOk?.DeviceId}（{authOk?.Name}），心跳周期 {_options.HeartbeatIntervalSeconds}s")
+            .ConfigureAwait(false);
+
+        // 消息循环：心跳到期即发送；收到面板下行消息按 type 处理（当前仅回执，后续指标/终端/日志在此扩展）
+        var heartbeatInterval = TimeSpan.FromSeconds(_options.HeartbeatIntervalSeconds);
+        var nextHeartbeat = DateTimeOffset.UtcNow + heartbeatInterval;
+        while (socket.State == WebSocketState.Open && !cancellationToken.IsCancellationRequested)
+        {
+            AgentEnvelope? inbound;
+            var dueIn = nextHeartbeat - DateTimeOffset.UtcNow;
+            if (dueIn > TimeSpan.Zero)
+            {
+                inbound = await ReceiveAsync(socket, cancellationToken, dueIn).ConfigureAwait(false);
+                if (inbound is null && socket.State != WebSocketState.Open)
+                {
+                    break;
+                }
+            }
+            else
+            {
+                inbound = null;
+            }
+
+            if (inbound is not null)
+            {
+                await HandleInboundAsync(inbound).ConfigureAwait(false);
+                continue;
+            }
+
+            await SendAsync(socket, AgentMessageTypes.Heartbeat, ++seq,
+                new HeartbeatPayload((long)(DateTimeOffset.UtcNow - startedAt).TotalSeconds),
+                AgentJsonContext.Default.HeartbeatPayload, cancellationToken).ConfigureAwait(false);
+            nextHeartbeat = DateTimeOffset.UtcNow + heartbeatInterval;
+        }
+
+        return ConnectResult.ConnectionLost;
+    }
+
+    private Task HandleInboundAsync(AgentEnvelope envelope)
+    {
+        // 扩展点：终端（term.*）、日志（logs.*）、指标下行（metrics.*）消息在此按 type 接入处理器
+        return _output.WriteLineAsync($"收到面板消息：{envelope.Type}（seq={envelope.Seq}）");
+    }
+
+    private static async Task SendAsync<T>(
+        ClientWebSocket socket,
+        string type,
+        long seq,
+        T payload,
+        JsonTypeInfo<T> payloadTypeInfo,
+        CancellationToken ct)
+    {
+        var envelope = AgentEnvelope.Create(type, seq, JsonSerializer.SerializeToElement(payload, payloadTypeInfo));
+        var bytes = JsonSerializer.SerializeToUtf8Bytes(envelope, ProtocolJsonContext.Default.AgentEnvelope);
+        await socket.SendAsync(bytes, WebSocketMessageType.Text, endOfMessage: true, ct).ConfigureAwait(false);
+    }
+
+    private static async Task<AgentEnvelope?> ReceiveAsync(ClientWebSocket socket, CancellationToken ct, TimeSpan? timeout = null)
+    {
+        using var receiveCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        receiveCts.CancelAfter(timeout ?? Timeout.InfiniteTimeSpan);
+        var buffer = new byte[64 * 1024];
+        var received = 0;
+        try
+        {
+            while (true)
+            {
+                var result = await socket.ReceiveAsync(new ArraySegment<byte>(buffer, received, buffer.Length - received), receiveCts.Token)
+                    .ConfigureAwait(false);
+                if (result.MessageType == WebSocketMessageType.Close)
+                {
+                    return null;
+                }
+
+                received += result.Count;
+                if (result.EndOfMessage)
+                {
+                    return JsonSerializer.Deserialize(buffer.AsSpan(0, received).ToArray(), ProtocolJsonContext.Default.AgentEnvelope);
+                }
+            }
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            return null; // 等待下行消息超时 → 视为心跳到期
+        }
+    }
+}
+
+internal enum ConnectResult
+{
+    Closed,
+    ConnectionLost,
+    TokenRejected,
+}

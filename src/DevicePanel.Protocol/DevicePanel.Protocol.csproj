@@ -1,0 +1,8 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>DevicePanel.Protocol</RootNamespace>
+    <AssemblyName>DevicePanel.Protocol</AssemblyName>
+  </PropertyGroup>
+
+</Project>

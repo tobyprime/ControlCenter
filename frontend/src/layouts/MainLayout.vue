@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { clearSession, fetchSession } from '@/router'
 import { logout } from '@/api/auth'
 
+const route = useRoute()
 const router = useRouter()
 const username = ref('…')
 
@@ -38,8 +39,8 @@ async function onLogout() {
     <div class="layout-body">
       <aside class="sidebar">
         <nav class="nav">
-          <RouterLink class="nav-item active" to="/">首页</RouterLink>
-          <span class="nav-item disabled">设备管理（建设中）</span>
+          <RouterLink class="nav-item" to="/">首页</RouterLink>
+          <RouterLink class="nav-item" to="/devices" :class="{ active: route.name === 'devices' }">设备管理</RouterLink>
           <span class="nav-item disabled">Web 终端（建设中）</span>
           <span class="nav-item disabled">日志查看（建设中）</span>
           <span class="nav-item disabled">告警配置（建设中）</span>
