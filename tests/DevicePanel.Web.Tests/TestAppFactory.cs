@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 
 namespace DevicePanel.Web.Tests;
@@ -10,6 +11,9 @@ public class TestAppFactory : WebApplicationFactory<Program>
 
     public IDictionary<string, string?> Settings { get; } = new Dictionary<string, string?>();
 
+    /// <summary>测试注入点：在 Program 服务注册之后追加/覆盖服务（如 FakeTimeProvider）。</summary>
+    public Action<IServiceCollection>? TestServices { get; set; }
+
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
         builder.UseEnvironment(Environments.Development);
@@ -18,6 +22,8 @@ public class TestAppFactory : WebApplicationFactory<Program>
         {
             builder.UseSetting(key, value);
         }
+
+        builder.ConfigureServices(services => TestServices?.Invoke(services));
     }
 
     protected override void Dispose(bool disposing)

@@ -60,7 +60,9 @@ public sealed class AuthenticationGateMiddleware
     {
         return path.StartsWithSegments("/healthz")
             || path.StartsWithSegments("/api/auth/login")
-            || path.StartsWithSegments("/api/auth/logout");
+            || path.StartsWithSegments("/api/auth/logout")
+            // agent 接入通道走独立的 token 认证（auth 信封），不走会话 Cookie
+            || path.StartsWithSegments("/agent/ws");
     }
 
     private async Task RejectUnauthorizedApiAsync(HttpContext context, ISessionService sessions, AuthOptions options)

@@ -11,6 +11,10 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\DevicePanel.Protocol\DevicePanel.Protocol.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
     <EmbeddedResource Include="Infrastructure\Migrations\*.sql" />
     <InternalsVisibleTo Include="DevicePanel.Web.Tests" />
   </ItemGroup>
