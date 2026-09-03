@@ -1,0 +1,14 @@
+bin/
+obj/
+artifacts/
+node_modules/
+dist/
+*.db
+*.db-shm
+*.db-wal
+.vs/
+.idea/
+*.user
+TestResults/
+playwright-report/
+test-results/
