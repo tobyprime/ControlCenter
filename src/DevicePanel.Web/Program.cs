@@ -2,6 +2,7 @@ using DevicePanel.Web.Auth;
 using DevicePanel.Web.Devices;
 using DevicePanel.Web.Endpoints;
 using DevicePanel.Web.Infrastructure;
+using DevicePanel.Web.Logs;
 using DevicePanel.Web.Metrics;
 using DevicePanel.Web.Terminal;
 
@@ -64,6 +65,15 @@ builder.Services.AddSingleton<IAgentMessageHandler, TermOutputHandler>();
 builder.Services.AddSingleton<IAgentMessageHandler, TermClosedHandler>();
 builder.Services.AddSingleton<IAgentMessageHandler, TermErrorHandler>();
 
+// 日志查看：按需只读拉取（logs.* 请求-响应），不落库
+var logsOptions = new LogsOptions();
+builder.Configuration.GetSection(LogsOptions.SectionName).Bind(logsOptions);
+builder.Services.AddSingleton(logsOptions);
+builder.Services.AddSingleton<LogQueryService>();
+builder.Services.AddSingleton<IAgentMessageHandler, LogsServicesResponseHandler>();
+builder.Services.AddSingleton<IAgentMessageHandler, LogsTailResponseHandler>();
+builder.Services.AddSingleton<IAgentMessageHandler, LogsErrorHandler>();
+
 builder.Services.AddHostedService<DatabaseInitializer>();
 builder.Services.AddHostedService<AccountSeeder>();
 
@@ -82,6 +92,7 @@ app.MapAuthEndpoints();
 app.MapDeviceEndpoints();
 app.MapMetricsEndpoints();
 app.MapTerminalEndpoints();
+app.MapLogEndpoints();
 app.MapAgentWsEndpoints();
 
 app.Run();
