@@ -19,6 +19,27 @@ public static class AgentMessageTypes
     /// <summary>指标上报前缀（预留，指标 issue 使用，如 metrics.report）。</summary>
     public const string MetricsPrefix = "metrics.";
 
+    /// <summary>终端打开请求：面板 → agent，payload {sessionId, cols, rows}；agent 就绪后回 term.opened，失败回 term.error。</summary>
+    public const string TermOpen = "term.open";
+
+    /// <summary>终端打开确认：agent → 面板，payload {sessionId}。</summary>
+    public const string TermOpened = "term.opened";
+
+    /// <summary>终端输入：面板 → agent，payload {sessionId, data}（base64 UTF-8 字节，保分块边界安全）。</summary>
+    public const string TermInput = "term.input";
+
+    /// <summary>终端输出：agent → 面板，payload {sessionId, data}（base64 UTF-8 字节）。</summary>
+    public const string TermOutput = "term.output";
+
+    /// <summary>终端关闭请求：面板 → agent，payload {sessionId}。</summary>
+    public const string TermClose = "term.close";
+
+    /// <summary>终端会话结束：agent → 面板（shell 退出或关闭完成），payload {sessionId}。</summary>
+    public const string TermClosed = "term.closed";
+
+    /// <summary>终端错误：agent → 面板（如打开 PTY 失败），payload {sessionId, message}。</summary>
+    public const string TermError = "term.error";
+
     /// <summary>终端通道前缀（预留，Web 终端 issue 使用，如 term.open/term.input/term.output/term.close）。</summary>
     public const string TermPrefix = "term.";
 

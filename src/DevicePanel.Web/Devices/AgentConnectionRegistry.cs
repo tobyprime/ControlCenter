@@ -70,6 +70,28 @@ public sealed class AgentConnectionRegistry
 
     public bool IsConnected(long deviceId) => _connections.ContainsKey(deviceId);
 
+    /// <summary>查询设备当前在线通道；不在线返回 null。</summary>
+    public IDeviceChannel? GetChannel(long deviceId) =>
+        _connections.TryGetValue(deviceId, out var entry) ? entry.Channel : null;
+
+    /// <summary>
+    /// 连接移除事件（断连/被顶替/心跳超时/删设备/token 重置）。
+    /// 终端会话等通道上的派生资源订阅它做清理；触发时机=登记表移除该通道。
+    /// </summary>
+    public event Action<long, IDeviceChannel>? ConnectionClosed;
+
+    private void OnConnectionClosed(long deviceId, IDeviceChannel channel)
+    {
+        try
+        {
+            ConnectionClosed?.Invoke(deviceId, channel);
+        }
+        catch
+        {
+            // 订阅方异常不影响注册表自身的清理路径
+        }
+    }
+
     /// <summary>
     /// 认证后注册连接，并复核设备仍存在：认证（token 校验）与注册之间设备可能被删除，
     /// 此时连接立即按 DeviceDeleted 关闭并移除，避免形成永不清理的 ghost 连接。
@@ -100,6 +122,7 @@ public sealed class AgentConnectionRegistry
         if (_connections.TryGetValue(deviceId, out var entry) && entry.Channel == channel)
         {
             _connections.TryRemove(new KeyValuePair<long, AgentConnectionEntry>(deviceId, entry));
+            OnConnectionClosed(deviceId, channel);
         }
     }
 
@@ -110,6 +133,7 @@ public sealed class AgentConnectionRegistry
             return false;
         }
 
+        OnConnectionClosed(deviceId, entry.Channel);
         _ = entry.Channel.CloseAsync((int)closeCode, reason, CancellationToken.None);
         return true;
     }
