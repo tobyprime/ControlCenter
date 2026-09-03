@@ -13,6 +13,9 @@ public static class AgentMessageTypes
     public const string AuthError = "auth.error";
     public const string Heartbeat = "heartbeat";
 
+    /// <summary>指标上报：agent 周期采集的 CPU/内存/磁盘/网络快照（指标 issue 使用）。</summary>
+    public const string MetricsReport = "metrics.report";
+
     /// <summary>指标上报前缀（预留，指标 issue 使用，如 metrics.report）。</summary>
     public const string MetricsPrefix = "metrics.";
 

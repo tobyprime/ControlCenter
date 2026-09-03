@@ -9,6 +9,7 @@ namespace DevicePanel.Agent;
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]
 [JsonSerializable(typeof(AuthPayload))]
 [JsonSerializable(typeof(HeartbeatPayload))]
+[JsonSerializable(typeof(MetricsPayload))]
 [JsonSerializable(typeof(AuthOkPayload))]
 internal sealed partial class AgentJsonContext : JsonSerializerContext;
 
@@ -16,22 +17,32 @@ internal sealed record AuthPayload(string Token);
 
 internal sealed record HeartbeatPayload(long UptimeSec);
 
+/// <summary>指标上报负载：百分比 0-100（cpu/mem/disk），网络速率字节/秒（netRx/netTx）。</summary>
+internal sealed record MetricsPayload(double Cpu, double Mem, double Disk, double NetRx, double NetTx);
+
 internal sealed record AuthOkPayload(long DeviceId, string Name);
 
 /// <summary>
-/// 轻量 agent：出站 WSS 回连面板 → auth 信封认证 → 每 HeartbeatIntervalSeconds 发送一次心跳。
+/// 轻量 agent：出站 WSS 回连面板 → auth 信封认证 → 每 HeartbeatIntervalSeconds 发送一次心跳与指标快照。
 /// 断线按指数退避重连；token 类拒绝（认证失败/设备删除/token 重置）不重试，需更换 token 后重启。
-/// 扩展点：后续指标/终端/日志通道在消息循环中按信封 type 接入处理器即可，不改信封与连接层。
+/// 扩展点：后续终端/日志通道在消息循环中按信封 type 接入处理器即可，不改信封与连接层。
 /// </summary>
 public sealed class AgentRunner
 {
     private readonly AgentOptions _options;
     private readonly TextWriter _output;
+    private readonly IMetricsCollector _metricsCollector;
 
     public AgentRunner(AgentOptions options, TextWriter output)
+        : this(options, output, new LinuxMetricsCollector())
+    {
+    }
+
+    internal AgentRunner(AgentOptions options, TextWriter output, IMetricsCollector metricsCollector)
     {
         _options = options;
         _output = output;
+        _metricsCollector = metricsCollector;
     }
 
     public async Task<int> RunAsync(CancellationToken cancellationToken)
@@ -106,10 +117,10 @@ public sealed class AgentRunner
         }
 
         var authOk = JsonSerializer.Deserialize(reply.Payload.GetRawText(), AgentJsonContext.Default.AuthOkPayload);
-        await _output.WriteLineAsync($"认证成功：设备 #{authOk?.DeviceId}（{authOk?.Name}），心跳周期 {_options.HeartbeatIntervalSeconds}s")
+        await _output.WriteLineAsync($"认证成功：设备 #{authOk?.DeviceId}（{authOk?.Name}），心跳与指标上报周期 {_options.HeartbeatIntervalSeconds}s")
             .ConfigureAwait(false);
 
-        // 消息循环：心跳到期即发送；收到面板下行消息按 type 处理（当前仅回执，后续指标/终端/日志在此扩展）
+        // 消息循环：心跳到期即发送心跳与指标快照；收到面板下行消息按 type 处理（后续终端/日志在此扩展）
         var heartbeatInterval = TimeSpan.FromSeconds(_options.HeartbeatIntervalSeconds);
         var nextHeartbeat = DateTimeOffset.UtcNow + heartbeatInterval;
         while (socket.State == WebSocketState.Open && !cancellationToken.IsCancellationRequested)
@@ -138,10 +149,31 @@ public sealed class AgentRunner
             await SendAsync(socket, AgentMessageTypes.Heartbeat, ++seq,
                 new HeartbeatPayload((long)(DateTimeOffset.UtcNow - startedAt).TotalSeconds),
                 AgentJsonContext.Default.HeartbeatPayload, cancellationToken).ConfigureAwait(false);
+            await SendMetricsReportAsync(socket, ++seq, cancellationToken).ConfigureAwait(false);
             nextHeartbeat = DateTimeOffset.UtcNow + heartbeatInterval;
         }
 
         return ConnectResult.ConnectionLost;
+    }
+
+    /// <summary>采集指标并按 metrics.report 上报；采集失败时跳过本周期，不影响心跳与连接。</summary>
+    private async Task SendMetricsReportAsync(ClientWebSocket socket, long seq, CancellationToken ct)
+    {
+        MetricsSample sample;
+        try
+        {
+            sample = _metricsCollector.Sample();
+        }
+        catch (Exception ex)
+        {
+            await _output.WriteLineAsync($"指标采集失败，本周期跳过：{ex.Message}").ConfigureAwait(false);
+            return;
+        }
+
+        await SendAsync(socket, AgentMessageTypes.MetricsReport, seq,
+            new MetricsPayload(sample.CpuPercent, sample.MemPercent, sample.DiskPercent,
+                sample.NetRxBytesPerSec, sample.NetTxBytesPerSec),
+            AgentJsonContext.Default.MetricsPayload, ct).ConfigureAwait(false);
     }
 
     private Task HandleInboundAsync(AgentEnvelope envelope)
