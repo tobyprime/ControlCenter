@@ -33,10 +33,10 @@ src/DevicePanel.Agent      轻量 agent：出站 WSS 回连、auth、心跳；�
 | `auth.ok` | 面板 → agent | 认证成功，payload `{deviceId, name}` |
 | `auth.error` | 面板 → agent | 认证失败，payload `{message}`，随后以 4001 关闭 |
 | `heartbeat` | agent → 面板 | 心跳（默认 30s 一个周期），payload `{uptimeSec}` |
+| `metrics.report` | agent → 面板 | 指标快照（与心跳同节拍发送，默认 30s），payload `{cpu, mem, disk, netRx, netTx}`；cpu/mem/disk 为百分比（0-100，disk 为根文件系统），netRx/netTx 为字节/秒 |
 
-预留前缀（本 issue 只留扩展点，不做业务）：
+预留前缀（后续 issue 只留扩展点，不做业务）：
 
-- `metrics.*` —— 指标上报（如 `metrics.report`）
 - `term.*` —— Web 终端（如 `term.open` / `term.input` / `term.output` / `term.close`）
 - `logs.*` —— 日志拉取（如 `logs.request` / `logs.response`）
 
@@ -80,7 +80,14 @@ services.AddSingleton<IAgentMessageHandler, MetricsReportHandler>();
 
 面板下行主动消息：从 `AgentConnectionRegistry` 取设备连接（或经自己的会话管理），`IDeviceChannel.SendAsync(AgentEnvelope.Create("term.open", seq, payload), ct)`。
 
-agent 侧：在 `AgentRunner` 消息循环的 `HandleInboundAsync` 处按 type 分发；上报类消息参照 `heartbeat` 的定时发送方式扩展（信封与连接层不动）。
+agent 侧：在 `AgentRunner` 消息循环的 `HandleInboundAsync` 处按 type 分发；上报类消息参照 `heartbeat`/`metrics.report` 的定时发送方式扩展（信封与连接层不动）。
+
+## 指标上报与面板存储（TOB-338）
+
+- agent 侧：`LinuxMetricsCollector` 每个心跳周期采集一次——CPU（/proc/stat 增量）、内存（/proc/meminfo）、磁盘（根文件系统用量）、网络（/proc/net/dev 增量，排除 lo，字节/秒）；首个周期 CPU/网络无增量基准报 0，采集失败跳过本周期不影响心跳。
+- 面板侧：`MetricsMessageHandler` 以面板 UTC 接收时间入库（明细 `metric_samples`），写入即增量更新小时/天级聚合桶（sum/count 均值 + max 峰值，`metric_samples_hourly` / `metric_samples_daily`）。
+- 查询：`GET /api/metrics/{deviceId}/series?from&to&granularity`；granularity=auto 时 ≤6h 明细 / ≤10 天小时聚合 / 更长天聚合，可显式指定 raw/hour/day 覆盖；聚合均值与明细均值口径一致。
+- 保留策略：`MetricsRetentionService` 启动即清理一次，之后每 6 小时清理超过保留期（`DevicePanel:Metrics:RetentionDays` 默认 30 天）的明细与聚合；删除设备级联删除其指标。
 
 ## 配置
 

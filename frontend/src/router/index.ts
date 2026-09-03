@@ -47,6 +47,12 @@ const router = createRouter({
           component: () => import('@/views/DevicesView.vue'),
           meta: { title: '设备管理' },
         },
+        {
+          path: 'metrics',
+          name: 'metrics',
+          component: () => import('@/views/MetricsView.vue'),
+          meta: { title: '指标曲线' },
+        },
       ],
     },
     {

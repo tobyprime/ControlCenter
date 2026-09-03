@@ -41,6 +41,7 @@ async function onLogout() {
         <nav class="nav">
           <RouterLink class="nav-item" to="/">首页</RouterLink>
           <RouterLink class="nav-item" to="/devices" :class="{ active: route.name === 'devices' }">设备管理</RouterLink>
+          <RouterLink class="nav-item" to="/metrics" :class="{ active: route.name === 'metrics' }">指标曲线</RouterLink>
           <span class="nav-item disabled">Web 终端（建设中）</span>
           <span class="nav-item disabled">日志查看（建设中）</span>
           <span class="nav-item disabled">告警配置（建设中）</span>

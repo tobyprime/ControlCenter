@@ -15,4 +15,8 @@
     <ProjectReference Include="..\DevicePanel.Protocol\DevicePanel.Protocol.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <InternalsVisibleTo Include="DevicePanel.Agent.Tests" />
+  </ItemGroup>
+
 </Project>
