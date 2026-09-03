@@ -14,17 +14,24 @@ src/DevicePanel.Web/Devices
   ├─ AgentMessageDispatcher  按 type 路由；未注册类型忽略（向前兼容）
   ├─ AgentConnectionRegistry  设备 ID → 在线连接；删除断连 / 重置断连 / 心跳超时清理
   └─ HeartbeatMessageHandler  内置心跳处理器（也是新增处理器的参考实现）
-src/DevicePanel.Web/Terminal  Web 终端（TOB-339）
+src/DevicePanel.Web/Terminal Web 终端（TOB-339）
   ├─ TerminalEndpoints     浏览器 WS 入口 /api/devices/{id}/terminal + 留痕查询 API
   ├─ TerminalRelay         浏览器 ↔ agent 双向中继（会话收尾 + 留痕落库）
   ├─ TerminalSessionRegistry  sessionId → 活跃中继（term.* 下行投递）
   ├─ TerminalMessageHandlers  term.opened/output/closed/error 处理器
   └─ TerminalStore         会话元数据与命令/输出留痕（SQLite，随设备级联删除）
+src/DevicePanel.Web/Logs   日志查看（TOB-340）
+  ├─ LogEndpoints          服务清单 /api/devices/{id}/logs/services + 尾部拉取 /logs/tail
+  ├─ LogQueryService       REST → logs.* 下行请求，按（通道, seq）关联响应（通道绑定/超时）
+  └─ LogMessageHandlers    logs.services.response/logs.tail.response/logs.error 处理器
 src/DevicePanel.Agent      轻量 agent：出站 WSS 回连、auth、心跳；消息循环按 type 可扩展
 src/DevicePanel.Agent/Terminal  终端通道（TOB-339）
   ├─ TerminalChannel       term.* 下行处理：会话登记、输入写入、输出泵
   ├─ LinuxPtySession       PTY shell 会话（openpty + posix_spawn，raw fd 读写）
   └─ AgentDownlink         每连接下行发送器（与节拍共用发送锁）
+src/DevicePanel.Agent/Logs 日志通道（TOB-340）
+  ├─ LogsChannel           logs.* 下行处理：请求后台化执行、按请求 seq 回包
+  └─ LinuxLogsSource       服务清单发现（systemctl/docker ps）与尾部读取（journalctl/docker logs，只读）
 ```
 
 ## 消息信封
@@ -47,7 +54,7 @@ src/DevicePanel.Agent/Terminal  终端通道（TOB-339）
 
 预留前缀（后续 issue 只留扩展点，不做业务）：
 
-- `logs.*` —— 日志拉取（如 `logs.request` / `logs.response`）
+- `logs.*` —— 日志拉取（TOB-340 已实现，见下节）
 
 ### 终端通道 term.*（TOB-339 已实现）
 
@@ -83,6 +90,35 @@ src/DevicePanel.Agent/Terminal  终端通道（TOB-339）
 - **预设命令**：面板侧定义命令模板，下发即转发为 `term.input`（无需新消息类型）；如需服务端执行语义，可扩 `term.preset` `{sessionId, commandId}`。
 - **文件传输**：沿用同一信封扩展 `file.*` 前缀（如 `file.offer` / `file.chunk` / `file.ack`，payload 带 sessionId 关联终端会话），复用 term.input 的通道与留痕模式。
 - **会话参数**：`term.open` 负载追加字段（如环境变量、初始目录），信封与既有消费者不受影响（payload 不透明原则）。
+
+### 日志通道 logs.*（TOB-340 已实现）
+
+请求-响应型消息（与 term.* 的会话型不同）：响应沿用请求的 seq 做关联（协议通用约定），
+多个在途请求靠 seq 区分；面板侧按「设备通道 + seq」登记挂起请求，通道绑定校验防跨设备/陈旧连接串扰。
+拉取只读按需进行：agent 只执行 `systemctl list-units` / `journalctl -u <unit>` / `docker ps` / `docker logs` 四类只读命令，
+不改变目标机状态，零入站端口不变；面板侧不落库（明确不做全量长期存储，仅尾部查看）。
+
+| type | 方向 | payload | 说明 |
+|---|---|---|---|
+| `logs.services.request` | 面板 → agent | `{}` | 请求目标机可查看日志的服务清单 |
+| `logs.services.response` | agent → 面板 | `{services:[{name,kind,description}]}` | kind 为 systemd/docker；seq 沿用请求 |
+| `logs.tail.request` | 面板 → agent | `{service, kind, lines}` | service 为 unit/容器名；lines 1–1000（面板默认 200） |
+| `logs.tail.response` | agent → 面板 | `{lines:[{ts,level,message}]}` | ts 为 ISO-8601 UTC（缺失为空串）；seq 沿用请求 |
+| `logs.error` | agent → 面板 | `{message}` | 服务不存在/命令失败/超时等；seq 沿用请求 |
+
+实现契约：
+
+- 服务清单发现：动态执行只读命令合并两路来源——systemd（`systemctl list-units --type=service`，journalctl 可查历史日志）与
+  docker（`docker ps -a`，容器在停机状态也有日志）；单来源不可用（非 systemd 主机/未装 docker）跳过该来源。
+  取舍：动态发现零配置、如实反映目标机现状，代价是每次打开日志页查询一次（频率可忽略）；
+  不用静态配置（易过期）与 `list-unit-files`（含从未启动、无日志的单元）。
+- 级别提取：systemd 用 journalctl `PRIORITY`（0-3→error，4→warn，5/6→info，7→debug）精确映射；
+  docker 日志无级别字段，按消息关键词启发式判级（error/fatal/failed→error，warn→warn，debug/trace→debug，其余 info）。
+- 慢请求不阻塞节拍：logs.* 请求处理在 agent 侧立即后台化（回归锚：AgentLogsIntegrationTests，
+  TOB-338「下行信封不打断心跳/指标节拍」在日志路径上的延伸）；命令超时 20s 折算成 logs.error。
+- 名称防注入：服务名按白名单校验（`[A-Za-z0-9._@:-]`），面板与 agent 双侧校验；docker logs 经 /bin/sh 合并 stdout/stderr。
+- 面板 API：`GET /api/devices/{id}/logs/services`；`GET /api/devices/{id}/logs/tail?service&kind&lines`（默认 200，上限 1000）。
+  设备离线 409、agent 错误 502、等待超时 504（`DevicePanel:Logs:RequestTimeoutSeconds` 默认 30）。
 
 ## WebSocket 关闭码
 
@@ -124,7 +160,10 @@ services.AddSingleton<IAgentMessageHandler, MetricsReportHandler>();
 
 面板下行主动消息：从 `AgentConnectionRegistry` 取设备连接（或经自己的会话管理），`IDeviceChannel.SendAsync(AgentEnvelope.Create("term.open", seq, payload), ct)`。
 
-agent 侧：实现 `ITerminalChannel`（如 `TerminalChannel` 对 term.* 的处理），由构造注入 AgentRunner 的 `terminalChannelFactory` 接入消息循环；下行主动发送经每连接的 `AgentDownlink`（与节拍共用一把发送锁，ClientWebSocket 不允许并发发送）。上报类消息参照 `heartbeat`/`metrics.report` 的定时发送方式扩展（信封与连接层不动）。
+agent 侧：按消息形态实现对应通道接口——会话型实现 `ITerminalChannel`（如 `TerminalChannel` 对 term.* 的处理），
+请求-响应型实现 `ILogsChannel`（如 `LogsChannel` 对 logs.* 的处理，响应按请求 seq 回包），
+均由构造注入 AgentRunner 的对应工厂参数接入消息循环（下行按 type 前缀路由）；下行主动发送经每连接的 `AgentDownlink`
+（与节拍共用一把发送锁，ClientWebSocket 不允许并发发送）。上报类消息参照 `heartbeat`/`metrics.report` 的定时发送方式扩展（信封与连接层不动）。
 
 ## 指标上报与面板存储（TOB-338）
 
@@ -139,6 +178,7 @@ agent 侧：实现 `ITerminalChannel`（如 `TerminalChannel` 对 term.* 的处�
 |---|---|---|
 | `DevicePanel:Agent:HeartbeatIntervalSeconds` | `30` | 心跳周期；离线阈值 = 2×该值 |
 | `DevicePanel:Agent:AuthTimeoutSeconds` | `10` | WS 建立后等待 auth 信封的超时 |
+| `DevicePanel:Logs:RequestTimeoutSeconds` | `30` | 面板等待 agent 日志响应的超时（超时返回 504） |
 
 ## Agent 构建与运行
 

@@ -18,6 +18,10 @@ namespace DevicePanel.Agent;
 [JsonSerializable(typeof(TermOutputPayload))]
 [JsonSerializable(typeof(TermClosedPayload))]
 [JsonSerializable(typeof(TermErrorPayload))]
+[JsonSerializable(typeof(LogsTailRequestPayload))]
+[JsonSerializable(typeof(LogsServicesPayload))]
+[JsonSerializable(typeof(LogsTailPayload))]
+[JsonSerializable(typeof(LogsErrorPayload))]
 internal sealed partial class AgentJsonContext : JsonSerializerContext;
 
 internal sealed record AuthPayload(string Token);
@@ -32,7 +36,7 @@ internal sealed record AuthOkPayload(long DeviceId, string Name);
 /// <summary>
 /// 轻量 agent：出站 WSS 回连面板 → auth 信封认证 → 每 HeartbeatIntervalSeconds 发送一次心跳与指标快照。
 /// 断线按指数退避重连；token 类拒绝（认证失败/设备删除/token 重置）不重试，需更换 token 后重启。
-/// 扩展点：终端（term.*）/日志（logs.*）等下行通道经 ITerminalChannel 接入消息循环，不改信封与连接层。
+/// 扩展点：终端（term.*）/日志（logs.*）等下行通道经 ITerminalChannel/ILogsChannel 接入消息循环，不改信封与连接层。
 /// </summary>
 public sealed class AgentRunner
 {
@@ -40,20 +44,24 @@ public sealed class AgentRunner
     private readonly TextWriter _output;
     private readonly IMetricsCollector _metricsCollector;
     private readonly Func<IAgentDownlink, ITerminalChannel>? _terminalChannelFactory;
+    private readonly Func<IAgentDownlink, ILogsChannel>? _logsChannelFactory;
 
     public AgentRunner(AgentOptions options, TextWriter output)
         : this(options, output, new LinuxMetricsCollector(),
-            downlink => new TerminalChannel(downlink, new LinuxPtySessionFactory(), output))
+            downlink => new TerminalChannel(downlink, new LinuxPtySessionFactory(), output),
+            downlink => new LogsChannel((ILogsDownlink)downlink, new LinuxLogsSource(new ProcessCommandRunner()), output))
     {
     }
 
     internal AgentRunner(AgentOptions options, TextWriter output, IMetricsCollector metricsCollector,
-        Func<IAgentDownlink, ITerminalChannel>? terminalChannelFactory = null)
+        Func<IAgentDownlink, ITerminalChannel>? terminalChannelFactory = null,
+        Func<IAgentDownlink, ILogsChannel>? logsChannelFactory = null)
     {
         _options = options;
         _output = output;
         _metricsCollector = metricsCollector;
         _terminalChannelFactory = terminalChannelFactory;
+        _logsChannelFactory = logsChannelFactory;
     }
 
     public async Task<int> RunAsync(CancellationToken cancellationToken)
@@ -135,9 +143,10 @@ public sealed class AgentRunner
         // 下行通道按连接创建：断开/重连时随连接销毁（终端会话等派生资源一并终止）；
         // 节拍发送也经 downlink 走同一把发送锁（ClientWebSocket 不允许并发发送）
         ITerminalChannel? channel = _terminalChannelFactory?.Invoke(downlink);
+        ILogsChannel? logsChannel = _logsChannelFactory?.Invoke(downlink);
         try
         {
-            await MessageLoopAsync(socket, downlink, channel, startedAt, cancellationToken).ConfigureAwait(false);
+            await MessageLoopAsync(socket, downlink, channel, logsChannel, startedAt, cancellationToken).ConfigureAwait(false);
         }
         finally
         {
@@ -156,7 +165,8 @@ public sealed class AgentRunner
     /// 关键约束：不能取消挂起的 ReceiveAsync——取消会直接中止 ClientWebSocket 连接（State=Aborted），
     /// 心跳与指标将永远不会发出（回归锚：AgentRunnerLoopTests）。
     /// </summary>
-    private async Task MessageLoopAsync(ClientWebSocket socket, AgentDownlink downlink, ITerminalChannel? channel, DateTimeOffset startedAt, CancellationToken cancellationToken)
+    private async Task MessageLoopAsync(ClientWebSocket socket, AgentDownlink downlink, ITerminalChannel? channel,
+        ILogsChannel? logsChannel, DateTimeOffset startedAt, CancellationToken cancellationToken)
     {
         var heartbeatInterval = TimeSpan.FromSeconds(_options.HeartbeatIntervalSeconds);
         using var heartbeatTimer = new PeriodicTimer(heartbeatInterval);
@@ -179,7 +189,7 @@ public sealed class AgentRunner
                         break; // 连接关闭或异常断开
                     }
 
-                    await HandleInboundAsync(inbound, channel).ConfigureAwait(false);
+                    await HandleInboundAsync(inbound, channel, logsChannel).ConfigureAwait(false);
                     continue; // 未决的 tick 任务保留，下轮继续观察
                 }
 
@@ -242,13 +252,28 @@ public sealed class AgentRunner
             AgentJsonContext.Default.MetricsPayload, ct).ConfigureAwait(false);
     }
 
-    private async Task HandleInboundAsync(AgentEnvelope envelope, ITerminalChannel? channel)
+    private async Task HandleInboundAsync(AgentEnvelope envelope, ITerminalChannel? channel, ILogsChannel? logsChannel)
     {
-        if (channel is not null)
+        // 扩展点：按前缀路由到对应通道；各通道内部兜异常——下行失败不打断心跳/指标节拍（回归锚：AgentRunnerLoopTests）
+        try
         {
-            // 扩展点：term.*（终端）/logs.*（日志）等下行消息交给通道处理；
-            // 通道内部兜异常——下行失败不打断心跳/指标节拍（回归锚：AgentRunnerLoopTests）
-            await channel.HandleAsync(envelope, CancellationToken.None).ConfigureAwait(false);
+            if (channel is not null &&
+                envelope.Type.StartsWith(AgentMessageTypes.TermPrefix, StringComparison.Ordinal))
+            {
+                await channel.HandleAsync(envelope, CancellationToken.None).ConfigureAwait(false);
+                return;
+            }
+
+            if (logsChannel is not null &&
+                envelope.Type.StartsWith(AgentMessageTypes.LogsPrefix, StringComparison.Ordinal))
+            {
+                await logsChannel.HandleAsync(envelope, CancellationToken.None).ConfigureAwait(false);
+                return;
+            }
+        }
+        catch (Exception ex)
+        {
+            await _output.WriteLineAsync($"下行消息处理异常（{envelope.Type}）：{ex.Message}").ConfigureAwait(false);
             return;
         }
 

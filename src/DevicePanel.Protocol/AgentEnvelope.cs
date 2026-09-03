@@ -46,7 +46,22 @@ public static class AgentMessageTypes
     /// <summary>终端通道前缀（预留，Web 终端 issue 使用，如 term.open/term.input/term.output/term.close）。</summary>
     public const string TermPrefix = "term.";
 
-    /// <summary>日志拉取前缀（预留，日志 issue 使用，如 logs.request/logs.response）。</summary>
+    /// <summary>日志服务清单请求：面板 → agent，payload 为空对象；agent 回 logs.services.response（seq 沿用请求）。</summary>
+    public const string LogsServicesRequest = "logs.services.request";
+
+    /// <summary>日志服务清单响应：agent → 面板，payload {services:[{name,kind,description}]}；seq 沿用请求。</summary>
+    public const string LogsServicesResponse = "logs.services.response";
+
+    /// <summary>日志尾部拉取请求：面板 → agent，payload {service, kind, lines}；agent 回 logs.tail.response（seq 沿用请求）。</summary>
+    public const string LogsTailRequest = "logs.tail.request";
+
+    /// <summary>日志尾部响应：agent → 面板，payload {lines:[{ts,level,message}]}；seq 沿用请求。</summary>
+    public const string LogsTailResponse = "logs.tail.response";
+
+    /// <summary>日志拉取错误：agent → 面板（请求无法执行，如服务不存在/命令失败），payload {message}；seq 沿用请求。</summary>
+    public const string LogsError = "logs.error";
+
+    /// <summary>日志拉取前缀（日志 issue 使用：logs.services.request/response、logs.tail.request/response、logs.error）。</summary>
     public const string LogsPrefix = "logs.";
 }
 

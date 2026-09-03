@@ -60,7 +60,7 @@ internal interface ITerminalChannel
 /// 面板下行（agent 侧）默认实现：单条 WS 连接上的信封发送器。
 /// ClientWebSocket 不允许并发发送：节拍（心跳/指标）与终端泵的发送共用一把锁串行化。
 /// </summary>
-internal sealed class AgentDownlink : IAgentDownlink
+internal sealed class AgentDownlink : IAgentDownlink, ILogsDownlink
 {
     private readonly ClientWebSocket _socket;
     private readonly SemaphoreSlim _sendLock = new(1, 1);
@@ -102,6 +102,28 @@ internal sealed class AgentDownlink : IAgentDownlink
             seq => AgentEnvelope.Create(AgentMessageTypes.TermError, seq,
                 JsonSerializer.SerializeToElement(new TermErrorPayload(sessionId, message), AgentJsonContext.Default.TermErrorPayload)),
             cancellationToken, throwWhenClosed: false);
+
+    // logs.* 响应按请求 seq 回包（请求-响应关联），与节拍发送共用同一把发送锁
+    public Task SendServicesResponseAsync(long seq, IReadOnlyList<LogsServicePayload> services, CancellationToken cancellationToken) =>
+        SendCoreAsync(AgentMessageTypes.LogsServicesResponse,
+            () => AgentEnvelope.Create(AgentMessageTypes.LogsServicesResponse, seq,
+                JsonSerializer.SerializeToElement(new LogsServicesPayload(services), AgentJsonContext.Default.LogsServicesPayload)),
+            cancellationToken);
+
+    public Task SendTailResponseAsync(long seq, IReadOnlyList<LogsLinePayload> lines, CancellationToken cancellationToken) =>
+        SendCoreAsync(AgentMessageTypes.LogsTailResponse,
+            () => AgentEnvelope.Create(AgentMessageTypes.LogsTailResponse, seq,
+                JsonSerializer.SerializeToElement(new LogsTailPayload(lines), AgentJsonContext.Default.LogsTailPayload)),
+            cancellationToken);
+
+    public Task SendLogsErrorAsync(long seq, string message, CancellationToken cancellationToken) =>
+        SendCoreAsync(AgentMessageTypes.LogsError,
+            () => AgentEnvelope.Create(AgentMessageTypes.LogsError, seq,
+                JsonSerializer.SerializeToElement(new LogsErrorPayload(message), AgentJsonContext.Default.LogsErrorPayload)),
+            cancellationToken);
+
+    private Task SendCoreAsync(string type, Func<AgentEnvelope> envelopeFactory, CancellationToken ct) =>
+        SendCoreAsync(type, _ => envelopeFactory(), ct, throwWhenClosed: false);
 
     private async Task SendCoreAsync(string type, Func<long, AgentEnvelope> envelopeFactory, CancellationToken ct, bool throwWhenClosed)
     {
