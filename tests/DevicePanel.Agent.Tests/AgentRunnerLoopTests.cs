@@ -65,6 +65,56 @@ public class AgentRunnerLoopTests
         Assert.Equal(1, server.AuthCount);
     }
 
+    [Fact]
+    public async Task Downstream_Message_Does_Not_Disrupt_Cadence_Or_Connection()
+    {
+        // 回归（TOB-338 审查问题 1）：下行信封先于节拍到达时，挂起的 tick 等待不能被并发等待——
+        // 修复前下一轮 WaitForNextTickAsync 当场抛 InvalidOperationException，连接弃置重连，
+        // term.*/logs.*（TOB-339/340）的下行会话将无法维持。
+        using var server = new RecordingWsServer();
+        await server.StartAsync();
+
+        var collector = new FixedCollector(new MetricsSample(11, 22, 33, 4400, 5500));
+        var options = new AgentOptions
+        {
+            Url = $"ws://127.0.0.1:{server.Port}/agent/ws",
+            Token = "dpk_test",
+            HeartbeatIntervalSeconds = 1,
+        };
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        var runner = new AgentRunner(options, new StringWriter(), collector);
+        var runTask = Task.Run(() => runner.RunAsync(cts.Token));
+
+        // 等待接入且首个心跳已到，随后服务端主动下发一条下行消息
+        var deadline = DateTime.UtcNow.AddSeconds(3);
+        while (server.ReceivedSnapshot().Count(e => e.Type == AgentMessageTypes.Heartbeat) == 0)
+        {
+            Assert.True(DateTime.UtcNow < deadline, "等待首个心跳超时");
+            await Task.Delay(50, CancellationToken.None);
+        }
+
+        await server.SendDownstreamAsync(AgentEnvelope.Create("term.open", 0,
+            JsonSerializer.SerializeToElement(new { sessionId = "s1" })));
+
+        await Task.Delay(2500, CancellationToken.None);
+        await cts.CancelAsync();
+        try
+        {
+            await runTask;
+        }
+        catch (OperationCanceledException)
+        {
+        }
+
+        // 下行后连接未重连：auth 仍恰好 1 次，且节拍继续（下行之后再有心跳/指标到达）
+        Assert.Equal(1, server.AuthCount);
+        var envelopes = server.ReceivedSnapshot();
+        Assert.True(envelopes.Count(e => e.Type == AgentMessageTypes.Heartbeat) >= 3,
+            $"下行后心跳中断：{Describe(envelopes)}");
+        Assert.True(envelopes.Count(e => e.Type == AgentMessageTypes.MetricsReport) >= 3,
+            $"下行后指标上报中断：{Describe(envelopes)}");
+    }
+
     private static string Describe(List<AgentEnvelope> envelopes) =>
         string.Join(",", envelopes.Select(e => e.Type));
 
@@ -77,10 +127,11 @@ public class AgentRunnerLoopTests
         public MetricsSample Sample() => _sample;
     }
 
-    /// <summary>内建 Kestrel WS 服务：接受任意 token，记录全部入站信封，保持连接打开。</summary>
+    /// <summary>内建 Kestrel WS 服务：接受任意 token，记录全部入站信封，保持连接打开，支持服务端主动下行。</summary>
     private sealed class RecordingWsServer : IDisposable
     {
         private readonly ConcurrentQueue<AgentEnvelope> _received = new();
+        private readonly ConcurrentQueue<WebSocket> _connections = new();
         private WebApplication? _app;
 
         public int AuthCount => _authCount;
@@ -89,6 +140,16 @@ public class AgentRunnerLoopTests
         public int Port { get; private set; }
 
         public List<AgentEnvelope> ReceivedSnapshot() => _received.ToList();
+
+        /// <summary>向当前在线连接主动下发一条信封（模拟面板下行，如 term.*/logs.*）。</summary>
+        public async Task SendDownstreamAsync(AgentEnvelope envelope)
+        {
+            var socket = _connections.FirstOrDefault(s => s.State == WebSocketState.Open)
+                ?? throw new InvalidOperationException("没有在线连接可下发");
+            await socket.SendAsync(
+                JsonSerializer.SerializeToUtf8Bytes(envelope, ProtocolJsonContext.Default.AgentEnvelope),
+                WebSocketMessageType.Text, true, CancellationToken.None);
+        }
 
         public async Task StartAsync()
         {
@@ -101,6 +162,7 @@ public class AgentRunnerLoopTests
             app.MapGet("/agent/ws", async (HttpContext http) =>
             {
                 var socket = await http.WebSockets.AcceptWebSocketAsync();
+                _connections.Enqueue(socket);
                 var buffer = new byte[64 * 1024];
                 while (socket.State == WebSocketState.Open)
                 {

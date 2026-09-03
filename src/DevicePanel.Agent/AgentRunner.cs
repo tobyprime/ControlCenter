@@ -125,7 +125,8 @@ public sealed class AgentRunner
     }
 
     /// <summary>
-    /// 消息循环：下行接收用独立任务持续等待，心跳/指标按 PeriodicTimer 节拍发送，两者并发（ClientWebSocket 允许一收一发并行）。
+    /// 消息循环：下行接收与节拍等待都用跨迭代的持久任务（PeriodicTimer 不允许并发等待，
+    /// 下行先到时未决的 tick 任务必须保留到下轮观察），心跳/指标按节拍发送（ClientWebSocket 允许一收一发并行）。
     /// 关键约束：不能取消挂起的 ReceiveAsync——取消会直接中止 ClientWebSocket 连接（State=Aborted），
     /// 心跳与指标将永远不会发出（回归锚：AgentRunnerLoopTests）。
     /// </summary>
@@ -136,12 +137,13 @@ public sealed class AgentRunner
         using var sessionCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         var seq = 0L;
         Task<AgentEnvelope?>? inboundTask = null;
+        Task<bool>? tickTask = null;
         try
         {
             while (socket.State == WebSocketState.Open && !cancellationToken.IsCancellationRequested)
             {
                 inboundTask ??= ReceiveAsync(socket, sessionCts.Token);
-                var tickTask = heartbeatTimer.WaitForNextTickAsync(cancellationToken).AsTask();
+                tickTask ??= heartbeatTimer.WaitForNextTickAsync(cancellationToken).AsTask();
                 var completed = await Task.WhenAny(inboundTask, tickTask).ConfigureAwait(false);
                 if (completed == inboundTask)
                 {
@@ -153,9 +155,11 @@ public sealed class AgentRunner
                     }
 
                     await HandleInboundAsync(inbound).ConfigureAwait(false);
-                    continue;
+                    continue; // 未决的 tick 任务保留，下轮继续观察
                 }
 
+                await tickTask.ConfigureAwait(false); // 节拍到期（观察并消费本次 tick）
+                tickTask = null;
                 await SendAsync(socket, AgentMessageTypes.Heartbeat, ++seq,
                     new HeartbeatPayload((long)(DateTimeOffset.UtcNow - startedAt).TotalSeconds),
                     AgentJsonContext.Default.HeartbeatPayload, cancellationToken).ConfigureAwait(false);
@@ -164,7 +168,8 @@ public sealed class AgentRunner
         }
         finally
         {
-            // 收尾：取消仍挂起的接收并等待其结束（取消在连接关闭场景才发生，中止无需顾虑）
+            // 收尾：取消仍挂起的接收并等待其结束（取消在连接关闭场景才发生，中止无需顾虑）；
+            // 未决任务一律观察，避免未观察异常（tick 收尾异常/取消与连接已无关）
             sessionCts.Cancel();
             if (inboundTask is not null)
             {
@@ -175,6 +180,18 @@ public sealed class AgentRunner
                 catch (Exception)
                 {
                     // 收尾排空：连接已无关紧要
+                }
+            }
+
+            if (tickTask is not null)
+            {
+                try
+                {
+                    await tickTask.ConfigureAwait(false);
+                }
+                catch (Exception)
+                {
+                    // 收尾排空：timer 取消/释放的异常无需上抛
                 }
             }
         }
