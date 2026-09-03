@@ -26,7 +26,7 @@ public class MetricsRetentionTests : IDisposable
     }
 
     [Fact]
-    public void CleanupOnce_Deletes_Expired_Data_And_Keeps_Recent()
+    public async Task CleanupOnce_Deletes_Expired_Data_And_Keeps_Recent()
     {
         var store = new MetricsStore(_database.Factory);
         var recent = _clock.GetUtcNow().AddDays(-2);
@@ -35,7 +35,7 @@ public class MetricsRetentionTests : IDisposable
         store.Insert(_deviceId, expired, new MetricsPoint(expired, 99, 20, 30, 100, 200));
 
         var service = CreateService();
-        var result = service.CleanupOnceAsync(CancellationToken.None).GetAwaiter().GetResult();
+        var result = await service.CleanupOnceAsync(CancellationToken.None);
 
         Assert.Equal(1, result.DetailDeleted);
         Assert.Equal(1, result.HourlyDeleted);
@@ -45,15 +45,15 @@ public class MetricsRetentionTests : IDisposable
     }
 
     [Fact]
-    public void CleanupOnce_Respects_Configured_Retention_Days()
+    public async Task CleanupOnce_Respects_Configured_Retention_Days()
     {
         var store = new MetricsStore(_database.Factory);
         var withinDefault = _clock.GetUtcNow().AddDays(-20);
-        store.Insert(1, withinDefault, new MetricsPoint(withinDefault, 10, 20, 30, 100, 200));
+        store.Insert(_deviceId, withinDefault, new MetricsPoint(withinDefault, 10, 20, 30, 100, 200));
 
         // 保留期缩到 7 天后，20 天前的数据应被清理
         var service = CreateService(retentionDays: 7);
-        var result = service.CleanupOnceAsync(CancellationToken.None).GetAwaiter().GetResult();
+        var result = await service.CleanupOnceAsync(CancellationToken.None);
 
         Assert.Equal(1, result.DetailDeleted);
         Assert.Empty(store.QueryRaw(_deviceId, withinDefault.AddMinutes(-1), withinDefault.AddMinutes(1)));
