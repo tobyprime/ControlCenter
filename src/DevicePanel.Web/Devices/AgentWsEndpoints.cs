@@ -80,7 +80,13 @@ internal sealed class AgentWsSession
 
             deviceId = authenticated.Value.DeviceId;
             connection.DeviceId = deviceId;
-            _connections.TryAdd(deviceId, connection);
+            // 注册后复核设备仍存在：认证期间设备可能已被删除（删除窗口竞态）
+            if (!_connections.TryRegister(deviceId, connection, () => _devices.Get(deviceId) is not null))
+            {
+                _logger.LogInformation("设备 {DeviceId} 在认证过程中被删除，连接已关闭", deviceId);
+                return;
+            }
+
             MarkSeen(deviceId, connection);
             await SendAsync(connection, AgentMessageTypes.AuthOk, authenticated.Value.Seq, new
             {

@@ -70,6 +70,22 @@ public sealed class AgentConnectionRegistry
 
     public bool IsConnected(long deviceId) => _connections.ContainsKey(deviceId);
 
+    /// <summary>
+    /// 认证后注册连接，并复核设备仍存在：认证（token 校验）与注册之间设备可能被删除，
+    /// 此时连接立即按 DeviceDeleted 关闭并移除，避免形成永不清理的 ghost 连接。
+    /// </summary>
+    public bool TryRegister(long deviceId, IDeviceChannel channel, Func<bool> deviceExists)
+    {
+        TryAdd(deviceId, channel);
+        if (deviceExists())
+        {
+            return true;
+        }
+
+        TryDisconnect(deviceId, WebSocketCloseCodes.DeviceDeleted, "设备已删除");
+        return false;
+    }
+
     public void Touch(long deviceId, DateTimeOffset seenAtUtc)
     {
         if (_connections.TryGetValue(deviceId, out var entry))

@@ -74,11 +74,15 @@ public static class DeviceEndpoints
             IDeviceRegistry registry,
             AgentConnectionRegistry connections) =>
         {
-            // 先断开在线连接（令其通道失效），再删除台账记录与 token
+            // 先删台账与 token（此后用该 token 的新认证即被拒），再断开已注册的在线连接；
+            // 「认证后、注册前」落入窗口的连接由注册后复核（AgentConnectionRegistry.TryRegister）兜底关闭
+            if (!registry.Delete(id))
+            {
+                return Results.NotFound(new { error = "设备不存在" });
+            }
+
             connections.TryDisconnect(id, WebSocketCloseCodes.DeviceDeleted, "设备已删除");
-            return registry.Delete(id)
-                ? Results.NoContent()
-                : Results.NotFound(new { error = "设备不存在" });
+            return Results.NoContent();
         });
 
         devices.MapPost("/{id:long}/token", (

@@ -195,4 +195,32 @@ public class AgentConnectionRegistryTests
         Assert.Equal(new[] { (int)WebSocketCloseCodes.DeviceDeleted }, channel.CloseCalls);
         Assert.False(registry.TryDisconnect(1, WebSocketCloseCodes.DeviceDeleted, "设备已删除"));
     }
+
+    [Fact]
+    public void TryRegister_Discards_Connection_When_Device_Deleted_During_Auth_Window()
+    {
+        // 删除窗口竞态：auth 校验 token 时设备还在，注册进 registry 前设备被删
+        // ——连接必须立即按 4002 关闭并移除，否则成为永不清理的 ghost 连接
+        var registry = new AgentConnectionRegistry();
+        var channel = new FakeDeviceChannel();
+
+        var registered = registry.TryRegister(1, channel, deviceExists: () => false);
+
+        Assert.False(registered);
+        Assert.False(registry.IsConnected(1));
+        Assert.Equal(new[] { (int)WebSocketCloseCodes.DeviceDeleted }, channel.CloseCalls);
+    }
+
+    [Fact]
+    public void TryRegister_Keeps_Connection_When_Device_Still_Exists()
+    {
+        var registry = new AgentConnectionRegistry();
+        var channel = new FakeDeviceChannel();
+
+        var registered = registry.TryRegister(1, channel, deviceExists: () => true);
+
+        Assert.True(registered);
+        Assert.True(registry.IsConnected(1));
+        Assert.Empty(channel.CloseCalls);
+    }
 }
