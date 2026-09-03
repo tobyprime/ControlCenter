@@ -3,6 +3,7 @@ using DevicePanel.Web.Devices;
 using DevicePanel.Web.Endpoints;
 using DevicePanel.Web.Infrastructure;
 using DevicePanel.Web.Metrics;
+using DevicePanel.Web.Terminal;
 
 // wwwroot 双候选解析：发布产物从仓库根目录运行时，静态文件回退到应用目录自带的 wwwroot。
 // 解析不到时保持宿主默认探测（如 WebApplicationFactory 场景）；ContentRoot 一律不覆盖。
@@ -55,6 +56,14 @@ builder.Services.AddSingleton(metricsOptions);
 builder.Services.AddSingleton<IMetricsStore, MetricsStore>();
 builder.Services.AddSingleton<IAgentMessageHandler, MetricsMessageHandler>();
 
+// Web 终端：浏览器 ↔ agent 中继、留痕存储与 term.* 下行处理
+builder.Services.AddSingleton<ITerminalStore, TerminalStore>();
+builder.Services.AddSingleton<TerminalSessionRegistry>();
+builder.Services.AddSingleton<IAgentMessageHandler, TermOpenedHandler>();
+builder.Services.AddSingleton<IAgentMessageHandler, TermOutputHandler>();
+builder.Services.AddSingleton<IAgentMessageHandler, TermClosedHandler>();
+builder.Services.AddSingleton<IAgentMessageHandler, TermErrorHandler>();
+
 builder.Services.AddHostedService<DatabaseInitializer>();
 builder.Services.AddHostedService<AccountSeeder>();
 
@@ -72,6 +81,7 @@ app.MapHealthEndpoints();
 app.MapAuthEndpoints();
 app.MapDeviceEndpoints();
 app.MapMetricsEndpoints();
+app.MapTerminalEndpoints();
 app.MapAgentWsEndpoints();
 
 app.Run();

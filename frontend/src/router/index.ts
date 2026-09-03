@@ -53,6 +53,18 @@ const router = createRouter({
           component: () => import('@/views/MetricsView.vue'),
           meta: { title: '指标曲线' },
         },
+        {
+          path: 'terminal',
+          name: 'terminal',
+          component: () => import('@/views/TerminalView.vue'),
+          meta: { title: 'Web 终端' },
+        },
+        {
+          path: 'terminal/records',
+          name: 'terminal-records',
+          component: () => import('@/views/TerminalRecordsView.vue'),
+          meta: { title: '终端留痕' },
+        },
       ],
     },
     {
