@@ -28,6 +28,9 @@ public sealed class AlertRuleEngine : IAlertRuleEngine
 {
     private sealed record ViolationState(DateTimeOffset FirstSeenUtc, DateTimeOffset? LastAlertedUtc);
 
+    /// <summary>恢复通知的统一标题（与各规则类型的告警标题并列，napcat 渠道按"标题 + 内容"拼装）。</summary>
+    public const string RecoveryAlertTitle = "告警恢复通知";
+
     private readonly IAlertRuleStore _rules;
     private readonly IMetricKeyRegistry _metricKeys;
     private readonly IMetricsStore _metrics;
@@ -79,14 +82,14 @@ public sealed class AlertRuleEngine : IAlertRuleEngine
                 if (!type.SampleDriven)
                 {
                     // 时间驱动规则（无数据）：新数据到达 = 恢复
-                    _states.Delete(StateKey(rule.Id));
+                    ResolveAsRecovered(rule, targetId, nowUtc);
                     continue;
                 }
 
                 if (!type.IsViolated(rule.ParametersJson, sample))
                 {
                     // 未触发 = 事件恢复：关闭状态（下次触发是全新事件）
-                    _states.Delete(StateKey(rule.Id));
+                    ResolveAsRecovered(rule, targetId, nowUtc);
                     continue;
                 }
 
@@ -128,14 +131,14 @@ public sealed class AlertRuleEngine : IAlertRuleEngine
     {
         var latest = _metrics.GetLatest(targetId, rule.MetricKey);
         var dataAge = latest is null ? (TimeSpan?)null : nowUtc - latest.TimeUtc;
-        var stateKey = StateKey(rule.Id);
         if (!type.IsSweepViolated(rule.ParametersJson, dataAge))
         {
-            _states.Delete(stateKey);
+            ResolveAsRecovered(rule, targetId, nowUtc);
             return;
         }
 
         // 首见时间取"数据恰好缺失满窗口"的时刻：缺失满窗口 + 防抖窗口后告警，语义精确
+        var stateKey = StateKey(rule.Id);
         var state = AlertStateStore.Read<ViolationState>(_states.Get(stateKey))
                     ?? new ViolationState(latest!.TimeUtc + TimeSpan.FromMinutes(ReadMinutes(rule.ParametersJson)), null);
         FireWhenSustained(rule, type, targetId, latest, nowUtc, state);
@@ -170,6 +173,36 @@ public sealed class AlertRuleEngine : IAlertRuleEngine
         _states.Set(stateKey, Serialize(state with { LastAlertedUtc = nowUtc }), nowUtc);
         _logger.LogInformation("规则 {RuleId}（{RuleType}）触发告警：目标 {TargetId} 指标 {MetricKey}", rule.Id, rule.RuleType, rule.TargetId, rule.MetricKey);
     }
+
+    /// <summary>
+    /// 事件恢复：关闭状态；确实发过告警（LastAlertedUtc 有值）则先发恢复通知
+    /// （PRD 技术默认值"状态恢复即发恢复通知"，通知渠道仍走规则分发管道，约束 B）。
+    /// 规则删除/参数变更走 ResetState 直接清状态，属人工介入，不触发恢复通知。
+    /// </summary>
+    private void ResolveAsRecovered(AlertRule rule, long targetId, DateTimeOffset nowUtc)
+    {
+        var stateKey = StateKey(rule.Id);
+        var state = AlertStateStore.Read<ViolationState>(_states.Get(stateKey));
+        if (state is null)
+        {
+            return;
+        }
+
+        if (state.LastAlertedUtc is { })
+        {
+            var targetName = _targets.Get(targetId)?.Name ?? $"目标 {targetId}";
+            var metric = _metricKeys.Get(rule.MetricKey);
+            var sustained = FormatSustained(nowUtc - state.FirstSeenUtc);
+            var content = $"目标「{targetName}」{metric?.DisplayName ?? rule.MetricKey} 已恢复正常（本次异常持续 {sustained}）";
+            _dispatcher.Enqueue(new AlertMessage(RecoveryAlertTitle, content), nowUtc);
+            _logger.LogInformation("规则 {RuleId}（{RuleType}）事件恢复并发恢复通知：目标 {TargetId} 指标 {MetricKey}", rule.Id, rule.RuleType, targetId, rule.MetricKey);
+        }
+
+        _states.Delete(stateKey);
+    }
+
+    private static string FormatSustained(TimeSpan sustained) =>
+        sustained >= TimeSpan.FromMinutes(1) ? $"{sustained.TotalMinutes:F0} 分钟" : $"{sustained.TotalSeconds:F0} 秒";
 
     private static int ReadMinutes(string parametersJson)
     {

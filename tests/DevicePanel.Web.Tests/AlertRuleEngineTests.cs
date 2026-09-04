@@ -127,16 +127,69 @@ public class AlertRuleEngineTests : IDisposable
         Report(MetricKeys.Cpu, 95);
         Assert.Single(_outbox.List());
 
-        // 恢复：回落到阈值以下，事件关闭
+        // 恢复：回落到阈值以下，事件关闭，并发恢复通知（本次确实告警过）
         Report(MetricKeys.Cpu, 50);
+        Assert.Equal(2, _outbox.List().Count());
+        var recovery = _outbox.List().Last();
+        Assert.Equal("告警恢复通知", recovery.Message.Title);
+        Assert.Contains(_targetName, recovery.Message.Content);
+        Assert.Contains("CPU 使用率", recovery.Message.Content);
         _clock.Advance(TimeSpan.FromSeconds(30));
 
         // 新一轮越限：再次触发（不受上一事件防刷屏影响）
         Report(MetricKeys.Cpu, 96);
-        Assert.Single(_outbox.List());
+        Assert.Equal(2, _outbox.List().Count());
         _clock.Advance(TimeSpan.FromSeconds(61));
         Report(MetricKeys.Cpu, 96);
+        Assert.Equal(3, _outbox.List().Count());
+    }
+
+    [Fact]
+    public void Recovery_Notification_Sent_Once_Per_Event()
+    {
+        CreateRule(null, MetricKeys.Cpu, ThresholdAboveRuleType.TypeIdValue, """{"threshold":90}""");
+
+        Report(MetricKeys.Cpu, 95);
+        _clock.Advance(TimeSpan.FromSeconds(61));
+        Report(MetricKeys.Cpu, 95);
+
+        // 恢复后的后续正常样本不再重复发恢复通知
+        Report(MetricKeys.Cpu, 50);
         Assert.Equal(2, _outbox.List().Count());
+        Report(MetricKeys.Cpu, 50);
+        _clock.Advance(TimeSpan.FromSeconds(30));
+        Report(MetricKeys.Cpu, 50);
+        Assert.Equal(2, _outbox.List().Count());
+    }
+
+    [Fact]
+    public void No_Recovery_Notification_When_Violation_Never_Alerted()
+    {
+        CreateRule(null, MetricKeys.Cpu, ThresholdAboveRuleType.TypeIdValue, """{"threshold":90}""");
+
+        // 越限未满持续窗口即回落：从未告警，恢复也不发通知
+        Report(MetricKeys.Cpu, 95);
+        _clock.Advance(TimeSpan.FromSeconds(30));
+        Report(MetricKeys.Cpu, 50);
+
+        Assert.Empty(_outbox.List());
+    }
+
+    [Fact]
+    public void No_Recovery_Notification_After_Rule_State_Reset()
+    {
+        var rule = CreateRule(null, MetricKeys.Cpu, ThresholdAboveRuleType.TypeIdValue, """{"threshold":90}""");
+
+        Report(MetricKeys.Cpu, 95);
+        _clock.Advance(TimeSpan.FromSeconds(61));
+        Report(MetricKeys.Cpu, 95);
+        Assert.Single(_outbox.List());
+
+        // 规则删除/参数变更加重置状态：随后的恢复是人工介入结果，不发恢复通知
+        _engine.ResetState(rule.Id);
+        Report(MetricKeys.Cpu, 50);
+
+        Assert.Single(_outbox.List());
     }
 
     [Fact]
@@ -251,16 +304,17 @@ public class AlertRuleEngineTests : IDisposable
         Assert.Contains("true", alert.Message.Content);
         Assert.Contains("false", alert.Message.Content);
 
-        // 恢复在线：状态关闭，再离线按新事件重新告警
+        // 恢复在线：状态关闭并发恢复通知，再离线按新事件重新告警
         _clock.Advance(TimeSpan.FromSeconds(30));
         var recoverAt = _clock.GetUtcNow();
         _metrics.Insert(_targetId, MetricKeys.Online, new MetricSample(recoverAt, 1, "true"));
         _engine.OnSample(_targetId, MetricKeys.Online, new MetricSample(recoverAt, 1, "true"), _clock.GetUtcNow());
+        Assert.Equal(2, _outbox.List().Count());
         _clock.Advance(TimeSpan.FromSeconds(90));
         var againAt = _clock.GetUtcNow();
         _metrics.Insert(_targetId, MetricKeys.Online, new MetricSample(againAt, 0, "false"));
         _engine.OnSample(_targetId, MetricKeys.Online, new MetricSample(againAt, 0, "false"), _clock.GetUtcNow());
-        Assert.Equal(2, _outbox.List().Count());
+        Assert.Equal(3, _outbox.List().Count());
     }
 
     [Fact]
@@ -292,11 +346,12 @@ public class AlertRuleEngineTests : IDisposable
         _engine.Sweep(_clock.GetUtcNow());
         Assert.Single(_outbox.List());
 
-        // 数据恢复上报即恢复，之后再缺失按新事件触发
+        // 数据恢复上报即恢复（并发恢复通知），之后再缺失按新事件触发
         Report("player.count", 15);
+        Assert.Equal(2, _outbox.List().Count());
         _clock.Advance(TimeSpan.FromMinutes(11));
         _engine.Sweep(_clock.GetUtcNow());
-        Assert.Equal(2, _outbox.List().Count());
+        Assert.Equal(3, _outbox.List().Count());
     }
 
     [Fact]

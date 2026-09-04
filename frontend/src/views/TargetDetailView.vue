@@ -2,7 +2,14 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import MetricChart, { type ChartSeries } from '@/components/MetricChart.vue'
-import { listTargets, type Target } from '@/api/targets'
+import {
+  getProbeConfig,
+  listTargets,
+  updateProbeConfig,
+  type ProbeConfig,
+  type ProbeMetricMappingInput,
+  type Target,
+} from '@/api/targets'
 import {
   fetchTargetOverview,
   fetchTargetSeries,
@@ -45,6 +52,33 @@ const selectedRange = ref<RangeOption>(rangeOptions[2])
 const loading = ref(true)
 const errorMessage = ref('')
 let refreshTimer: number | undefined
+
+// 服务目标的探针配置（模块2）：面板侧定时探测，配置在此维护
+const probe = ref<ProbeConfig | null>(null)
+const isService = computed(() => target.value?.type === 'service')
+const showProbeForm = ref(false)
+const probeUrl = ref('')
+const probeInterval = ref('60')
+interface MappingDraft {
+  metricKey: string
+  jsonPath: string
+  valueType: ProbeMetricMappingInput['valueType']
+  displayName: string
+  unit: string
+}
+const probeMappings = ref<MappingDraft[]>([])
+const probeSubmitting = ref(false)
+const probeError = ref('')
+
+// 服务状态来源是探针 status 指标：正常/异常，从未探测（无最近探测时间）单独提示
+function statusInfo(item: Target | null): { label: string; cls: string } {
+  if (!item) return { label: '—', cls: 'offline' }
+  if (item.type === 'service') {
+    if (item.online) return { label: '正常', cls: 'online' }
+    return item.lastSeenAtUtc ? { label: '异常', cls: 'alarm' } : { label: '未探测', cls: 'offline' }
+  }
+  return item.online ? { label: '在线', cls: 'online' } : { label: '离线', cls: 'offline' }
+}
 
 // 规则创建表单
 const showRuleForm = ref(false)
@@ -125,14 +159,16 @@ async function refresh(showError = true) {
     return
   }
   try {
-    const [targetList, overviewList, ruleList] = await Promise.all([
+    const [targetList, overviewList, ruleList, probeConfig] = await Promise.all([
       listTargets(),
       fetchTargetOverview(targetId.value),
       listAlertRules({ targetId: targetId.value }),
+      getProbeConfig(targetId.value).catch(() => null),
     ])
     target.value = targetList.find((t) => t.id === targetId.value) ?? null
     overview.value = overviewList
     rules.value = ruleList
+    probe.value = probeConfig
     if (chartKey.value === null && overviewList.length > 0) {
       chartKey.value = overviewList.find((item) => item.valueType === 'number')?.key ?? overviewList[0].key
     }
@@ -288,6 +324,47 @@ function onRuleMetricChange() {
   }
 }
 
+function openProbeForm() {
+  probeUrl.value = probe.value?.url ?? ''
+  probeInterval.value = String(probe.value?.intervalSeconds ?? 60)
+  probeMappings.value = (probe.value?.mappings ?? []).map((m) => ({
+    metricKey: m.metricKey,
+    jsonPath: m.jsonPath,
+    valueType: (['number', 'enum', 'string'].includes(m.valueType) ? m.valueType : 'number') as MappingDraft['valueType'],
+    displayName: m.displayName,
+    unit: m.unit,
+  }))
+  probeError.value = ''
+  showProbeForm.value = true
+}
+
+async function submitProbe() {
+  if (probeSubmitting.value) return
+  probeSubmitting.value = true
+  probeError.value = ''
+  try {
+    await updateProbeConfig(targetId.value, {
+      url: probeUrl.value.trim(),
+      intervalSeconds: Number(probeInterval.value) || undefined,
+      mappings: probeMappings.value
+        .filter((m) => m.metricKey.trim() && m.jsonPath.trim())
+        .map((m) => ({
+          metricKey: m.metricKey.trim(),
+          jsonPath: m.jsonPath.trim(),
+          valueType: m.valueType,
+          displayName: m.displayName.trim(),
+          unit: m.unit.trim(),
+        })),
+    })
+    showProbeForm.value = false
+    await refresh(false)
+  } catch (e) {
+    probeError.value = e instanceof Error ? e.message : '保存探针配置失败'
+  } finally {
+    probeSubmitting.value = false
+  }
+}
+
 onMounted(async () => {
   ruleTypes.value = await listRuleTypes()
   await refresh()
@@ -308,9 +385,9 @@ onBeforeUnmount(() => {
       <div v-if="target" class="detail-title-row">
         <h1 class="detail-title">{{ target.name }}</h1>
         <span class="tag">{{ target.type === 'device' ? '设备' : '服务' }}</span>
-        <span class="status-badge" :class="target.online ? 'online' : 'offline'">
+        <span class="status-badge" :class="statusInfo(target).cls">
           <span class="status-dot"></span>
-          {{ target.online ? '在线' : '离线' }}
+          {{ statusInfo(target).label }}
         </span>
       </div>
     </div>
@@ -319,6 +396,53 @@ onBeforeUnmount(() => {
     <div v-if="loading" class="empty-state">加载中…</div>
 
     <template v-else>
+      <section v-if="isService" class="card">
+        <div class="card-head">
+          <h2 class="card-title">探针配置</h2>
+          <button type="button" class="primary-button" @click="openProbeForm">
+            {{ probe ? '修改配置' : '配置探针' }}
+          </button>
+        </div>
+        <div v-if="!probe" class="empty-inline">该服务还没有探针配置，配置后面板将按间隔主动探测。</div>
+        <template v-else>
+          <dl class="probe-meta">
+            <div>
+              <dt>探测地址</dt>
+              <dd><code>{{ probe.url }}</code></dd>
+            </div>
+            <div>
+              <dt>探测间隔</dt>
+              <dd>{{ probe.intervalSeconds }} 秒</dd>
+            </div>
+            <div>
+              <dt>最近探测</dt>
+              <dd>{{ formatTime(target?.lastSeenAtUtc) }}</dd>
+            </div>
+          </dl>
+          <div v-if="probe.mappings.length === 0" class="empty-inline">未配置指标提取映射（服务状态与响应时间始终自动采集）。</div>
+          <table v-else class="overview-table">
+            <thead>
+              <tr>
+                <th>指标</th>
+                <th>key</th>
+                <th>JSONPath</th>
+                <th>类型</th>
+                <th>单位</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="mapping in probe.mappings" :key="mapping.metricKey">
+                <td>{{ mapping.displayName }}</td>
+                <td><code>{{ mapping.metricKey }}</code></td>
+                <td><code>{{ mapping.jsonPath }}</code></td>
+                <td>{{ mapping.valueType }}</td>
+                <td>{{ mapping.unit || '—' }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </template>
+      </section>
+
       <section class="card">
         <div class="card-head">
           <h2 class="card-title">指标总览</h2>
@@ -474,6 +598,50 @@ onBeforeUnmount(() => {
           </div>
         </div>
       </section>
+
+      <div v-if="showProbeForm" class="dialog-mask" @click.self="showProbeForm = false">
+        <div class="dialog wide">
+          <h2 class="dialog-title">探针配置</h2>
+          <label class="field">
+            <span class="field-label">探针 URL（面板定时 GET 该地址，2xx 视为可达）</span>
+            <input v-model="probeUrl" type="text" placeholder="如：https://map.zenoxs.cn/tiles/settings.json" />
+          </label>
+          <label class="field">
+            <span class="field-label">探测间隔（秒，10~3600，默认 60）</span>
+            <input v-model="probeInterval" type="number" min="10" max="3600" />
+          </label>
+          <div class="field">
+            <span class="field-label">指标提取映射（从 JSON 响应提取业务指标，可留空）</span>
+            <div v-for="(mapping, index) in probeMappings" :key="index" class="mapping-row">
+              <input v-model="mapping.metricKey" type="text" placeholder="指标名，如 mc.players" />
+              <input v-model="mapping.jsonPath" type="text" placeholder="JSONPath，如 $.players.length()" />
+              <select v-model="mapping.valueType" class="control-select">
+                <option value="number">number</option>
+                <option value="enum">enum</option>
+                <option value="string">string</option>
+              </select>
+              <input v-model="mapping.displayName" type="text" placeholder="显示名" />
+              <input v-model="mapping.unit" type="text" placeholder="单位" />
+              <button type="button" class="mapping-remove" @click="probeMappings.splice(index, 1)">删除</button>
+            </div>
+            <button
+              type="button"
+              class="ghost-button mapping-add"
+              @click="probeMappings.push({ metricKey: '', jsonPath: '$', valueType: 'number', displayName: '', unit: '' })"
+            >
+              + 添加映射
+            </button>
+          </div>
+          <p class="field-hint">服务状态（status）与响应时间（latency_ms）由探针自动产出；连续 3 次探测失败判定异常。修改映射不会删除已注册的指标。</p>
+          <p v-if="probeError" class="error-note">{{ probeError }}</p>
+          <div class="dialog-actions">
+            <button type="button" class="ghost-button" @click="showProbeForm = false">取消</button>
+            <button type="button" class="primary-button" :disabled="probeSubmitting" @click="submitProbe">
+              {{ probeSubmitting ? '保存中…' : '保存' }}
+            </button>
+          </div>
+        </div>
+      </div>
     </template>
   </section>
 </template>
@@ -544,6 +712,33 @@ onBeforeUnmount(() => {
 
 .status-badge.offline .status-dot {
   background: #9ca3af;
+}
+
+.status-badge.alarm {
+  background: #fef2f2;
+  color: #b91c1c;
+}
+
+.status-badge.alarm .status-dot {
+  background: #dc2626;
+}
+
+.probe-meta {
+  margin: 0 0 12px;
+  display: grid;
+  grid-template-columns: 2fr 1fr 1fr;
+  gap: 8px;
+}
+
+.probe-meta dt {
+  font-size: 0.72rem;
+  color: var(--color-text-light);
+}
+
+.probe-meta dd {
+  margin: 2px 0 0;
+  font-size: 0.82rem;
+  overflow-wrap: anywhere;
 }
 
 .card {
@@ -695,6 +890,50 @@ onBeforeUnmount(() => {
   border-radius: 12px;
   padding: 20px;
   box-shadow: 0 20px 40px rgba(15, 23, 42, 0.2);
+  max-height: 90vh;
+  overflow-y: auto;
+}
+
+.dialog.wide {
+  max-width: 760px;
+}
+
+.mapping-row {
+  display: grid;
+  grid-template-columns: 1.2fr 1.4fr 0.7fr 1fr 0.6fr auto;
+  gap: 6px;
+  margin-bottom: 6px;
+  align-items: center;
+}
+
+.mapping-row input {
+  min-width: 0;
+  padding: 7px 8px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  font-size: 0.78rem;
+  box-sizing: border-box;
+}
+
+.mapping-row .control-select {
+  padding: 7px 6px;
+  font-size: 0.78rem;
+}
+
+.mapping-remove {
+  padding: 7px 8px;
+  border: 1px solid #fecaca;
+  border-radius: 6px;
+  background: #fef2f2;
+  color: var(--color-danger);
+  font-size: 0.75rem;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.mapping-add {
+  padding: 6px 10px;
+  font-size: 0.78rem;
 }
 
 .dialog-title {
@@ -774,5 +1013,15 @@ onBeforeUnmount(() => {
   justify-content: flex-end;
   gap: 10px;
   margin-top: 16px;
+}
+
+@media (max-width: 768px) {
+  .probe-meta {
+    grid-template-columns: 1fr;
+  }
+
+  .mapping-row {
+    grid-template-columns: 1fr 1fr;
+  }
 }
 </style>

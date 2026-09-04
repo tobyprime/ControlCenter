@@ -29,4 +29,10 @@ public static class MetricKeys
 
     /// <summary>设备在线状态（bool）：心跳写 true，TargetStatusScanner 在判定离线时写 false。</summary>
     public const string Online = "online";
+
+    /// <summary>服务可达状态（bool，模块2 探针）：成功写 true；连续失败达到阈值在判定异常的转换点写一次 false。</summary>
+    public const string Status = "status";
+
+    /// <summary>探针响应耗时（ms，模块2）：仅成功请求产生样本。</summary>
+    public const string LatencyMs = "latency_ms";
 }
