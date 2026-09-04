@@ -38,10 +38,11 @@ async function refreshOverview() {
   try {
     const list: Target[] = await listTargets()
     targets.value = list
+    targetsReady.value = true
     overview.value.total = String(list.length)
     overview.value.online = String(list.filter((target) => target.online).length)
   } catch {
-    // 首页概览加载失败不打断页面，保留占位
+    // 首页概览加载失败不打断页面，保留占位；targets 未就绪，指标卡不判「目标不存在」
   }
 }
 
@@ -57,6 +58,12 @@ const overviewByTarget = ref<Record<number, MetricOverviewItem[]>>({})
 const seriesByCard = ref<Record<string, MetricSeries | null>>({})
 const metricLoading = ref(false)
 let metricTimer: number | undefined
+
+// 来源注册表首次加载完成前，空列表 ≠ 确认缺失：未就绪时不判降级，
+// 卡片走加载态（审查 round 2 问题 2：避免首屏/接口失败期间误报「目标/指标已不存在」）
+const targetsReady = ref(false)
+const keysReady = ref(false)
+const registriesLoading = computed(() => !targetsReady.value || !keysReady.value)
 
 const visibleCards = computed(() => cards.value.filter((card) => card.visible))
 
@@ -88,21 +95,24 @@ function metricConfigOf(card: DashboardCard): MetricCardConfig | null {
   return parseMetricCardConfig(card.config)
 }
 
-// 来源失效降级：未配置 / 目标已删除 / 指标已注销 / 指标类型与卡片不匹配
+// 来源失效降级：未配置 / 目标已删除 / 指标已注销 / 指标类型与卡片不匹配。
+// 目标/指标缺失仅在对应注册表确认加载成功后判定；未就绪返回 ''，由加载态接管
 function degradedReasonFor(card: DashboardCard): MetricCardDegradedReason {
   const config = metricConfigOf(card)
   if (!config) {
     return 'unconfigured'
   }
-  if (!targets.value.some((target) => target.id === config.targetId)) {
+  if (targetsReady.value && !targets.value.some((target) => target.id === config.targetId)) {
     return 'target-missing'
   }
   const info = keyInfoOf(metricKeys.value, config.key)
-  if (!info) {
-    return 'key-missing'
-  }
-  if (isMetricCardType(card.type) && !compatibleCardTypes(info.valueType).includes(card.type)) {
-    return 'type-mismatch'
+  if (keysReady.value) {
+    if (!info) {
+      return 'key-missing'
+    }
+    if (isMetricCardType(card.type) && !compatibleCardTypes(info.valueType).includes(card.type)) {
+      return 'type-mismatch'
+    }
   }
   return ''
 }
@@ -127,8 +137,9 @@ function chartKeyInfoOf(card: DashboardCard): MetricKeyInfo | undefined {
 async function refreshRegistries() {
   try {
     metricKeys.value = await listMetricKeys()
+    keysReady.value = true
   } catch {
-    // 注册表失败不阻塞主页，指标卡按无数据占位
+    // 注册表失败不阻塞主页，指标卡按加载态等待下个刷新周期
   }
 }
 
@@ -357,14 +368,14 @@ onBeforeUnmount(() => {
           :label="cardLabel(card.type)"
           :item="overviewItemOf(card)"
           :degraded-reason="degradedReasonFor(card)"
-          :loading="metricLoading"
+          :loading="metricLoading || registriesLoading"
         />
         <DashboardStatusCard
           v-else-if="card.type === 'metric-status'"
           :label="cardLabel(card.type)"
           :item="overviewItemOf(card)"
           :degraded-reason="degradedReasonFor(card)"
-          :loading="metricLoading"
+          :loading="metricLoading || registriesLoading"
         />
         <DashboardChartCard
           v-else
@@ -372,7 +383,7 @@ onBeforeUnmount(() => {
           :series="chartSeriesOf(card)"
           :key-info="chartKeyInfoOf(card)"
           :degraded-reason="degradedReasonFor(card)"
-          :loading="metricLoading"
+          :loading="metricLoading || registriesLoading"
         />
       </div>
     </div>

@@ -546,4 +546,91 @@ test.describe('主页指标卡（TOB-368）', () => {
     await expect(cardLocator(page, 'overview-total-devices')).toBeVisible()
     await page.screenshot({ path: `${EVIDENCE_DIR}/home-metric-card-stale-source.png`, fullPage: true })
   })
+
+  test('曲线卡配置经真实布局 API 保存刷新保持（验收 1，不经 mock）', async ({ page }) => {
+    // 审查 round 2 问题 1：config 持久化此前仅由 mock 布局 API 覆盖，
+    // 而 mock 恰好掩盖过 order/sort 契约断裂——本用例锁真实 PUT→GET→刷新往返
+    await login(page)
+
+    // 建唯一名目标并从真实注册表取一个 number 指标（内置 key 随迁移播种，必在）
+    // 目标名避开「指标/目标/时间窗」等表单标签词：getByLabel 为子串匹配，
+    // 名词混入选项文本会污染其他下拉的可访问名（真实教训：指标卡机 → strict 冲突）
+    const created = await page.request.post('/api/targets', {
+      data: { name: '真实布局往返机', tags: [] },
+    })
+    expect(created.ok()).toBe(true)
+    const target = (await created.json()) as { id: number }
+    const keys = (await (await page.request.get('/api/metrics/keys')).json()) as Array<{
+      key: string
+      valueType: string
+      displayName: string
+    }>
+    const numeric = keys.find((info) => info.valueType === 'number')
+    expect(numeric).toBeTruthy()
+
+    await page.reload()
+    await page.getByRole('button', { name: '进入编辑' }).click()
+    await page.getByRole('button', { name: '添加「曲线卡」' }).click()
+    const chartCard = cardLocator(page, 'metric-chart')
+    await configureCard(chartCard, '真实布局往返机', `${numeric!.displayName}（${numeric!.key}）`, '最近 6 小时')
+    await page.getByRole('button', { name: '保存布局' }).click()
+    await expect(page.getByRole('button', { name: '进入编辑' })).toBeVisible()
+
+    // 真实 GET：wire 字段 sort 存在，config 原样保持（后端透传不解释语义）
+    const layout = (await (await page.request.get('/api/dashboard/layout')).json()) as {
+      cards: Array<{ type: string; sort: number; config: Record<string, unknown> }>
+    }
+    const saved = layout.cards.find((card) => card.type === 'metric-chart')
+    expect(saved).toBeTruthy()
+    expect(Number.isInteger(saved!.sort)).toBe(true)
+    expect(saved!.config).toMatchObject({ targetId: target.id, key: numeric!.key, windowHours: 6 })
+
+    // 刷新后按真实 GET 的 config 回填渲染：配置被解析为有效来源，而非降级占位
+    await page.reload()
+    await expect(chartCard.getByText('暂无数据')).toBeVisible()
+    await expect(chartCard.getByText('未配置来源')).toHaveCount(0)
+    await expect(chartCard.getByText('来源目标不存在')).toHaveCount(0)
+    await expect(chartCard.getByText('指标已不存在')).toHaveCount(0)
+  })
+
+  test('来源注册表未就绪时显示加载态，不误报目标/指标不存在（round 2 问题 2）', async ({ page }) => {
+    // 预置已保存布局：引用「尚未确认是否存在」的目标/指标
+    const stored: LayoutCard[] = [
+      { id: 'overview-total-devices', type: 'overview-total-devices', visible: true, sort: 0, config: {} },
+      {
+        id: 'metric-value-pending',
+        type: 'metric-value',
+        visible: true,
+        sort: 1,
+        config: { targetId: 999, key: 'player.count', windowHours: 24 },
+      },
+    ]
+    await page.route(LAYOUT_API, async (route: Route) => {
+      if (route.request().method() !== 'PUT') {
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ cards: stored }) })
+      }
+    })
+
+    // 场景 1：targets / 指标注册表请求挂起（首次加载未完成）→ 加载态，不得误报缺失
+    await page.route('**/api/targets', () => new Promise(() => {}))
+    await page.route('**/api/metrics/keys', () => new Promise(() => {}))
+    await login(page)
+    const card = cardLocator(page, 'metric-value')
+    await expect(card.getByText('加载中…')).toBeVisible()
+    await expect(card.getByText('来源目标不存在')).toHaveCount(0)
+    await expect(card.getByText('指标已不存在')).toHaveCount(0)
+
+    // 场景 2：targets 接口失败 → 仍不得显示「来源目标不存在」（失败 ≠ 确认缺失）
+    await page.route('**/api/targets', (route) =>
+      route.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ error: 'targets unavailable' }) }),
+    )
+    await page.route('**/api/metrics/keys', (route) =>
+      route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(METRIC_KEYS) }),
+    )
+    await page.reload()
+    await expect(card.getByText('来源目标不存在')).toHaveCount(0)
+    await expect(card.getByText('指标已不存在')).toHaveCount(0)
+    // 页面不崩：概览卡正常渲染
+    await expect(cardLocator(page, 'overview-total-devices')).toBeVisible()
+  })
 })
