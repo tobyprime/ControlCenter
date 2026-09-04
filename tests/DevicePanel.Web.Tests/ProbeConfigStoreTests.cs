@@ -78,16 +78,6 @@ public class ProbeConfigStoreTests : IDisposable
     }
 
     [Fact]
-    public void Delete_Removes_Config()
-    {
-        _store.Save(_targetId, "https://a.example.com", 30, []);
-
-        Assert.True(_store.Delete(_targetId));
-        Assert.Null(_store.Get(_targetId));
-        Assert.False(_store.Delete(_targetId));
-    }
-
-    [Fact]
     public void Target_Delete_Cascades_Config()
     {
         _store.Save(_targetId, "https://a.example.com", 30, []);

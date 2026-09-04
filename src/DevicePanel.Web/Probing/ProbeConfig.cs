@@ -29,8 +29,6 @@ public interface IProbeConfigStore
     IReadOnlyList<ProbeConfig> List();
 
     ProbeConfig Save(long targetId, string url, int intervalSeconds, IReadOnlyList<ProbeMetricMapping> mappings);
-
-    bool Delete(long targetId);
 }
 
 /// <summary>探针配置持久化（probe_configs 表，随目标删除级联清理）。</summary>
@@ -95,15 +93,6 @@ public sealed class ProbeConfigStore : IProbeConfigStore
         command.Parameters.AddWithValue("$updatedAt", FormatUtc(nowUtc));
         command.ExecuteNonQuery();
         return new ProbeConfig(targetId, url, intervalSeconds, mappings, nowUtc, nowUtc);
-    }
-
-    public bool Delete(long targetId)
-    {
-        using var connection = _connectionFactory.CreateOpenConnection();
-        using var command = connection.CreateCommand();
-        command.CommandText = "DELETE FROM probe_configs WHERE target_id = $targetId";
-        command.Parameters.AddWithValue("$targetId", targetId);
-        return command.ExecuteNonQuery() > 0;
     }
 
     private static ProbeConfig MapConfig(SqliteDataReader reader)
