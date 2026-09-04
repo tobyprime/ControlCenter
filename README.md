@@ -36,6 +36,7 @@ dotnet run --project src/DevicePanel.Web     # 后端，默认 http://localhost:
 cd frontend && npm run dev                   # 前端热更新，/api 代理到 5000
 dotnet test                                  # 后端单元 + 集成测试
 cd e2e && npm test                           # Playwright 端到端验证
+scripts/e2e-acceptance.sh                    # 端到端验收：面板+agent+napcat 全链路（见 docs/acceptance-checklist.md）
 ```
 
 首次启动自动初始化数据库（WAL + 迁移）并创建初始账号，浏览器打开 `http://localhost:5000` 即可登录。
