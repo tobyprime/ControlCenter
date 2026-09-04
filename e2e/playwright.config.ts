@@ -1,6 +1,12 @@
+import { mkdtempSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { defineConfig } from '@playwright/test'
 
 // E2E 验证针对已构建的内嵌前端：webServer 以 dotnet 启动后端（wwwroot 为前端产物）
+// DataDir 每次运行独立（mktemp）：避免上一次运行残留的设备/告警配置破坏测试隔离
+const dataDir = mkdtempSync(join(tmpdir(), 'device-panel-e2e-'))
+
 export default defineConfig({
   testDir: './tests',
   timeout: 30_000,
@@ -18,7 +24,7 @@ export default defineConfig({
     timeout: 60_000,
     env: {
       DevicePanel__Auth__InitialPassword: 'e2e-password-9',
-      DevicePanel__DataDir: '/tmp/device-panel-e2e-data',
+      DevicePanel__DataDir: dataDir,
       ASPNETCORE_ENVIRONMENT: 'Development',
     },
   },
