@@ -1,6 +1,6 @@
 using System.Text.Json;
 using DevicePanel.Protocol;
-using DevicePanel.Web.Devices;
+using DevicePanel.Web.Targets;
 using DevicePanel.Web.Logs;
 using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;

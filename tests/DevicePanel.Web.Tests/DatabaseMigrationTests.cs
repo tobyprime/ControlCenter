@@ -1,4 +1,5 @@
 using DevicePanel.Web.Infrastructure;
+using System.Reflection;
 using Microsoft.Data.Sqlite;
 using Xunit;
 
@@ -70,8 +71,8 @@ public class DatabaseMigrationTests : IClassFixture<TestAppFactory>
     [Fact]
     public void Migration_006_Applies_Cleanly_On_Phase1_Upgraded_Database()
     {
-        // 模拟一期升级库：仅标记 001-005 已应用（一期真实表结构无关本迁移，006 不依赖既有表），
-        // 重启迁移只补执行 006 且无错误
+        // 模拟一期升级库：真实应用 001-005 建表（TOB-361 的 007_targets 等迁移依赖一期真实表结构），
+        // 重启迁移补执行 006 起的未应用迁移且无错误
         var dataDir = Path.Combine(Path.GetTempPath(), "device-panel-upgrade-tests", Guid.NewGuid().ToString("N"));
         var factory = new SqliteConnectionFactory(new DatabaseOptions { DataDir = dataDir });
         try
@@ -84,14 +85,13 @@ public class DatabaseMigrationTests : IClassFixture<TestAppFactory>
                         version        TEXT PRIMARY KEY,
                         applied_at_utc TEXT NOT NULL
                     );
-                    INSERT INTO schema_migrations(version, applied_at_utc) VALUES
-                        ('001_init', '2026-01-01T00:00:00.000Z'),
-                        ('002_devices', '2026-01-01T00:00:00.000Z'),
-                        ('003_metrics', '2026-01-01T00:00:00.000Z'),
-                        ('004_terminal_sessions', '2026-01-01T00:00:00.000Z'),
-                        ('005_alerting', '2026-01-01T00:00:00.000Z');
                     """;
                 seed.ExecuteNonQuery();
+            }
+
+            using (var connection = factory.CreateOpenConnection())
+            {
+                ApplyEmbeddedMigrationsUpTo(connection, "005_alerting");
             }
 
             using (var connection = factory.CreateOpenConnection())
@@ -102,6 +102,12 @@ public class DatabaseMigrationTests : IClassFixture<TestAppFactory>
                     connection,
                     "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'dashboard_layouts';");
                 Assert.Equal(1L, Convert.ToInt64(tableExists));
+
+                // 一期 devices 表升级为 targets，且设备数据保留（TOB-361 迁移链完整）
+                var targetsExists = ExecuteScalar(
+                    connection,
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'targets';");
+                Assert.Equal(1L, Convert.ToInt64(targetsExists));
 
                 var applied = ExecuteScalar(
                     connection,
@@ -154,5 +160,35 @@ public class DatabaseMigrationTests : IClassFixture<TestAppFactory>
         }
 
         return command.ExecuteScalar();
+    }
+
+    /// <summary>应用指定版本及之前的嵌入式迁移（构造真实一期库结构，供升级路径测试使用）。</summary>
+    private static void ApplyEmbeddedMigrationsUpTo(Microsoft.Data.Sqlite.SqliteConnection connection, string upTo)
+    {
+        var assembly = typeof(DatabaseMigrator).Assembly;
+        var resources = assembly.GetManifestResourceNames()
+            .Where(n => n.StartsWith("DevicePanel.Web.Infrastructure.Migrations", StringComparison.Ordinal) && n.EndsWith(".sql", StringComparison.Ordinal))
+            .Select(n =>
+            {
+                var version = n.Substring("DevicePanel.Web.Infrastructure.Migrations".Length + 1)[..^4];
+                using var stream = assembly.GetManifestResourceStream(n)!;
+                using var reader = new StreamReader(stream);
+                return (Version: version, Sql: reader.ReadToEnd());
+            })
+            .OrderBy(m => m.Version, StringComparer.Ordinal)
+            .Where(m => string.Compare(m.Version, upTo, StringComparison.Ordinal) <= 0);
+
+        foreach (var (version, sql) in resources)
+        {
+            using var command = connection.CreateCommand();
+            command.CommandText = sql;
+            command.ExecuteNonQuery();
+
+            using var record = connection.CreateCommand();
+            record.CommandText = "INSERT INTO schema_migrations(version, applied_at_utc) VALUES ($version, $appliedAt)";
+            record.Parameters.AddWithValue("$version", version);
+            record.Parameters.AddWithValue("$appliedAt", DateTime.UtcNow.ToString("O"));
+            record.ExecuteNonQuery();
+        }
     }
 }

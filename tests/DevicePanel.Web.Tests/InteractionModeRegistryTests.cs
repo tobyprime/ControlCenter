@@ -1,4 +1,4 @@
-using DevicePanel.Web.Devices;
+using DevicePanel.Web.Targets;
 using DevicePanel.Web.Interactions;
 using Microsoft.Extensions.Time.Testing;
 using Xunit;
@@ -59,9 +59,9 @@ public class DeviceInteractionModeCatalogTests : IDisposable
     [Fact]
     public void Existing_Device_Declares_Shell_Mode()
     {
-        var devices = new DeviceRegistry(_db.Factory, _clock);
-        var deviceId = devices.Create("网关", []).Device.Id;
-        var catalog = new DeviceInteractionModeCatalog(devices);
+        var targets = new TargetRegistry(_db.Factory, _clock);
+        var deviceId = targets.Create(TargetTypes.Device, "网关", []).Target.Id;
+        var catalog = new DeviceInteractionModeCatalog(targets);
 
         Assert.Equal([ShellInteractionMode.ModeKey], catalog.GetDeclaredModeKeys(deviceId));
     }
@@ -69,7 +69,7 @@ public class DeviceInteractionModeCatalogTests : IDisposable
     [Fact]
     public void Unknown_Target_Returns_Empty_Declaration()
     {
-        var catalog = new DeviceInteractionModeCatalog(new DeviceRegistry(_db.Factory, _clock));
+        var catalog = new DeviceInteractionModeCatalog(new TargetRegistry(_db.Factory, _clock));
 
         Assert.Empty(catalog.GetDeclaredModeKeys(424242));
     }

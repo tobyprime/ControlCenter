@@ -1,4 +1,4 @@
-using DevicePanel.Web.Devices;
+using DevicePanel.Web.Targets;
 using DevicePanel.Web.Terminal;
 using Microsoft.Extensions.Time.Testing;
 using Xunit;
@@ -11,15 +11,15 @@ public class TerminalStoreTests : IDisposable
 
     private readonly TempSqliteDatabase _database = new();
     private readonly FakeTimeProvider _clock = new(Base);
-    private readonly DeviceRegistry _devices;
+    private readonly TargetRegistry _targets;
     private readonly TerminalStore _store;
     private readonly long _deviceId;
 
     public TerminalStoreTests()
     {
-        _devices = new DeviceRegistry(_database.Factory, _clock);
+        _targets = new TargetRegistry(_database.Factory, _clock);
         _store = new TerminalStore(_database.Factory);
-        _deviceId = _devices.Create("终端设备", []).Device.Id;
+        _deviceId = _targets.Create(TargetTypes.Device, "终端设备", []).Target.Id;
     }
 
     public void Dispose() => _database.Dispose();
@@ -71,7 +71,7 @@ public class TerminalStoreTests : IDisposable
     public void QuerySessions_Filters_By_Device_And_Time_Range()
     {
         _store.OpenSession("s1", _deviceId, "admin", Base);
-        var otherDeviceId = _devices.Create("另一台", []).Device.Id;
+        var otherDeviceId = _targets.Create(TargetTypes.Device, "另一台", []).Target.Id;
         _store.OpenSession("s2", otherDeviceId, "admin", Base.AddMinutes(1));
         _store.OpenSession("s3", _deviceId, "admin", Base.AddMinutes(30));
 
@@ -103,7 +103,7 @@ public class TerminalStoreTests : IDisposable
         _store.OpenSession("s1", _deviceId, "admin", Base);
         _store.Append("s1", TerminalEntryDirections.Input, "echo hi", Base.AddSeconds(1));
 
-        _devices.Delete(_deviceId);
+        _targets.Delete(_deviceId);
 
         Assert.Empty(_store.QuerySessions(_deviceId, null, null));
         Assert.Empty(_store.QueryEntries("s1"));

@@ -67,7 +67,7 @@ public class AuthenticationGateTests : IClassFixture<AuthenticationGateTests.Fac
     public async Task Unknown_Api_Endpoint_Returns_401_Not_404_For_Anonymous()
     {
         var client = _factory.CreateClient();
-        var response = await client.GetAsync("/api/devices");
+        var response = await client.GetAsync("/api/targets");
 
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
     }

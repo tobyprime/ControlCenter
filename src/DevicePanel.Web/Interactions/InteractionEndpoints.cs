@@ -1,4 +1,4 @@
-using DevicePanel.Web.Devices;
+using DevicePanel.Web.Targets;
 
 namespace DevicePanel.Web.Interactions;
 
@@ -14,11 +14,11 @@ public static class InteractionEndpoints
 
         endpoints.MapGet("/api/devices/{deviceId:long}/interaction-modes", (
             long deviceId,
-            IDeviceRegistry devices,
+            ITargetRegistry targets,
             InteractionModeRegistry registry,
             IInteractionModeCatalog catalog) =>
         {
-            if (devices.Get(deviceId) is null)
+            if (targets.Get(deviceId) is null)
             {
                 return Results.NotFound(new { error = "设备不存在" });
             }

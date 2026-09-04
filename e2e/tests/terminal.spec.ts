@@ -19,7 +19,7 @@ async function expectNoHorizontalOverflow(page: Page, label: string) {
 }
 
 async function createDeviceViaApi(page: Page, name: string): Promise<{ id: number; agentToken: string }> {
-  const response = await page.request.post('/api/devices', {
+  const response = await page.request.post('/api/targets', {
     data: { name, tags: ['E2E'] },
   })
   expect(response.ok()).toBeTruthy()

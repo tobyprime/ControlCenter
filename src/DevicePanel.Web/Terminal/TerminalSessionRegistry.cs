@@ -1,7 +1,7 @@
 using System.Collections.Concurrent;
 using System.Text.Json;
 using DevicePanel.Protocol;
-using DevicePanel.Web.Devices;
+using DevicePanel.Web.Targets;
 
 namespace DevicePanel.Web.Terminal;
 

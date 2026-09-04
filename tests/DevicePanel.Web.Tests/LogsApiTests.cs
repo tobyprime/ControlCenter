@@ -180,7 +180,7 @@ public class LogsApiTests : IDisposable
 
     private static async Task<(long Id, string AgentToken)> CreateDeviceAsync(HttpClient client)
     {
-        var response = await client.PostAsJsonAsync("/api/devices", new { name = "日志设备", tags = new[] { "机房A" } });
+        var response = await client.PostAsJsonAsync("/api/targets", new { name = "日志设备", tags = new[] { "机房A" } });
         response.EnsureSuccessStatusCode();
         var payload = await response.Content.ReadFromJsonAsync<JsonElement>();
         return (payload.GetProperty("id").GetInt64(), payload.GetProperty("agentToken").GetString()!);

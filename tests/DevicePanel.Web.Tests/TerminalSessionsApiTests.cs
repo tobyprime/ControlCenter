@@ -36,8 +36,8 @@ public class TerminalSessionsApiTests : IDisposable
         login.EnsureSuccessStatusCode();
 
         using var scope = _factory.Services.CreateScope();
-        var devices = scope.ServiceProvider.GetRequiredService<DevicePanel.Web.Devices.IDeviceRegistry>();
-        _deviceId = devices.Create("留痕设备", ["机房A"]).Device.Id;
+        var registry = scope.ServiceProvider.GetRequiredService<DevicePanel.Web.Targets.ITargetRegistry>();
+        _deviceId = registry.Create(DevicePanel.Web.Targets.TargetTypes.Device, "留痕设备", ["机房A"]).Target.Id;
     }
 
     public void Dispose() => _factory.Dispose();

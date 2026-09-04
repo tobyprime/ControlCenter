@@ -1,6 +1,6 @@
 using System.Text.Json;
 using DevicePanel.Protocol;
-using DevicePanel.Web.Devices;
+using DevicePanel.Web.Targets;
 using DevicePanel.Web.Terminal;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -27,8 +27,8 @@ public class TerminalRelayTests : IDisposable
     {
         _store = new TerminalStore(_database.Factory);
         // terminal_sessions.device_id 带 FK：留痕测试需真实设备行
-        var devices = new DeviceRegistry(_database.Factory, _clock);
-        _deviceId = devices.Create("中继测试设备", []).Device.Id;
+        var targets = new TargetRegistry(_database.Factory, _clock);
+        _deviceId = targets.Create(TargetTypes.Device, "中继测试设备", []).Target.Id;
     }
 
     public void Dispose() => _database.Dispose();

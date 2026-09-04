@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using DevicePanel.Web.Interactions;
+using DevicePanel.Web.Targets;
 using Microsoft.Extensions.DependencyInjection;
 using Xunit;
 
@@ -45,8 +46,8 @@ public class InteractionApiTests : IDisposable
         login.EnsureSuccessStatusCode();
 
         using var scope = _factory.Services.CreateScope();
-        var devices = scope.ServiceProvider.GetRequiredService<DevicePanel.Web.Devices.IDeviceRegistry>();
-        _deviceId = devices.Create("交互设备", ["机房A"]).Device.Id;
+        var targets = scope.ServiceProvider.GetRequiredService<DevicePanel.Web.Targets.ITargetRegistry>();
+        _deviceId = targets.Create(TargetTypes.Device, "交互设备", ["机房A"]).Target.Id;
     }
 
     public void Dispose() => _factory.Dispose();
@@ -87,8 +88,8 @@ public class InteractionApiTests : IDisposable
         var login = await client.PostAsJsonAsync("/api/auth/login", new { username = "admin", password = "test-password-1" });
         login.EnsureSuccessStatusCode();
         using var scope = factory.Services.CreateScope();
-        var devices = scope.ServiceProvider.GetRequiredService<DevicePanel.Web.Devices.IDeviceRegistry>();
-        var deviceId = devices.Create("声明设备", []).Device.Id;
+        var targets = scope.ServiceProvider.GetRequiredService<DevicePanel.Web.Targets.ITargetRegistry>();
+        var deviceId = targets.Create(TargetTypes.Device, "声明设备", []).Target.Id;
 
         var response = await client.GetAsync($"/api/devices/{deviceId}/interaction-modes");
         response.EnsureSuccessStatusCode();

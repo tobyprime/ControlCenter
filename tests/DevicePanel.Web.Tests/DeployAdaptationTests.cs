@@ -73,7 +73,7 @@ public class DeployAdaptationTests
     {
         var factory = new DeployFactory();
         var client = factory.CreateClient();
-        var request = new HttpRequestMessage(HttpMethod.Get, "/api/devices");
+        var request = new HttpRequestMessage(HttpMethod.Get, "/api/targets");
         request.Headers.Add("Origin", "https://panel.example.com");
 
         var response = await client.SendAsync(request);
@@ -86,7 +86,7 @@ public class DeployAdaptationTests
     {
         var factory = new DeployFactory();
         var client = factory.CreateClient();
-        var request = new HttpRequestMessage(HttpMethod.Options, "/api/devices");
+        var request = new HttpRequestMessage(HttpMethod.Options, "/api/targets");
         request.Headers.Add("Origin", "https://panel.example.com");
         request.Headers.Add("Access-Control-Request-Method", "GET");
 
@@ -101,7 +101,7 @@ public class DeployAdaptationTests
         var factory = new DeployFactory();
         factory.Settings["DevicePanel:Cors:AllowedOrigins"] = "https://panel.example.com;https://cc.pages.dev";
         var client = factory.CreateClient();
-        var request = new HttpRequestMessage(HttpMethod.Options, "/api/devices");
+        var request = new HttpRequestMessage(HttpMethod.Options, "/api/targets");
         request.Headers.Add("Origin", "https://panel.example.com");
         request.Headers.Add("Access-Control-Request-Method", "GET");
         request.Headers.Add("Access-Control-Request-Headers", "content-type");
@@ -119,7 +119,7 @@ public class DeployAdaptationTests
         var factory = new DeployFactory();
         factory.Settings["DevicePanel:Cors:AllowedOrigins"] = "https://panel.example.com";
         var client = factory.CreateClient();
-        var request = new HttpRequestMessage(HttpMethod.Get, "/api/devices");
+        var request = new HttpRequestMessage(HttpMethod.Get, "/api/targets");
         request.Headers.Add("Origin", "https://panel.example.com");
 
         var response = await client.SendAsync(request);
@@ -135,7 +135,7 @@ public class DeployAdaptationTests
         var factory = new DeployFactory();
         factory.Settings["DevicePanel:Cors:AllowedOrigins"] = "https://panel.example.com";
         var client = factory.CreateClient();
-        var request = new HttpRequestMessage(HttpMethod.Get, "/api/devices");
+        var request = new HttpRequestMessage(HttpMethod.Get, "/api/targets");
         request.Headers.Add("Origin", "https://evil.example.org");
 
         var response = await client.SendAsync(request);
@@ -149,7 +149,7 @@ public class DeployAdaptationTests
         var factory = new DeployFactory();
         factory.Settings["DevicePanel:Cors:AllowedOrigins"] = " , https://panel.example.com ,,";
         var client = factory.CreateClient();
-        var request = new HttpRequestMessage(HttpMethod.Get, "/api/devices");
+        var request = new HttpRequestMessage(HttpMethod.Get, "/api/targets");
         request.Headers.Add("Origin", "https://panel.example.com");
 
         var response = await client.SendAsync(request);

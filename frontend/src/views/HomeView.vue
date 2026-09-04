@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { fetchSession } from '@/router'
-import { listDevices, type Device } from '@/api/devices'
+import { listTargets, type Target } from '@/api/targets'
 import { fetchDashboardLayout, saveDashboardLayout, type DashboardCard } from '@/api/dashboard'
 import { BUILTIN_CARD_DEFS, cardDef, createDefaultLayout, normalizeLayout } from '@/dashboard/cards'
 
@@ -15,9 +15,9 @@ let refreshTimer: number | undefined
 
 async function refreshOverview() {
   try {
-    const devices: Device[] = await listDevices()
-    overview.value.total = String(devices.length)
-    overview.value.online = String(devices.filter((device) => device.online).length)
+    const targets: Target[] = await listTargets()
+    overview.value.total = String(targets.length)
+    overview.value.online = String(targets.filter((target) => target.online).length)
   } catch {
     // 首页概览加载失败不打断页面，保留占位
   }

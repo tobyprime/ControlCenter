@@ -1,5 +1,5 @@
 using System.Text.RegularExpressions;
-using DevicePanel.Web.Devices;
+using DevicePanel.Web.Targets;
 using Microsoft.AspNetCore.Mvc;
 
 namespace DevicePanel.Web.Logs;
@@ -22,7 +22,7 @@ public static partial class LogEndpoints
 
         logs.MapGet("/services", async (
             long deviceId,
-            IDeviceRegistry devices,
+            ITargetRegistry devices,
             LogQueryService queries,
             CancellationToken cancellationToken) =>
         {
@@ -47,7 +47,7 @@ public static partial class LogEndpoints
             [FromQuery] string? service,
             [FromQuery] string? kind,
             [FromQuery] int? lines,
-            IDeviceRegistry devices,
+            ITargetRegistry devices,
             LogQueryService queries,
             CancellationToken cancellationToken) =>
         {

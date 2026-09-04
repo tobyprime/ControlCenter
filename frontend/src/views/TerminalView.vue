@@ -4,7 +4,7 @@ import { useRoute } from 'vue-router'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
-import { listDevices, type Device } from '@/api/devices'
+import { listTargets as listDevices, type Target as Device } from '@/api/targets'
 import { terminalWebSocketUrl } from '@/api/terminal'
 import { listDeviceInteractionModes, type InteractionModeInfo } from '@/api/interactions'
 

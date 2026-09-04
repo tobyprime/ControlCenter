@@ -11,7 +11,7 @@ async function login(page: Page) {
 }
 
 async function createDeviceViaApi(page: Page, name: string): Promise<{ id: number }> {
-  const response = await page.request.post('/api/devices', {
+  const response = await page.request.post('/api/targets', {
     data: { name, tags: ['E2E'] },
   })
   expect(response.ok()).toBeTruthy()

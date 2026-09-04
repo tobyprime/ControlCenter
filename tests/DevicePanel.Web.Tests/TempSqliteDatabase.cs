@@ -3,16 +3,19 @@ using Microsoft.Data.Sqlite;
 
 namespace DevicePanel.Web.Tests;
 
-/// <summary>临时 SQLite 数据库，已应用全部迁移，用于单元级持久化测试。</summary>
+/// <summary>临时 SQLite 数据库，默认已应用全部迁移，用于单元级持久化测试；可关闭迁移自建一期库结构。</summary>
 public sealed class TempSqliteDatabase : IDisposable
 {
-    public TempSqliteDatabase()
+    public TempSqliteDatabase(bool applyMigrations = true)
     {
         DataDir = Path.Combine(Path.GetTempPath(), "device-panel-unit-tests", Guid.NewGuid().ToString("N"));
         Options = new DatabaseOptions { DataDir = DataDir };
         Factory = new SqliteConnectionFactory(Options);
         using var connection = Factory.CreateOpenConnection();
-        DatabaseMigrator.Migrate(connection);
+        if (applyMigrations)
+        {
+            DatabaseMigrator.Migrate(connection);
+        }
     }
 
     public string DataDir { get; }

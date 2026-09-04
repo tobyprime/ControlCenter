@@ -1,5 +1,5 @@
 using DevicePanel.Protocol;
-using DevicePanel.Web.Devices;
+using DevicePanel.Web.Targets;
 
 namespace DevicePanel.Web.Terminal;
 
