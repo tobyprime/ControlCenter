@@ -44,6 +44,7 @@ NAPCAT_TARGET_TYPE="${NAPCAT_TARGET_TYPE:-private}"
 NAPCAT_TARGET_ID="${NAPCAT_TARGET_ID:-10001}"
 
 RUN_DIR="${RUN_DIR:-$(mktemp -d /tmp/device-panel-acceptance.XXXXXX)}"
+mkdir -p "$RUN_DIR"   # 显式传入不存在的 RUN_DIR 时自动创建
 DATA_DIR="$RUN_DIR/data"
 COOKIE="$RUN_DIR/cookies.txt"
 PANEL_LOG="$RUN_DIR/panel.log"
@@ -239,6 +240,10 @@ if [ "$ATTACH_PANEL" = "1" ]; then
     | python3 -c 'import sys,json;pts=[p["cpu"] for p in json.load(sys.stdin)["points"]];print(max(1,int(min(pts))-1) if pts else 5)' 2>/dev/null) || CPU_THR=5
   echo "== 远程模式：按观测 CPU 自动设阈值 ${CPU_THR}%"
 fi
+# 记录验收前的全局 CPU 阈值：验收 5 结束后还原，避免静默改变用户环境的告警灵敏度
+ORIG_CPU_THR=$(curl -sf -b "$COOKIE" "$PANEL_BASE/api/alerts/thresholds" \
+  | python3 -c 'import sys,json;print(json.load(sys.stdin)["global"]["cpu"])') \
+  || { stop_spinners; die "读取当前全局 CPU 阈值失败"; }
 start_spinners
 curl -sf -b "$COOKIE" -X PUT -H 'Content-Type: application/json' \
   -d "{\"metric\":\"cpu\",\"value\":$CPU_THR}" "$PANEL_BASE/api/alerts/thresholds/global" >/dev/null \
@@ -264,7 +269,7 @@ else
 fi
 stop_spinners
 curl -sf -b "$COOKIE" -X PUT -H 'Content-Type: application/json' \
-  -d '{"metric":"cpu","value":95}' "$PANEL_BASE/api/alerts/thresholds/global" >/dev/null
+  -d "{\"metric\":\"cpu\",\"value\":$ORIG_CPU_THR}" "$PANEL_BASE/api/alerts/thresholds/global" >/dev/null
 
 # ---------- 验收 4：agent 停止 → 离线 + QQ 离线告警（napcat 正常，直发） ----------
 KILL_AT=$(date +%s)
