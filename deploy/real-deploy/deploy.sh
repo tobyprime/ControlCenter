@@ -19,6 +19,13 @@ source secret.env
 : "${COOKIE_SAMESITE:?deploy.env 缺 COOKIE_SAMESITE}"
 : "${DEVICEPANEL__AUTH__INITIALUSERNAME:?secret.env 缺初始账号}"
 : "${DEVICEPANEL__AUTH__INITIALPASSWORD:?secret.env 缺初始密码}"
+# 拦下未替换的占位符（如 http://<napcat 地址>:3000），避免把模板值种进面板
+for _v in "$DEVICEPANEL__AUTH__INITIALPASSWORD" "${DEVICEPANEL__ALERT__NAPCAT__BASEURL:-}" \
+          "${DEVICEPANEL__ALERT__NAPCAT__TOKEN:-}" "${DEVICEPANEL__ALERT__NAPCAT__TARGETID:-}"; do
+  if [[ "$_v" == *'<'* ]]; then
+    echo "secret.env/deploy.env 仍有未替换的占位符值：${_v:0:24}…，请先填真实值"; exit 1
+  fi
+done
 
 echo "==> 1/5 命名空间与存储"
 kubectl apply -f manifests/00-namespace.yaml
