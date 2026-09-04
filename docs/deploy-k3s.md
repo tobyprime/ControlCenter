@@ -46,7 +46,7 @@ docker save controlcenter-panel:local | sudo k3s ctr images import -
 
 ## 2. 创建 Secret
 
-敏感配置不落仓库，用 `kubectl` 直接创建（`deploy/k3s/21-secret.yaml` 仅为字段模板）：
+敏感配置不落仓库，用 `kubectl` 直接创建。注意：`deploy/k3s/` 目录内刻意不放 Secret YAML——`kubectl apply -f deploy/k3s/` 会把占位符值覆盖到已创建的真实 Secret 上（首次启动将生成占位密码账号），Secret 只经下面命令创建：
 
 ```bash
 kubectl -n controlcenter create secret generic device-panel-secret \
@@ -66,7 +66,7 @@ kubectl -n controlcenter create secret generic device-panel-secret \
 ## 3. 部署到 k3s
 
 ```bash
-kubectl apply -f deploy/k3s/
+kubectl apply -f deploy/k3s/           # 目录内无 Secret，先做 §2 不影响结果；Deployment 依赖 §2 创建的 device-panel-secret
 kubectl -n controlcenter get pods -w   # 等待 device-panel Running 且 READY 1/1
 ```
 

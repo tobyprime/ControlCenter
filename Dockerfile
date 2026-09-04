@@ -33,6 +33,9 @@ COPY --from=backend /app/publish/ ./
 EXPOSE 8080
 # 镜像契约：数据目录固定 /data，部署时必须挂载卷（k3s manifests 已按此配置）
 ENV DEVICEPANEL__DATADIR=/data
-# 非 root 运行；/data 由部署挂载并提供归属（k3s manifests 的 initContainer 负责 chown）
+# 预建 /data 并归属应用用户：docker 首次把命名卷挂到已存在目录时会继承镜像内目录与属主，
+# 保证开箱即可写（非 root），无需手工 chown；k3s PVC 路径由 initContainer 授权
+RUN mkdir -p /data && chown app:app /data
+# 非 root 运行
 USER app
 ENTRYPOINT ["dotnet", "DevicePanel.Web.dll"]
