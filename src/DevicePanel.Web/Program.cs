@@ -3,6 +3,7 @@ using DevicePanel.Web.Auth;
 using DevicePanel.Web.Devices;
 using DevicePanel.Web.Endpoints;
 using DevicePanel.Web.Infrastructure;
+using DevicePanel.Web.Interactions;
 using DevicePanel.Web.Logs;
 using DevicePanel.Web.Metrics;
 using DevicePanel.Web.Terminal;
@@ -107,6 +108,11 @@ builder.Services.AddSingleton<IAgentMessageHandler, LogsServicesResponseHandler>
 builder.Services.AddSingleton<IAgentMessageHandler, LogsTailResponseHandler>();
 builder.Services.AddSingleton<IAgentMessageHandler, LogsErrorHandler>();
 
+// 交互模式（约束 C）：注册表收集全部 IInteractionMode，核心按目标声明渲染入口，不绑定单一形态
+builder.Services.AddSingleton<IInteractionMode, ShellInteractionMode>();
+builder.Services.AddSingleton<InteractionModeRegistry>();
+builder.Services.AddSingleton<IInteractionModeCatalog, DeviceInteractionModeCatalog>();
+
 builder.Services.AddHostedService<DatabaseInitializer>();
 builder.Services.AddHostedService<AccountSeeder>();
 
@@ -140,6 +146,7 @@ app.MapMetricsEndpoints();
 app.MapAlertEndpoints();
 app.MapTerminalEndpoints();
 app.MapLogEndpoints();
+app.MapInteractionEndpoints();
 app.MapAgentWsEndpoints();
 
 app.Run();
