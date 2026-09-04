@@ -2,11 +2,13 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import {
   deleteMetricKey,
+  fetchTargetOverview,
   fetchTargetSeries,
   listMetricKeys,
   registerMetricKey,
   type Granularity,
   type MetricKeyInfo,
+  type MetricOverviewItem,
   type MetricValueType,
   type TargetSeries,
 } from '@/api/metrics'
@@ -28,8 +30,12 @@ const rangeOptions: RangeOption[] = [
 
 const chartColors = ['#2563eb', '#16a34a', '#d97706', '#9333ea', '#dc2626', '#0891b2', '#65a30d', '#db2777']
 
+// 辅助指标：不作为独立曲线展示（内存 used/total 并入内存卡副标题，传感器名并入温度卡副标题）
+const auxiliaryKeys = ['mem_used', 'mem_total', 'temp_sensor']
+
 const targets = ref<Target[]>([])
 const metricKeys = ref<MetricKeyInfo[]>([])
+const overview = ref<MetricOverviewItem[]>([])
 const selectedTargetId = ref<number | null>(null)
 const selectedKeys = ref<string[]>([])
 const selectedRange = ref<RangeOption>(rangeOptions[0])
@@ -73,28 +79,79 @@ function isNumberKey(key: string): boolean {
   return keyInfo(key)?.valueType === 'number'
 }
 
+function overviewLatestNum(key: string): number | null {
+  return overview.value.find((item) => item.key === key)?.latestValueNum ?? null
+}
+
+function overviewLatestText(key: string): string | null {
+  return overview.value.find((item) => item.key === key)?.latestValueText ?? null
+}
+
+/** 字节数值人性化：1024 进位，保留一位小数（原始字节取整）。 */
+function humanizeBytes(value: number): string {
+  const units = ['B', 'KB', 'MB', 'GB', 'TB']
+  let current = value
+  let index = 0
+  while (Math.abs(current) >= 1024 && index < units.length - 1) {
+    current /= 1024
+    index += 1
+  }
+  return `${index === 0 ? Math.round(current) : current.toFixed(1)} ${units[index]}`
+}
+
+function unitFormatter(unit: string): ((value: number) => string) | undefined {
+  if (unit === 'B/s') {
+    return (value) => `${humanizeBytes(value)}/s`
+  }
+  if (unit === 'B') {
+    return (value) => humanizeBytes(value)
+  }
+  return undefined
+}
+
+function memSubtitle(): string {
+  const used = overviewLatestNum('mem_used')
+  const total = overviewLatestNum('mem_total')
+  if (used === null || total === null || total <= 0) {
+    return ''
+  }
+  return `已用 ${humanizeBytes(used)} / 共 ${humanizeBytes(total)}`
+}
+
+function tempSubtitle(): string {
+  const sensor = overviewLatestText('temp_sensor')
+  return sensor ? `传感器：${sensor}` : ''
+}
+
+const selectableKeys = computed(() => metricKeys.value.filter((info) => !auxiliaryKeys.includes(info.key)))
+
 const chartModels = computed(() => {
-  return (series.value?.series ?? []).map((entry, index) => {
-    const info = keyInfo(entry.key)
-    const chartSeries: ChartSeries[] = [
-      {
-        name: keyLabel(entry.key),
-        color: chartColors[index % chartColors.length],
-        data: entry.points
-          .filter((p) => p.v !== null)
-          .map((p) => ({ x: Date.parse(p.t), y: p.v as number })),
-      },
-    ]
-    const isPercent = info?.unit === '%'
-    return {
-      key: entry.key,
-      title: info?.displayName ?? entry.key,
-      unit: info?.unit || '数值',
-      series: chartSeries,
-      yMax: isPercent ? 100 : undefined,
-      hasData: entry.points.length > 0,
-    }
-  })
+  return (series.value?.series ?? [])
+    .filter((entry) => !auxiliaryKeys.includes(entry.key))
+    .map((entry, index) => {
+      const info = keyInfo(entry.key)
+      const chartSeries: ChartSeries[] = [
+        {
+          name: keyLabel(entry.key),
+          color: chartColors[index % chartColors.length],
+          data: entry.points
+            .filter((p) => p.v !== null)
+            .map((p) => ({ x: Date.parse(p.t), y: p.v as number })),
+        },
+      ]
+      const isPercent = info?.unit === '%'
+      const unit = info?.unit || '数值'
+      return {
+        key: entry.key,
+        title: info?.displayName ?? entry.key,
+        unit,
+        series: chartSeries,
+        yMax: isPercent ? 100 : undefined,
+        formatValue: unitFormatter(unit),
+        subtitle: entry.key === 'mem' ? memSubtitle() : entry.key === 'temp' ? tempSubtitle() : '',
+        hasData: entry.points.length > 0,
+      }
+    })
 })
 
 async function refresh(showError = true) {
@@ -108,12 +165,13 @@ async function refresh(showError = true) {
   const to = new Date()
   const from = new Date(to.getTime() - selectedRange.value.hours * 3600 * 1000)
   try {
-    series.value = await fetchTargetSeries(
-      targetId,
-      selectedKeys.value,
-      from.toISOString(),
-      to.toISOString(),
-    )
+    // 曲线与最新值总览并行拉取：总览供内存卡 used/total 副标题与温度卡传感器名副标题
+    const [seriesResult, overviewResult] = await Promise.all([
+      fetchTargetSeries(targetId, selectedKeys.value, from.toISOString(), to.toISOString()),
+      fetchTargetOverview(targetId).catch(() => [] as MetricOverviewItem[]),
+    ])
+    series.value = seriesResult
+    overview.value = overviewResult
     errorMessage.value = ''
   } catch (e) {
     if (showError) {
@@ -129,7 +187,7 @@ async function loadBaseline() {
     const [targetList, keys] = await Promise.all([listTargets(), listMetricKeys()])
     targets.value = targetList
     metricKeys.value = keys
-    const defaultKeys = ['cpu', 'mem', 'disk', 'net_rx', 'net_tx'].filter((key) =>
+    const defaultKeys = ['cpu', 'mem', 'disk', 'net_rx', 'net_tx', 'temp', 'disk_rx', 'disk_tx'].filter((key) =>
       keys.some((info) => info.key === key),
     )
     selectedKeys.value = defaultKeys
@@ -318,7 +376,7 @@ onBeforeUnmount(() => {
 
     <div class="key-group" role="group" aria-label="指标选择">
       <button
-        v-for="info in metricKeys"
+        v-for="info in selectableKeys"
         :key="info.key"
         type="button"
         class="range-button"
@@ -348,6 +406,8 @@ onBeforeUnmount(() => {
           :unit="model.unit"
           :series="model.series"
           :y-max="model.yMax"
+          :format-value="model.formatValue"
+          :subtitle="model.subtitle"
         />
       </div>
     </template>

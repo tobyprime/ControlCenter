@@ -182,6 +182,39 @@ public class MetricsIngestTests : IDisposable
     }
 
     [Fact]
+    public async Task Agent_Extra_Metrics_Temp_Disk_Mem_Flow_Through_Registered_Keys()
+    {
+        // 模块1（TOB-362）：agent extra 携带 temp/temp_sensor/disk_rx/disk_tx/mem_used/mem_total，
+        // 迁移播种的内置注册 key 直接放行——核心管道零改动（约束 A），且无预置告警规则（约束 B）
+        var (token, targetId) = await CreateTargetWithTokenAsync();
+        using var socket = await ConnectAsync(_factory);
+        await SendAuthAsync(socket, token);
+
+        await SendAsync(socket, AgentEnvelope.Create(AgentMessageTypes.MetricsReport, 2, PayloadWithExtra(
+            cpu: 12, mem: 40, disk: 55, netRx: 2048, netTx: 1024,
+            """{"temp":45.5,"temp_sensor":"coretemp Package id 0","disk_rx":5120000,"disk_tx":1024000,"mem_used":4294967296,"mem_total":8589934592}""")));
+
+        // WS 入站处理与测试线程并发：等本批最后一个 key 入库后再查询（与在线状态测试同一节奏）
+        await WaitForSampleAsync(targetId, MetricKeys.TempSensor);
+
+        var series = await GetSeriesAsync(targetId, "temp,disk_rx,disk_tx,mem_used,mem_total");
+        var byKey = series.GetProperty("series").EnumerateArray().ToDictionary(s => s.GetProperty("key").GetString()!);
+        Assert.Equal(45.5, byKey["temp"].GetProperty("points")[0].GetProperty("v").GetDouble(), precision: 6);
+        Assert.Equal(5120000, byKey["disk_rx"].GetProperty("points")[0].GetProperty("v").GetDouble(), precision: 0);
+        Assert.Equal(1024000, byKey["disk_tx"].GetProperty("points")[0].GetProperty("v").GetDouble(), precision: 0);
+        Assert.Equal(4294967296, byKey["mem_used"].GetProperty("points")[0].GetProperty("v").GetDouble(), precision: 0);
+        Assert.Equal(8589934592, byKey["mem_total"].GetProperty("points")[0].GetProperty("v").GetDouble(), precision: 0);
+
+        var overview = await GetOverviewAsync(targetId);
+        var items = overview.EnumerateArray().ToDictionary(i => i.GetProperty("key").GetString()!);
+        Assert.Equal("°C", items["temp"].GetProperty("unit").GetString());
+        Assert.Equal("coretemp Package id 0", items["temp_sensor"].GetProperty("latestValueText").GetString());
+        Assert.Equal("string", items["temp_sensor"].GetProperty("valueType").GetString());
+        Assert.Equal("B/s", items["disk_rx"].GetProperty("unit").GetString());
+        Assert.Equal("B", items["mem_total"].GetProperty("unit").GetString());
+    }
+
+    [Fact]
     public async Task Store_Failure_Drops_Point_But_Keeps_Session_Alive()
     {
         // 回归：落库失败必须"丢点保连"——Insert 抛异常只丢该点，

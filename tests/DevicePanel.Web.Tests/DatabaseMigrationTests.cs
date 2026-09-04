@@ -69,6 +69,26 @@ public class DatabaseMigrationTests : IClassFixture<TestAppFactory>
     }
 
     [Fact]
+    public void Agent_Metric_Keys_Are_Built_In_Without_Preset_Alert_Rules()
+    {
+        // 模块1（TOB-362）：agent 新增采集项随迁移播种为内置 key（约束 A），
+        // 且不预置任何告警规则（约束 B：用户按需自配）
+        var factory = new SqliteConnectionFactory(new DatabaseOptions
+        {
+            DataDir = _factory.DataDir,
+        });
+        using var connection = factory.CreateOpenConnection();
+        foreach (var key in new[] { "temp", "temp_sensor", "disk_rx", "disk_tx", "mem_used", "mem_total" })
+        {
+            var builtIn = ExecuteScalar(connection, "SELECT built_in FROM metric_keys WHERE key = $key;", ("$key", key));
+            Assert.True(builtIn is not null && Convert.ToInt64(builtIn) == 1, $"{key} 应为内置指标");
+
+            var rules = ExecuteScalar(connection, "SELECT COUNT(*) FROM alert_rules WHERE metric_key = $key;", ("$key", key));
+            Assert.Equal(0L, Convert.ToInt64(rules));
+        }
+    }
+
+    [Fact]
     public void Migration_006_Applies_Cleanly_On_Phase1_Upgraded_Database()
     {
         // 模拟一期升级库：真实应用 001-005 建表（TOB-361 的 007_targets 等迁移依赖一期真实表结构），

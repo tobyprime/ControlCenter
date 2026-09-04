@@ -21,12 +21,21 @@ public class MetricKeyRegistryTests : IDisposable
 
         var keys = registry.List().ToDictionary(k => k.Key);
         Assert.Equal(
-            new[] { MetricKeys.Cpu, MetricKeys.Disk, MetricKeys.Mem, MetricKeys.NetRx, MetricKeys.NetTx, MetricKeys.Online },
-            keys.Keys.OrderBy(k => k).ToArray());
+        [
+            MetricKeys.Cpu, MetricKeys.Disk, MetricKeys.DiskRx, MetricKeys.DiskTx, MetricKeys.Mem,
+            MetricKeys.MemTotal, MetricKeys.MemUsed, MetricKeys.NetRx, MetricKeys.NetTx, MetricKeys.Online,
+            MetricKeys.Temp, MetricKeys.TempSensor,
+        ], keys.Keys.OrderBy(k => k).ToArray());
         Assert.All(keys.Values, k => Assert.True(k.BuiltIn));
         Assert.Equal(MetricValueType.Number, keys[MetricKeys.Cpu].ValueType);
         Assert.Equal("%", keys[MetricKeys.Cpu].Unit);
         Assert.Equal(MetricValueType.Bool, keys[MetricKeys.Online].ValueType);
+        // 模块1（TOB-362）新增采集项：温度/磁盘读写/内存实际数值，随迁移播种为内置 key（约束 A）
+        Assert.Equal(MetricValueType.Number, keys[MetricKeys.Temp].ValueType);
+        Assert.Equal("°C", keys[MetricKeys.Temp].Unit);
+        Assert.Equal(MetricValueType.String, keys[MetricKeys.TempSensor].ValueType);
+        Assert.Equal("B/s", keys[MetricKeys.DiskRx].Unit);
+        Assert.Equal("B", keys[MetricKeys.MemUsed].Unit);
     }
 
     [Fact]

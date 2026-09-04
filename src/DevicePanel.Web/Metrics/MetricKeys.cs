@@ -9,6 +9,24 @@ public static class MetricKeys
     public const string NetRx = "net_rx";
     public const string NetTx = "net_tx";
 
+    /// <summary>温度（°C）：agent 上报 hwmon/thermal 中 CPU 相关传感器的最大值；无传感器的设备不产出该指标。</summary>
+    public const string Temp = "temp";
+
+    /// <summary>温度传感器名（string）：与 temp 同点上报，保留读数来源。</summary>
+    public const string TempSensor = "temp_sensor";
+
+    /// <summary>磁盘读取速率（B/s）：agent 经 /proc/diskstats 整盘扇区差值计算。</summary>
+    public const string DiskRx = "disk_rx";
+
+    /// <summary>磁盘写入速率（B/s）。</summary>
+    public const string DiskTx = "disk_tx";
+
+    /// <summary>内存已用（B）：total - available。</summary>
+    public const string MemUsed = "mem_used";
+
+    /// <summary>内存总量（B）。</summary>
+    public const string MemTotal = "mem_total";
+
     /// <summary>设备在线状态（bool）：心跳写 true，TargetStatusScanner 在判定离线时写 false。</summary>
     public const string Online = "online";
 }

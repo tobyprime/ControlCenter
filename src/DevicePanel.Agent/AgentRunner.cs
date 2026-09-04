@@ -10,6 +10,7 @@ namespace DevicePanel.Agent;
 [JsonSerializable(typeof(AuthPayload))]
 [JsonSerializable(typeof(HeartbeatPayload))]
 [JsonSerializable(typeof(MetricsPayload))]
+[JsonSerializable(typeof(Dictionary<string, JsonElement>))]
 [JsonSerializable(typeof(AuthOkPayload))]
 [JsonSerializable(typeof(TermOpenPayload))]
 [JsonSerializable(typeof(TermInputPayload))]
@@ -28,8 +29,43 @@ internal sealed record AuthPayload(string Token);
 
 internal sealed record HeartbeatPayload(long UptimeSec);
 
-/// <summary>指标上报负载：百分比 0-100（cpu/mem/disk），网络速率字节/秒（netRx/netTx）。</summary>
-internal sealed record MetricsPayload(double Cpu, double Mem, double Disk, double NetRx, double NetTx);
+/// <summary>
+/// 指标上报负载：百分比 0-100（cpu/mem/disk），速率字节/秒（netRx/netTx）；
+/// extra 携带扩展指标（snake_case key，与服务端注册 metric key 一致，约束 A：注册后经同一管道入库）。
+/// </summary>
+internal sealed record MetricsPayload(double Cpu, double Mem, double Disk, double NetRx, double NetTx,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] Dictionary<string, JsonElement>? Extra = null)
+{
+    /// <summary>采集快照 → 上报负载：内存实际数值与磁盘读写恒上报，温度仅在传感器存在时携带。</summary>
+    public static MetricsPayload From(MetricsSample sample)
+    {
+        var extra = new Dictionary<string, JsonElement>
+        {
+            ["mem_used"] = Number(sample.MemUsedBytes),
+            ["mem_total"] = Number(sample.MemTotalBytes),
+            ["disk_rx"] = Number(sample.DiskReadBytesPerSec),
+            ["disk_tx"] = Number(sample.DiskWriteBytesPerSec),
+        };
+        if (sample.TempCelsius is { } temp)
+        {
+            extra["temp"] = Number(temp);
+        }
+
+        if (sample.TempSensor is { } sensor)
+        {
+            extra["temp_sensor"] = String(sensor);
+        }
+
+        return new MetricsPayload(sample.CpuPercent, sample.MemPercent, sample.DiskPercent,
+            sample.NetRxBytesPerSec, sample.NetTxBytesPerSec, extra);
+    }
+
+    private static JsonElement Number(double value) =>
+        JsonSerializer.SerializeToElement(value, AgentJsonContext.Default.Double);
+
+    private static JsonElement String(string value) =>
+        JsonSerializer.SerializeToElement(value, AgentJsonContext.Default.String);
+}
 
 internal sealed record AuthOkPayload(long DeviceId, string Name);
 
@@ -247,9 +283,7 @@ public sealed class AgentRunner
         }
 
         await downlink.SendAsync(AgentMessageTypes.MetricsReport,
-            new MetricsPayload(sample.CpuPercent, sample.MemPercent, sample.DiskPercent,
-                sample.NetRxBytesPerSec, sample.NetTxBytesPerSec),
-            AgentJsonContext.Default.MetricsPayload, ct).ConfigureAwait(false);
+            MetricsPayload.From(sample), AgentJsonContext.Default.MetricsPayload, ct).ConfigureAwait(false);
     }
 
     private async Task HandleInboundAsync(AgentEnvelope envelope, ITerminalChannel? channel, ILogsChannel? logsChannel)
