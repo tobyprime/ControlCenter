@@ -11,6 +11,9 @@ public interface IAlertSettingsStore
     AlertDeliverySettings Get();
 
     void Save(AlertDeliverySettings settings);
+
+    /// <summary>把配置来源的默认值种入空缺项：已有值（UI 保存）与未配置项均不触碰。</summary>
+    void SeedIfEmpty(AlertDeliverySettings defaults);
 }
 
 /// <summary>面板 KV 设置存储（panel_settings）上的 napcat 配置读写；token 只入库，不回传 API。</summary>
@@ -42,6 +45,24 @@ public sealed class AlertSettingsStore : IAlertSettingsStore
         Write(KeyToken, settings.NapcatToken);
         Write(KeyTargetType, settings.NapcatTargetType);
         Write(KeyTargetId, settings.NapcatTargetId);
+    }
+
+    public void SeedIfEmpty(AlertDeliverySettings defaults)
+    {
+        WriteIfEmpty(KeyBaseUrl, defaults.NapcatBaseUrl);
+        WriteIfEmpty(KeyToken, defaults.NapcatToken);
+        WriteIfEmpty(KeyTargetType, defaults.NapcatTargetType);
+        WriteIfEmpty(KeyTargetId, defaults.NapcatTargetId);
+    }
+
+    private void WriteIfEmpty(string key, string? value)
+    {
+        if (string.IsNullOrEmpty(value) || Read(key) is not null)
+        {
+            return;
+        }
+
+        Write(key, value);
     }
 
     private string? Read(string key)

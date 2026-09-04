@@ -5,7 +5,7 @@
 - 需求与验收：Multica issue TOB-336（父 PRD，一期共 8 个功能点）
 - 架构：.NET 单服务（ASP.NET Core 8 LTS + 内嵌前端产物）+ SQLite（WAL），时间统一 UTC 存储
 - 前端：Vue 3 + Vite + TypeScript，全站中文、响应式
-- 部署：k3s 容器化 + Cloudflare Tunnel 外网入口（一期功能点 8，后续 issue 交付）
+- 部署：k3s 容器化 + Cloudflare Tunnel 外网入口（见 [docs/deploy-k3s.md](docs/deploy-k3s.md)）
 
 ## 分支模型
 
@@ -23,6 +23,10 @@ scripts/build.sh
 
 # 运行
 dotnet artifacts/publish/DevicePanel.Web.dll --urls http://0.0.0.0:5000
+
+# 容器镜像 / 发布构建（镜像 + agent 交叉编译，部署用）
+scripts/build-image.sh controlcenter-panel:local
+scripts/build-release.sh            # 本机产物 + 镜像 + agent amd64/arm64
 ```
 
 开发调试：
@@ -58,6 +62,10 @@ cd e2e && npm test                           # Playwright 端到端验证
 | `DevicePanel:Agent:HeartbeatIntervalSeconds` | `DevicePanel__Agent__HeartbeatIntervalSeconds` | `30` | agent 心跳周期（秒），离线阈值 = 2×该值 |
 | `DevicePanel:Metrics:RetentionDays` | `DevicePanel__Metrics__RetentionDays` | `30` | 指标保留天数（明细与聚合），过期清理任务删除 |
 | `DevicePanel:Metrics:CleanupIntervalMinutes` | `DevicePanel__Metrics__CleanupIntervalMinutes` | `360` | 指标过期清理任务执行间隔（分钟） |
+| `DevicePanel:Alert:Napcat:BaseUrl` | `DevicePanel__Alert__Napcat__BaseUrl` | 空（不注入） | napcat OneBot HTTP 地址；仅面板设置为空时种子写入，之后以 UI 保存为准 |
+| `DevicePanel:Alert:Napcat:Token` | `DevicePanel__Alert__Napcat__Token` | 空（不注入） | napcat OneBot HTTP token；种子语义同上 |
+| `DevicePanel:Alert:Napcat:TargetType` | `DevicePanel__Alert__Napcat__TargetType` | 空（不注入） | 通知目标类型 `private`/`group`；种子语义同上 |
+| `DevicePanel:Alert:Napcat:TargetId` | `DevicePanel__Alert__Napcat__TargetId` | 空（不注入） | 通知目标 QQ 号/群号；种子语义同上 |
 
 数据库约定：SQLite 以 WAL 模式运行；所有时间列 UTC 存储（ISO-8601 文本）；表结构变更走 `src/DevicePanel.Web/Infrastructure/Migrations/` 手写迁移。
 

@@ -62,6 +62,9 @@ builder.Services.AddSingleton<IAgentMessageHandler, MetricsMessageHandler>();
 var alertOptions = new AlertOptions();
 builder.Configuration.GetSection(AlertOptions.SectionName).Bind(alertOptions);
 builder.Services.AddSingleton(alertOptions);
+var napcatSeedOptions = new NapcatSeedOptions();
+builder.Configuration.GetSection(NapcatSeedOptions.SectionName).Bind(napcatSeedOptions);
+builder.Services.AddSingleton(napcatSeedOptions);
 builder.Services.AddSingleton<IAlertOutboxStore, AlertOutboxStore>();
 builder.Services.AddSingleton<IAlertSettingsStore, AlertSettingsStore>();
 builder.Services.AddSingleton<IAlertThresholdStore, AlertThresholdStore>();
@@ -92,6 +95,9 @@ builder.Services.AddSingleton<IAgentMessageHandler, LogsErrorHandler>();
 
 builder.Services.AddHostedService<DatabaseInitializer>();
 builder.Services.AddHostedService<AccountSeeder>();
+
+// napcat 配置种子依赖迁移后的表结构：必须在 DatabaseInitializer 之后、分发 worker 之前执行
+builder.Services.AddHostedService<AlertSettingsSeeder>();
 
 // 告警分发 worker 依赖迁移完成后的表结构：必须排在 DatabaseInitializer 之后启动
 builder.Services.AddHostedService(sp => sp.GetRequiredService<AlertDispatchWorker>());
