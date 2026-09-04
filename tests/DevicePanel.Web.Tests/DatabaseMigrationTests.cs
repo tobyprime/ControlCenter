@@ -52,6 +52,80 @@ public class DatabaseMigrationTests : IClassFixture<TestAppFactory>
     }
 
     [Fact]
+    public void Dashboard_Layout_Table_Exists_After_Startup()
+    {
+        var factory = new SqliteConnectionFactory(new DatabaseOptions
+        {
+            DataDir = _factory.DataDir,
+        });
+        using var connection = factory.CreateOpenConnection();
+
+        var exists = ExecuteScalar(
+            connection,
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'dashboard_layouts';");
+
+        Assert.Equal(1L, Convert.ToInt64(exists));
+    }
+
+    [Fact]
+    public void Migration_006_Applies_Cleanly_On_Phase1_Upgraded_Database()
+    {
+        // 模拟一期升级库：仅标记 001-005 已应用（一期真实表结构无关本迁移，006 不依赖既有表），
+        // 重启迁移只补执行 006 且无错误
+        var dataDir = Path.Combine(Path.GetTempPath(), "device-panel-upgrade-tests", Guid.NewGuid().ToString("N"));
+        var factory = new SqliteConnectionFactory(new DatabaseOptions { DataDir = dataDir });
+        try
+        {
+            using (var connection = factory.CreateOpenConnection())
+            {
+                using var seed = connection.CreateCommand();
+                seed.CommandText = """
+                    CREATE TABLE schema_migrations (
+                        version        TEXT PRIMARY KEY,
+                        applied_at_utc TEXT NOT NULL
+                    );
+                    INSERT INTO schema_migrations(version, applied_at_utc) VALUES
+                        ('001_init', '2026-01-01T00:00:00.000Z'),
+                        ('002_devices', '2026-01-01T00:00:00.000Z'),
+                        ('003_metrics', '2026-01-01T00:00:00.000Z'),
+                        ('004_terminal_sessions', '2026-01-01T00:00:00.000Z'),
+                        ('005_alerting', '2026-01-01T00:00:00.000Z');
+                    """;
+                seed.ExecuteNonQuery();
+            }
+
+            using (var connection = factory.CreateOpenConnection())
+            {
+                DatabaseMigrator.Migrate(connection);
+
+                var tableExists = ExecuteScalar(
+                    connection,
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'dashboard_layouts';");
+                Assert.Equal(1L, Convert.ToInt64(tableExists));
+
+                var applied = ExecuteScalar(
+                    connection,
+                    "SELECT COUNT(*) FROM schema_migrations WHERE version = '006_dashboard_layout';");
+                Assert.Equal(1L, Convert.ToInt64(applied));
+            }
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            try
+            {
+                if (Directory.Exists(dataDir))
+                {
+                    Directory.Delete(dataDir, recursive: true);
+                }
+            }
+            catch (IOException)
+            {
+            }
+        }
+    }
+
+    [Fact]
     public void Wal_Sidecar_File_Exists_While_Connection_Open()
     {
         var options = new DatabaseOptions { DataDir = _factory.DataDir };
