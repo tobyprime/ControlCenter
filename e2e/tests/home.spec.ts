@@ -225,4 +225,61 @@ test.describe('主页卡片面板（TOB-367）', () => {
     await expect(cardLocator(page, 'overview-devices-online')).toBeVisible()
     await expect(cardLocator(page, 'overview-alerts-active')).toBeVisible()
   })
+
+  test('保存失败显示错误横幅且保留编辑内容，恢复后可重试成功（阶段 2 问题 1）', async ({
+    page,
+  }) => {
+    let stored: LayoutCard[] | null = null
+    let failPut = true
+    await page.route(LAYOUT_API, async (route: Route) => {
+      if (route.request().method() === 'PUT') {
+        if (failPut) {
+          await route.fulfill({
+            status: 500,
+            contentType: 'application/json',
+            body: JSON.stringify({ error: 'layout store unavailable' }),
+          })
+          return
+        }
+        stored = (route.request().postDataJSON() as { cards: LayoutCard[] }).cards
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({ cards: stored }),
+        })
+        return
+      }
+      if (stored) {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({ cards: stored }),
+        })
+      } else {
+        await route.fulfill({
+          status: 500,
+          contentType: 'application/json',
+          body: JSON.stringify({ error: 'layout store unavailable' }),
+        })
+      }
+    })
+    await login(page)
+
+    await page.getByRole('button', { name: '进入编辑' }).click()
+    const totalCard = cardLocator(page, 'overview-devices-total')
+    await totalCard.getByRole('button', { name: '隐藏' }).click()
+
+    // 首次保存失败：错误横幅可见、仍在编辑态、编辑内容未丢失
+    await page.getByRole('button', { name: '保存布局' }).click()
+    await expect(page.getByRole('alert')).toContainText('layout store unavailable')
+    await expect(page.getByRole('button', { name: '保存布局' })).toBeVisible()
+    await expect(totalCard).toHaveClass(/card-hidden/)
+
+    // 接口恢复后重试保存成功，刷新后布局保持
+    failPut = false
+    await page.getByRole('button', { name: '保存布局' }).click()
+    await expect(page.getByRole('button', { name: '进入编辑' })).toBeVisible()
+    await page.reload()
+    await expect(totalCard).toHaveCount(0)
+  })
 })
