@@ -24,4 +24,32 @@ public sealed class AuthOptions
 
     /// <summary>会话 Cookie 名称。</summary>
     public string SessionCookieName { get; set; } = "device_panel_session";
+
+    /// <summary>
+    /// 会话 Cookie SameSite 策略（Lax/Strict/None，忽略大小写），默认 Lax。
+    /// 前端与面板不同源部署（如 Cloudflare Pages 独立域名）时按部署形态选择：
+    /// 同站（同一 eTLD+1 的子域）保持 Lax；跨站（*.pages.dev）需 None。
+    /// None 时自动附带 Secure（浏览器拒绝不带 Secure 的 SameSite=None）。
+    /// </summary>
+    public string SessionCookieSameSite { get; set; } = "Lax";
+
+    /// <summary>解析会话 Cookie 的 SameSite 策略；非法值快速失败并给出配置键提示。</summary>
+    public SameSiteMode ResolvedSessionSameSite()
+    {
+        switch (SessionCookieSameSite.Trim().ToLowerInvariant())
+        {
+            case "lax":
+                return SameSiteMode.Lax;
+            case "strict":
+                return SameSiteMode.Strict;
+            case "none":
+                return SameSiteMode.None;
+            default:
+                throw new InvalidOperationException(
+                    $"配置 DevicePanel:Auth:SessionCookieSameSite 的值 \"{SessionCookieSameSite}\" 无效：只接受 Lax / Strict / None（忽略大小写）。");
+        }
+    }
+
+    /// <summary>会话 Cookie 是否需要 Secure 标记：SameSite=None 时必须（跨站 Cookie 安全要求）。</summary>
+    public bool SessionCookieRequiresSecure => ResolvedSessionSameSite() == SameSiteMode.None;
 }
