@@ -6,12 +6,12 @@ export interface DashboardCardDef {
   hint: string
 }
 
-// TOB-367 内置卡片目录：仅一期概览卡与占位卡；
+// TOB-367 内置卡片目录：一期概览卡与占位卡（类型名与 TOB-366 服务端默认布局一致）；
 // 类型化渲染（状态/数值/曲线）与来源/时间窗配置在 TOB-368 扩展。
 export const BUILTIN_CARD_DEFS: DashboardCardDef[] = [
-  { type: 'overview-devices-total', label: '设备总数', hint: '去设备管理页查看' },
-  { type: 'overview-devices-online', label: '在线设备', hint: '每 15 秒自动刷新' },
-  { type: 'overview-alerts-active', label: '活跃告警', hint: '告警功能建设中' },
+  { type: 'overview-total-devices', label: '设备总数', hint: '去设备管理页查看' },
+  { type: 'overview-online-devices', label: '在线设备', hint: '每 15 秒自动刷新' },
+  { type: 'overview-active-alerts', label: '活跃告警', hint: '告警功能建设中' },
 ]
 
 export function cardDef(type: string): DashboardCardDef | undefined {

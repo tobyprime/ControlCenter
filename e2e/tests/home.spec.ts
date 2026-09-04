@@ -113,9 +113,9 @@ test.describe('主页卡片面板（TOB-367）', () => {
 
     // 欢迎信息保留；默认布局三张卡齐全，无空白面板
     await expect(page.getByRole('heading', { name: /欢迎/ })).toBeVisible()
-    await expect(cardLocator(page, 'overview-devices-total')).toBeVisible()
-    await expect(cardLocator(page, 'overview-devices-online')).toBeVisible()
-    await expect(cardLocator(page, 'overview-alerts-active')).toBeVisible()
+    await expect(cardLocator(page, 'overview-total-devices')).toBeVisible()
+    await expect(cardLocator(page, 'overview-online-devices')).toBeVisible()
+    await expect(cardLocator(page, 'overview-active-alerts')).toBeVisible()
 
     // 数值与 /api/targets 一致（并行用例可能并发增删目标，以实时接口为准）；
     // 超时覆盖一次 15s 自动刷新周期——满载下挂载取数偶发失败由下一刷新兜底（验收 4）
@@ -126,8 +126,8 @@ test.describe('主页卡片面板（TOB-367）', () => {
             online: boolean
           }>
           const [totalText, onlineText] = await Promise.all([
-            cardLocator(page, 'overview-devices-total').locator('.overview-value').textContent(),
-            cardLocator(page, 'overview-devices-online').locator('.overview-value').textContent(),
+            cardLocator(page, 'overview-total-devices').locator('.overview-value').textContent(),
+            cardLocator(page, 'overview-online-devices').locator('.overview-value').textContent(),
           ])
           return (
             totalText === String(targets.length) &&
@@ -145,7 +145,7 @@ test.describe('主页卡片面板（TOB-367）', () => {
     await login(page)
 
     await page.getByRole('button', { name: '进入编辑' }).click()
-    const onlineCard = cardLocator(page, 'overview-devices-online')
+    const onlineCard = cardLocator(page, 'overview-online-devices')
     await onlineCard.getByRole('button', { name: '隐藏' }).click()
     await expect(onlineCard).toHaveClass(/card-hidden/)
 
@@ -153,9 +153,9 @@ test.describe('主页卡片面板（TOB-367）', () => {
     await expect(page.getByRole('button', { name: '进入编辑' })).toBeVisible()
 
     await page.reload()
-    await expect(cardLocator(page, 'overview-devices-online')).toHaveCount(0)
-    await expect(cardLocator(page, 'overview-devices-total')).toBeVisible()
-    await expect(cardLocator(page, 'overview-alerts-active')).toBeVisible()
+    await expect(cardLocator(page, 'overview-online-devices')).toHaveCount(0)
+    await expect(cardLocator(page, 'overview-total-devices')).toBeVisible()
+    await expect(cardLocator(page, 'overview-active-alerts')).toBeVisible()
     await page.screenshot({ path: `${EVIDENCE_DIR}/home-card-hidden.png`, fullPage: true })
   })
 
@@ -165,21 +165,21 @@ test.describe('主页卡片面板（TOB-367）', () => {
 
     // 删除活跃告警卡并保存
     await page.getByRole('button', { name: '进入编辑' }).click()
-    await cardLocator(page, 'overview-alerts-active').getByRole('button', { name: '删除' }).click()
-    await expect(cardLocator(page, 'overview-alerts-active')).toHaveCount(0)
+    await cardLocator(page, 'overview-active-alerts').getByRole('button', { name: '删除' }).click()
+    await expect(cardLocator(page, 'overview-active-alerts')).toHaveCount(0)
     await page.getByRole('button', { name: '保存布局' }).click()
 
     await page.reload()
-    await expect(cardLocator(page, 'overview-alerts-active')).toHaveCount(0)
+    await expect(cardLocator(page, 'overview-active-alerts')).toHaveCount(0)
 
     // 从目录新增回活跃告警卡并保存
     await page.getByRole('button', { name: '进入编辑' }).click()
     await page.getByRole('button', { name: '添加「活跃告警」' }).click()
-    await expect(cardLocator(page, 'overview-alerts-active')).toBeVisible()
+    await expect(cardLocator(page, 'overview-active-alerts')).toBeVisible()
     await page.getByRole('button', { name: '保存布局' }).click()
 
     await page.reload()
-    await expect(cardLocator(page, 'overview-alerts-active')).toBeVisible()
+    await expect(cardLocator(page, 'overview-active-alerts')).toBeVisible()
   })
 
   test('编辑模式拖拽排序，保存后刷新顺序保持（验收 1）', async ({ page }) => {
@@ -188,29 +188,29 @@ test.describe('主页卡片面板（TOB-367）', () => {
 
     await page.getByRole('button', { name: '进入编辑' }).click()
     expect(await readCardOrder(page)).toEqual([
-      'overview-devices-total',
-      'overview-devices-online',
-      'overview-alerts-active',
+      'overview-total-devices',
+      'overview-online-devices',
+      'overview-active-alerts',
     ])
 
     // 把活跃告警拖到最前
     await html5Drag(
       page,
-      '[data-card-type="overview-alerts-active"]',
-      '[data-card-type="overview-devices-total"]',
+      '[data-card-type="overview-active-alerts"]',
+      '[data-card-type="overview-total-devices"]',
     )
     expect(await readCardOrder(page)).toEqual([
-      'overview-alerts-active',
-      'overview-devices-total',
-      'overview-devices-online',
+      'overview-active-alerts',
+      'overview-total-devices',
+      'overview-online-devices',
     ])
 
     await page.getByRole('button', { name: '保存布局' }).click()
     await page.reload()
     expect(await readCardOrder(page)).toEqual([
-      'overview-alerts-active',
-      'overview-devices-total',
-      'overview-devices-online',
+      'overview-active-alerts',
+      'overview-total-devices',
+      'overview-online-devices',
     ])
     await page.screenshot({ path: `${EVIDENCE_DIR}/home-card-reorder.png`, fullPage: true })
   })
@@ -220,14 +220,36 @@ test.describe('主页卡片面板（TOB-367）', () => {
     await login(page)
 
     await page.getByRole('button', { name: '进入编辑' }).click()
-    await cardLocator(page, 'overview-devices-total').getByRole('button', { name: '隐藏' }).click()
+    await cardLocator(page, 'overview-total-devices').getByRole('button', { name: '隐藏' }).click()
     await page.getByRole('button', { name: '取消' }).click()
 
-    await expect(cardLocator(page, 'overview-devices-total')).toBeVisible()
+    await expect(cardLocator(page, 'overview-total-devices')).toBeVisible()
     await page.reload()
-    await expect(cardLocator(page, 'overview-devices-total')).toBeVisible()
-    await expect(cardLocator(page, 'overview-devices-online')).toBeVisible()
-    await expect(cardLocator(page, 'overview-alerts-active')).toBeVisible()
+    await expect(cardLocator(page, 'overview-total-devices')).toBeVisible()
+    await expect(cardLocator(page, 'overview-online-devices')).toBeVisible()
+    await expect(cardLocator(page, 'overview-active-alerts')).toBeVisible()
+  })
+
+  test('真实布局 API：默认布局渲染与保存刷新往返（验收 1/3 前置，不经 mock）', async ({ page }) => {
+    // 唯一不 mock 布局 API 的用例：直接对齐 TOB-366 真实契约（GET 返回 sort 字段、PUT 要求 sort），
+    // 防止前端字段映射与后端脱节（mock 用例无法暴露这类断裂）
+    await login(page)
+
+    // 未保存过布局：真实 GET 返回服务端默认布局，三张概览卡应正常渲染
+    await expect(cardLocator(page, 'overview-total-devices')).toBeVisible()
+    await expect(cardLocator(page, 'overview-online-devices')).toBeVisible()
+    await expect(cardLocator(page, 'overview-active-alerts')).toBeVisible()
+
+    // 保存走真实 PUT，刷新后布局保持
+    await page.getByRole('button', { name: '进入编辑' }).click()
+    const totalCard = cardLocator(page, 'overview-total-devices')
+    await totalCard.getByRole('button', { name: '隐藏' }).click()
+    await page.getByRole('button', { name: '保存布局' }).click()
+    await expect(page.getByRole('button', { name: '进入编辑' })).toBeVisible()
+
+    await page.reload()
+    await expect(cardLocator(page, 'overview-total-devices')).toHaveCount(0)
+    await expect(cardLocator(page, 'overview-online-devices')).toBeVisible()
   })
 
   test('保存失败显示错误横幅且保留编辑内容，恢复后可重试成功（阶段 2 问题 1）', async ({
@@ -270,7 +292,7 @@ test.describe('主页卡片面板（TOB-367）', () => {
     await login(page)
 
     await page.getByRole('button', { name: '进入编辑' }).click()
-    const totalCard = cardLocator(page, 'overview-devices-total')
+    const totalCard = cardLocator(page, 'overview-total-devices')
     await totalCard.getByRole('button', { name: '隐藏' }).click()
 
     // 首次保存失败：错误横幅可见、仍在编辑态、编辑内容未丢失

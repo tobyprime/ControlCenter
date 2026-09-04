@@ -45,10 +45,10 @@ function cardHint(type: string): string {
 }
 
 function overviewValue(type: string): string {
-  if (type === 'overview-devices-total') {
+  if (type === 'overview-total-devices') {
     return overview.value.total
   }
-  if (type === 'overview-devices-online') {
+  if (type === 'overview-online-devices') {
     return overview.value.online
   }
   return overview.value.alerts
