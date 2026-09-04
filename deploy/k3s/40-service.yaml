@@ -1,0 +1,19 @@
+# 集群内访问入口：Cloudflare Tunnel（集群外已有 cloudflared）指向
+#   http://device-panel.controlcenter.svc.cluster.local
+# 仅集群内访问，不经 Ingress 暴露；外网入口唯一走 Tunnel（见 docs/deploy-k3s.md）
+apiVersion: v1
+kind: Service
+metadata:
+  name: device-panel
+  namespace: controlcenter
+  labels:
+    app.kubernetes.io/name: device-panel
+    app.kubernetes.io/part-of: controlcenter
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: device-panel
+  ports:
+    - name: http
+      port: 80
+      targetPort: http

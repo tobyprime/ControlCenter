@@ -61,9 +61,10 @@ public class DatabaseMigrationTests : IClassFixture<TestAppFactory>
             using var command = connection.CreateCommand();
             command.CommandText = "INSERT INTO schema_migrations(version, applied_at_utc) VALUES ('test-probe', '2026-01-01T00:00:00.000Z');";
             command.ExecuteNonQuery();
-        }
 
-        Assert.True(File.Exists(options.DatabasePath + "-wal"), "WAL 模式下运行时应能观察到 -wal 文件");
+            // 断言必须在连接关闭前：最后一个连接正常关闭时 SQLite 会 checkpoint 并删除 -wal 文件
+            Assert.True(File.Exists(options.DatabasePath + "-wal"), "WAL 模式下运行时应能观察到 -wal 文件");
+        }
     }
 
     private static object? ExecuteScalar(

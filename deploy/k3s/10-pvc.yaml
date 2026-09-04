@@ -1,0 +1,15 @@
+# SQLite 数据持久化：设备台账、指标、终端留痕、告警设置均存于该卷
+# k3s 默认 local-path 存储即可满足单副本约束（生产建议按环境选用存储类）
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: device-panel-data
+  namespace: controlcenter
+  labels:
+    app.kubernetes.io/part-of: controlcenter
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi

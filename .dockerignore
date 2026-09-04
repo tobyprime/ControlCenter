@@ -1,0 +1,18 @@
+# 构建上下文只保留源码与前端依赖清单，产物/依赖/工具目录一律排除
+.git
+.github
+.opencode
+artifacts
+bin
+obj
+node_modules
+frontend/node_modules
+tests
+e2e
+docs
+scripts
+*.md
+!README.md
+*.db
+*.db-shm
+*.db-wal
