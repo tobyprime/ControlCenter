@@ -48,7 +48,8 @@ public static class AuthEndpoints
             http.Response.Cookies.Append(options.SessionCookieName, token, new CookieOptions
             {
                 HttpOnly = true,
-                SameSite = SameSiteMode.Lax,
+                SameSite = options.ResolvedSessionSameSite(),
+                Secure = options.SessionCookieRequiresSecure,
                 Path = "/",
                 IsEssential = true,
                 Expires = expiresUtc,
@@ -67,7 +68,8 @@ public static class AuthEndpoints
             http.Response.Cookies.Delete(options.SessionCookieName, new CookieOptions
             {
                 HttpOnly = true,
-                SameSite = SameSiteMode.Lax,
+                SameSite = options.ResolvedSessionSameSite(),
+                Secure = options.SessionCookieRequiresSecure,
                 Path = "/",
                 IsEssential = true,
             });

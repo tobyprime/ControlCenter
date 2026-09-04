@@ -1,12 +1,15 @@
 # 构建上下文只保留源码与前端依赖清单，产物/依赖/工具目录一律排除
+# bin/obj 必须递归排除：本机构建的 obj/project.assets.json 若进入镜像，
+# 容器内 --no-restore publish 会因包路径不存在而 NETSDK1064
 .git
 .github
 .opencode
 artifacts
-bin
-obj
+**/bin
+**/obj
 node_modules
 frontend/node_modules
+frontend/dist
 tests
 e2e
 docs

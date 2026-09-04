@@ -162,7 +162,9 @@ internal sealed partial class LinuxLogsSource : ILogsSource
         CommandResult result;
         try
         {
-            result = _runner.Run("docker", "ps -a --format '{{.Names}}\\t{{.Image}}\\t{{.Status}}'", CommandTimeout);
+            // _runner 直接 exec 不经 shell：格式串不能带 shell 引号，否则引号原样传给 docker、
+            // 输出的容器名被引号包裹（面板校验报「服务名包含非法字符」）
+            result = _runner.Run("docker", "ps -a --format {{.Names}}\\t{{.Image}}\\t{{.Status}}", CommandTimeout);
         }
         catch (Exception)
         {
