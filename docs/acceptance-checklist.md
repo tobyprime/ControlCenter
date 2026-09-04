@@ -8,8 +8,10 @@
 # 本地全链路实跑（自动拉起面板 + agent + 假 napcat，覆盖 1/3/4/5/7/9）
 scripts/build.sh && scripts/e2e-acceptance.sh
 
-# 用户环境（对已部署面板跑，覆盖 1/3/4/5/7/9 的真实环境版本）
+# 用户环境（对已部署面板跑，覆盖 1/3/4-离线判定/7 的自动判定）
 # 前置：已有一台登记设备并拿到 agent token（设备 ID + token 在创建时显示一次）
+# 注意：远程模式（FAKE_NAPCAT=0）下 napcat 侧收件不可脚本观测，
+#   4-告警内容 / 5 / 9 如实记 SKIP，按下方对应小节的人工步骤核对
 PANEL_BASE=https://<tunnel域名> ADMIN_PASS=<面板密码> \
   AGENT_TOKEN=<设备token> DEVICE_ID=<设备ID> \
   FAKE_NAPCAT=0 NAPCAT_URL=http://<napcat地址>:3000 NAPCAT_TOKEN=<napcat token> \
@@ -42,7 +44,7 @@ PANEL_BASE=https://<tunnel域名> ADMIN_PASS=<面板密码> \
 
 ### 4. 停 agent，60s 内离线并 QQ 收到含设备名的离线告警
 
-- 脚本部分：`e2e-acceptance.sh` 验收 4（离线判定 + napcat 侧收到的消息内容断言）
+- 脚本部分：`e2e-acceptance.sh` 验收 4（离线判定 + napcat 侧收件内容断言；远程模式下自动判定离线部分，QQ 侧收件如实记 SKIP 转人工核对）
 - 用户环境注意：脚本以假 napcat（或真实 napcat HTTP）为准；「QQ 客户端真的弹消息」需人工确认
 - 记录：`停 agent 时刻 / 离线判定耗时 / QQ 收到内容截图 / 执行人 / 日期`
 
@@ -70,7 +72,7 @@ PANEL_BASE=https://<tunnel域名> ADMIN_PASS=<面板密码> \
 
 ### 9. napcat 断连期间告警入队，恢复后自动补发、无丢失
 
-- 脚本部分：`e2e-acceptance.sh` 验收 9（断连入队 → 恢复补发 → 队列清空 → napcat 侧收到）
+- 脚本部分：`e2e-acceptance.sh` 验收 9（断连入队 → 恢复补发 → 队列清空 → napcat 侧收到；仅假 napcat 模式可自动执行，远程模式如实记 SKIP）
 - 用户环境：停掉真实 napcat 容器/进程制造断连，恢复后核对 QQ 实收条数与队列记录一致
 - 记录：`断连时段 / 入队条数 / 补发条数 / QQ 实收截图 / 执行人 / 日期`
 
