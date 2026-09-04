@@ -117,21 +117,25 @@ test.describe('主页卡片面板（TOB-367）', () => {
     await expect(cardLocator(page, 'overview-devices-online')).toBeVisible()
     await expect(cardLocator(page, 'overview-alerts-active')).toBeVisible()
 
-    // 数值与 /api/devices 一致（并行用例可能并发增删设备，以实时接口为准）
+    // 数值与 /api/devices 一致（并行用例可能并发增删设备，以实时接口为准）；
+    // 超时覆盖一次 15s 自动刷新周期——满载下挂载取数偶发失败由下一刷新兜底（验收 4）
     await expect
-      .poll(async () => {
-        const devices = (await (await page.request.get('/api/devices')).json()) as Array<{
-          online: boolean
-        }>
-        const [totalText, onlineText] = await Promise.all([
-          cardLocator(page, 'overview-devices-total').locator('.overview-value').textContent(),
-          cardLocator(page, 'overview-devices-online').locator('.overview-value').textContent(),
-        ])
-        return (
-          totalText === String(devices.length) &&
-          onlineText === String(devices.filter((device) => device.online).length)
-        )
-      })
+      .poll(
+        async () => {
+          const devices = (await (await page.request.get('/api/devices')).json()) as Array<{
+            online: boolean
+          }>
+          const [totalText, onlineText] = await Promise.all([
+            cardLocator(page, 'overview-devices-total').locator('.overview-value').textContent(),
+            cardLocator(page, 'overview-devices-online').locator('.overview-value').textContent(),
+          ])
+          return (
+            totalText === String(devices.length) &&
+            onlineText === String(devices.filter((device) => device.online).length)
+          )
+        },
+        { timeout: 20_000 },
+      )
       .toBe(true)
     await page.screenshot({ path: `${EVIDENCE_DIR}/home-default-layout.png`, fullPage: true })
   })
