@@ -1,4 +1,6 @@
 using DevicePanel.Protocol;
+using DevicePanel.Web.Metrics;
+using DevicePanel.Web.Probing;
 using DevicePanel.Web.Targets;
 using Microsoft.AspNetCore.Mvc;
 
@@ -25,7 +27,7 @@ public sealed record TargetCreatedResponse(
     bool Online,
     string AgentToken);
 
-public sealed record CreateTargetRequest(string? Type, string? Name, IReadOnlyList<string>? Tags);
+public sealed record CreateTargetRequest(string? Type, string? Name, IReadOnlyList<string>? Tags, ProbeUpsertRequest? Probe);
 
 public sealed record UpdateTargetRequest(string? Name, IReadOnlyList<string>? Tags);
 
@@ -37,12 +39,15 @@ public static class TargetEndpoints
     {
         var targets = endpoints.MapGroup("/api/targets");
 
-        targets.MapGet("/", (ITargetRegistry registry, AgentOptions options, TimeProvider clock) =>
-            Results.Ok(registry.List().Select(t => ToResponse(t, options, clock))));
+        targets.MapGet("/", (ITargetRegistry registry, AgentOptions options, TimeProvider clock, IMetricsStore metrics) =>
+            Results.Ok(registry.List().Select(t => ToResponse(t, options, clock, metrics))));
 
         targets.MapPost("/", (
             [FromBody] CreateTargetRequest request,
-            ITargetRegistry registry) =>
+            ITargetRegistry registry,
+            IProbeConfigStore probes,
+            IMetricKeyRegistry metricKeys,
+            ProbeOptions probeOptions) =>
         {
             if (!TryNormalizeType(request.Type, out var type, out var typeError))
             {
@@ -54,7 +59,22 @@ public static class TargetEndpoints
                 return Results.BadRequest(new { error });
             }
 
+            // service 目标（模块2）：探针配置必带，创建即生效；device 目标忽略 probe 字段
+            List<ProbeMetricMapping> mappings = [];
+            var probeUrl = string.Empty;
+            var probeInterval = 0;
+            if (type == TargetTypes.Service
+                && !ProbeRequests.TryNormalize(request.Probe, probeOptions, metricKeys, out probeUrl, out probeInterval, out mappings, out var probeError))
+            {
+                return Results.BadRequest(new { error = probeError });
+            }
+
             var created = registry.Create(type, name, tags);
+            if (type == TargetTypes.Service)
+            {
+                probes.Save(created.Target.Id, probeUrl, probeInterval, mappings);
+            }
+
             return Results.Json(ToCreatedResponse(created.Target, created.AgentToken), statusCode: StatusCodes.Status201Created);
         });
 
@@ -63,7 +83,8 @@ public static class TargetEndpoints
             [FromBody] UpdateTargetRequest request,
             ITargetRegistry registry,
             AgentOptions options,
-            TimeProvider clock) =>
+            TimeProvider clock,
+            IMetricsStore metrics) =>
         {
             if (!TryNormalize(request.Name, request.Tags, out var name, out var tags, out var error))
             {
@@ -73,7 +94,7 @@ public static class TargetEndpoints
             var updated = registry.Update(id, name, tags);
             return updated is null
                 ? Results.NotFound(new { error = "目标不存在" })
-                : Results.Ok(ToResponse(updated, options, clock));
+                : Results.Ok(ToResponse(updated, options, clock, metrics));
         });
 
         targets.MapDelete("/{id:long}", (
@@ -111,9 +132,12 @@ public static class TargetEndpoints
         return endpoints;
     }
 
-    private static TargetResponse ToResponse(TargetInfo target, AgentOptions options, TimeProvider clock) =>
+    private static TargetResponse ToResponse(TargetInfo target, AgentOptions options, TimeProvider clock, IMetricsStore metrics) =>
         new(target.Id, target.Type, target.Name, target.Tags, target.CreatedAtUtc, target.UpdatedAtUtc, target.LastSeenAtUtc,
-            target.Type == TargetTypes.Device && target.IsOnline(clock, options));
+            target.Type == TargetTypes.Device
+                ? target.IsOnline(clock, options)
+                // service 目标在线 = 最近 status 样本为 true（探针产出）；从未探测时 online=false，由前端结合 lastSeenAtUtc 区分"未探测"
+                : metrics.GetLatest(target.Id, MetricKeys.Status) is { ValueText: "true" });
 
     private static TargetCreatedResponse ToCreatedResponse(TargetInfo target, string agentToken) =>
         new(target.Id, target.Type, target.Name, target.Tags, target.CreatedAtUtc, target.UpdatedAtUtc, target.LastSeenAtUtc, false, agentToken);
@@ -124,13 +148,6 @@ public static class TargetEndpoints
         if (!TargetTypes.IsValid(normalized))
         {
             error = "目标类型仅支持 device（设备）或 service（服务）";
-            return false;
-        }
-
-        if (normalized == TargetTypes.Service)
-        {
-            // service 目标的探针采集在服务监测模块（模块 2）开放，本模块先只放开 device
-            error = "服务目标将在服务监测模块开放，当前请创建 device 目标";
             return false;
         }
 

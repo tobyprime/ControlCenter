@@ -22,9 +22,9 @@ public class MetricKeyRegistryTests : IDisposable
         var keys = registry.List().ToDictionary(k => k.Key);
         Assert.Equal(
         [
-            MetricKeys.Cpu, MetricKeys.Disk, MetricKeys.DiskRx, MetricKeys.DiskTx, MetricKeys.Mem,
+            MetricKeys.Cpu, MetricKeys.Disk, MetricKeys.DiskRx, MetricKeys.DiskTx, MetricKeys.LatencyMs, MetricKeys.Mem,
             MetricKeys.MemTotal, MetricKeys.MemUsed, MetricKeys.NetRx, MetricKeys.NetTx, MetricKeys.Online,
-            MetricKeys.Temp, MetricKeys.TempSensor,
+            MetricKeys.Status, MetricKeys.Temp, MetricKeys.TempSensor,
         ], keys.Keys.OrderBy(k => k).ToArray());
         Assert.All(keys.Values, k => Assert.True(k.BuiltIn));
         Assert.Equal(MetricValueType.Number, keys[MetricKeys.Cpu].ValueType);

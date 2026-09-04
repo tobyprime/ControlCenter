@@ -6,6 +6,7 @@ using DevicePanel.Web.Infrastructure;
 using DevicePanel.Web.Interactions;
 using DevicePanel.Web.Logs;
 using DevicePanel.Web.Metrics;
+using DevicePanel.Web.Probing;
 using DevicePanel.Web.Targets;
 using DevicePanel.Web.Terminal;
 
@@ -99,6 +100,14 @@ builder.Services.AddSingleton<AlertDispatchWorker>();
 builder.Services.AddSingleton<TargetStatusScanner>();
 builder.Services.AddSingleton<AlertRuleSweepService>();
 
+// 服务监测（模块2）：面板侧 HTTP/JSON 探针——样本照走指标管道与告警引擎（约束 A/B），不改 agent
+var probeOptions = new ProbeOptions();
+builder.Configuration.GetSection(ProbeOptions.SectionName).Bind(probeOptions);
+builder.Services.AddSingleton(probeOptions);
+builder.Services.AddSingleton<IProbeConfigStore, ProbeConfigStore>();
+builder.Services.AddSingleton<IProbeHttpClient, HttpClientProbeClient>();
+builder.Services.AddSingleton<HttpProbeWorker>();
+
 // 主页布局持久化：单用户单套布局存储与读写 API（TOB-366）
 builder.Services.AddSingleton<IDashboardLayoutStore, DashboardLayoutStore>();
 
@@ -134,6 +143,7 @@ builder.Services.AddHostedService<AlertSettingsSeeder>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<AlertDispatchWorker>());
 builder.Services.AddHostedService(sp => sp.GetRequiredService<TargetStatusScanner>());
 builder.Services.AddHostedService(sp => sp.GetRequiredService<AlertRuleSweepService>());
+builder.Services.AddHostedService(sp => sp.GetRequiredService<HttpProbeWorker>());
 
 // 清理任务依赖迁移完成后的表结构：必须排在 DatabaseInitializer 之后启动
 builder.Services.AddSingleton<MetricsRetentionService>();
@@ -154,6 +164,7 @@ app.UseWebSockets();
 app.MapHealthEndpoints();
 app.MapAuthEndpoints();
 app.MapTargetEndpoints();
+app.MapProbeEndpoints();
 app.MapMetricsEndpoints();
 app.MapAlertEndpoints();
 app.MapDashboardEndpoints();

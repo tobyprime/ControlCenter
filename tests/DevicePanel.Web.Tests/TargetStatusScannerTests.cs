@@ -119,7 +119,10 @@ public class TargetStatusScannerTests : IDisposable
         _clock.Advance(TimeSpan.FromSeconds(61));
         _scanner.ScanOnce();
 
-        Assert.Equal(2, _outbox.List().Count());
+        // 恢复通知 = 第 2 条（事件确实发过告警才发）；随后再次掉线是新事件，第 3 条
+        var entries = _outbox.List().ToList();
+        Assert.Equal(3, entries.Count);
+        Assert.Equal(AlertRuleEngine.RecoveryAlertTitle, entries[1].Message.Title);
         Assert.Equal("false", _metrics.GetLatest(_targetId, MetricKeys.Online)!.ValueText);
     }
 
