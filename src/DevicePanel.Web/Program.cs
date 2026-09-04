@@ -1,5 +1,6 @@
 using DevicePanel.Web.Alerting;
 using DevicePanel.Web.Auth;
+using DevicePanel.Web.Dashboard;
 using DevicePanel.Web.Devices;
 using DevicePanel.Web.Endpoints;
 using DevicePanel.Web.Infrastructure;
@@ -90,6 +91,9 @@ builder.Services.AddSingleton<IThresholdAlertEvaluator, ThresholdAlertEvaluator>
 builder.Services.AddSingleton<AlertDispatchWorker>();
 builder.Services.AddSingleton<OfflineAlertScanner>();
 
+// 主页布局持久化：单用户单套布局存储与读写 API（TOB-366）
+builder.Services.AddSingleton<IDashboardLayoutStore, DashboardLayoutStore>();
+
 // Web 终端：浏览器 ↔ agent 中继、留痕存储与 term.* 下行处理
 builder.Services.AddSingleton<ITerminalStore, TerminalStore>();
 builder.Services.AddSingleton<TerminalSessionRegistry>();
@@ -138,6 +142,7 @@ app.MapAuthEndpoints();
 app.MapDeviceEndpoints();
 app.MapMetricsEndpoints();
 app.MapAlertEndpoints();
+app.MapDashboardEndpoints();
 app.MapTerminalEndpoints();
 app.MapLogEndpoints();
 app.MapAgentWsEndpoints();
