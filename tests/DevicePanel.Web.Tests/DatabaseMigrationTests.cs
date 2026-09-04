@@ -1,4 +1,5 @@
 using DevicePanel.Web.Infrastructure;
+using System.Reflection;
 using Microsoft.Data.Sqlite;
 using Xunit;
 
@@ -52,6 +53,85 @@ public class DatabaseMigrationTests : IClassFixture<TestAppFactory>
     }
 
     [Fact]
+    public void Dashboard_Layout_Table_Exists_After_Startup()
+    {
+        var factory = new SqliteConnectionFactory(new DatabaseOptions
+        {
+            DataDir = _factory.DataDir,
+        });
+        using var connection = factory.CreateOpenConnection();
+
+        var exists = ExecuteScalar(
+            connection,
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'dashboard_layouts';");
+
+        Assert.Equal(1L, Convert.ToInt64(exists));
+    }
+
+    [Fact]
+    public void Migration_006_Applies_Cleanly_On_Phase1_Upgraded_Database()
+    {
+        // 模拟一期升级库：真实应用 001-005 建表（TOB-361 的 007_targets 等迁移依赖一期真实表结构），
+        // 重启迁移补执行 006 起的未应用迁移且无错误
+        var dataDir = Path.Combine(Path.GetTempPath(), "device-panel-upgrade-tests", Guid.NewGuid().ToString("N"));
+        var factory = new SqliteConnectionFactory(new DatabaseOptions { DataDir = dataDir });
+        try
+        {
+            using (var connection = factory.CreateOpenConnection())
+            {
+                using var seed = connection.CreateCommand();
+                seed.CommandText = """
+                    CREATE TABLE schema_migrations (
+                        version        TEXT PRIMARY KEY,
+                        applied_at_utc TEXT NOT NULL
+                    );
+                    """;
+                seed.ExecuteNonQuery();
+            }
+
+            using (var connection = factory.CreateOpenConnection())
+            {
+                ApplyEmbeddedMigrationsUpTo(connection, "005_alerting");
+            }
+
+            using (var connection = factory.CreateOpenConnection())
+            {
+                DatabaseMigrator.Migrate(connection);
+
+                var tableExists = ExecuteScalar(
+                    connection,
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'dashboard_layouts';");
+                Assert.Equal(1L, Convert.ToInt64(tableExists));
+
+                // 一期 devices 表升级为 targets，且设备数据保留（TOB-361 迁移链完整）
+                var targetsExists = ExecuteScalar(
+                    connection,
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'targets';");
+                Assert.Equal(1L, Convert.ToInt64(targetsExists));
+
+                var applied = ExecuteScalar(
+                    connection,
+                    "SELECT COUNT(*) FROM schema_migrations WHERE version = '006_dashboard_layout';");
+                Assert.Equal(1L, Convert.ToInt64(applied));
+            }
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            try
+            {
+                if (Directory.Exists(dataDir))
+                {
+                    Directory.Delete(dataDir, recursive: true);
+                }
+            }
+            catch (IOException)
+            {
+            }
+        }
+    }
+
+    [Fact]
     public void Wal_Sidecar_File_Exists_While_Connection_Open()
     {
         var options = new DatabaseOptions { DataDir = _factory.DataDir };
@@ -80,5 +160,35 @@ public class DatabaseMigrationTests : IClassFixture<TestAppFactory>
         }
 
         return command.ExecuteScalar();
+    }
+
+    /// <summary>应用指定版本及之前的嵌入式迁移（构造真实一期库结构，供升级路径测试使用）。</summary>
+    private static void ApplyEmbeddedMigrationsUpTo(Microsoft.Data.Sqlite.SqliteConnection connection, string upTo)
+    {
+        var assembly = typeof(DatabaseMigrator).Assembly;
+        var resources = assembly.GetManifestResourceNames()
+            .Where(n => n.StartsWith("DevicePanel.Web.Infrastructure.Migrations", StringComparison.Ordinal) && n.EndsWith(".sql", StringComparison.Ordinal))
+            .Select(n =>
+            {
+                var version = n.Substring("DevicePanel.Web.Infrastructure.Migrations".Length + 1)[..^4];
+                using var stream = assembly.GetManifestResourceStream(n)!;
+                using var reader = new StreamReader(stream);
+                return (Version: version, Sql: reader.ReadToEnd());
+            })
+            .OrderBy(m => m.Version, StringComparer.Ordinal)
+            .Where(m => string.Compare(m.Version, upTo, StringComparison.Ordinal) <= 0);
+
+        foreach (var (version, sql) in resources)
+        {
+            using var command = connection.CreateCommand();
+            command.CommandText = sql;
+            command.ExecuteNonQuery();
+
+            using var record = connection.CreateCommand();
+            record.CommandText = "INSERT INTO schema_migrations(version, applied_at_utc) VALUES ($version, $appliedAt)";
+            record.Parameters.AddWithValue("$version", version);
+            record.Parameters.AddWithValue("$appliedAt", DateTime.UtcNow.ToString("O"));
+            record.ExecuteNonQuery();
+        }
     }
 }
