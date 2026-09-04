@@ -1,3 +1,5 @@
+import { apiUrl } from './base'
+
 export interface Device {
   id: number
   name: string
@@ -13,7 +15,7 @@ export interface DeviceCreated extends Device {
 }
 
 async function request<T>(input: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(input, {
+  const response = await fetch(apiUrl(input), {
     headers: { 'Content-Type': 'application/json' },
     ...init,
   })

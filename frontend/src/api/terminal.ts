@@ -1,3 +1,5 @@
+import { apiUrl, wsUrl } from './base'
+
 export interface TerminalSessionInfo {
   id: string
   deviceId: number
@@ -32,7 +34,7 @@ export async function listTerminalSessions(
     query.set('to', toIso)
   }
   const suffix = query.size > 0 ? `?${query.toString()}` : ''
-  const response = await fetch(`/api/terminal/sessions${suffix}`)
+  const response = await fetch(apiUrl(`/api/terminal/sessions${suffix}`))
   if (!response.ok) {
     let message = `请求失败（${response.status}）`
     try {
@@ -49,7 +51,7 @@ export async function listTerminalSessions(
 }
 
 export async function listTerminalRecords(sessionId: string): Promise<TerminalRecordInfo[]> {
-  const response = await fetch(`/api/terminal/sessions/${encodeURIComponent(sessionId)}/records`)
+  const response = await fetch(apiUrl(`/api/terminal/sessions/${encodeURIComponent(sessionId)}/records`))
   if (!response.ok) {
     let message = `请求失败（${response.status}）`
     try {
@@ -65,9 +67,8 @@ export async function listTerminalRecords(sessionId: string): Promise<TerminalRe
   return (await response.json()) as TerminalRecordInfo[]
 }
 
-// 浏览器终端 WebSocket 地址（同源，会话 Cookie 随请求携带）
+// 浏览器终端 WebSocket 地址（同源或绝对地址，会话 Cookie 随请求携带）
 export function terminalWebSocketUrl(deviceId: number, cols: number, rows: number): string {
-  const protocol = location.protocol === 'https:' ? 'wss' : 'ws'
   const query = new URLSearchParams({ cols: String(cols), rows: String(rows) })
-  return `${protocol}://${location.host}/api/devices/${deviceId}/terminal?${query.toString()}`
+  return wsUrl(`/api/devices/${deviceId}/terminal?${query.toString()}`)
 }

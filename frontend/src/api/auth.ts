@@ -1,10 +1,12 @@
+import { apiUrl } from './base'
+
 export interface SessionInfo {
   username: string
   expiresAtUtc?: string
 }
 
 async function request<T>(input: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(input, {
+  const response = await fetch(apiUrl(input), {
     headers: { 'Content-Type': 'application/json' },
     ...init,
   })
