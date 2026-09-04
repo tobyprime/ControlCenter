@@ -1,19 +1,26 @@
 <script setup lang="ts">
-import { nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
 import { listDevices, type Device } from '@/api/devices'
 import { terminalWebSocketUrl } from '@/api/terminal'
+import { listDeviceInteractionModes, type InteractionModeInfo } from '@/api/interactions'
 
 type SessionState = 'idle' | 'connecting' | 'open' | 'closed' | 'error'
 
+const route = useRoute()
 const devices = ref<Device[]>([])
 const selectedDeviceId = ref<number | null>(null)
 const sessionState = ref<SessionState>('idle')
 const statusText = ref('选择一台在线设备，点击「打开终端」。')
 const errorMessage = ref('')
 const loading = ref(true)
+
+// 交互入口按目标声明的模式渲染（约束 C）：仅目标声明 shell 时提供终端入口
+const declaredModes = ref<InteractionModeInfo[]>([])
+const hasShellMode = computed(() => declaredModes.value.some((mode) => mode.key === 'shell'))
 
 const termHost = ref<HTMLElement | null>(null)
 let term: Terminal | null = null
@@ -37,6 +44,31 @@ async function refresh(showError = true) {
   }
 }
 
+async function loadDeclaredModes(deviceId: number | null) {
+  if (deviceId === null) {
+    declaredModes.value = []
+    return
+  }
+
+  try {
+    const modes = await listDeviceInteractionModes(deviceId)
+    declaredModes.value = modes
+    if (modes.length === 0) {
+      if (sessionState.value === 'idle' || sessionState.value === 'closed' || sessionState.value === 'error') {
+        setStatus('idle', `「${deviceName(deviceId)}」未声明可用的交互模式。`)
+      }
+    } else if (sessionState.value === 'idle') {
+      setStatus('idle', '选择一台在线设备，点击「打开终端」。')
+    }
+  } catch (e) {
+    errorMessage.value = e instanceof Error ? e.message : '交互模式加载失败'
+  }
+}
+
+watch(selectedDeviceId, (deviceId) => {
+  void loadDeclaredModes(deviceId)
+})
+
 function setStatus(state: SessionState, text: string) {
   sessionState.value = state
   statusText.value = text
@@ -58,7 +90,7 @@ function fitTerminal() {
 
 async function openTerminal() {
   const deviceId = selectedDeviceId.value
-  if (deviceId === null || sessionState.value === 'connecting' || sessionState.value === 'open') {
+  if (deviceId === null || !hasShellMode.value || sessionState.value === 'connecting' || sessionState.value === 'open') {
     return
   }
 
@@ -169,9 +201,14 @@ function onWindowResize() {
   fitTerminal()
 }
 
-onMounted(() => {
-  void refresh()
+onMounted(async () => {
   window.addEventListener('resize', onWindowResize)
+  await refresh()
+  // 支持 /terminal?device=<id> 深链：目标详情页交互入口可直接跳入对应模式
+  const requested = Number(route.query.device)
+  if (Number.isFinite(requested) && devices.value.some((d) => d.id === requested)) {
+    selectedDeviceId.value = requested
+  }
 })
 
 onBeforeUnmount(() => {
@@ -194,7 +231,7 @@ onBeforeUnmount(() => {
           </option>
         </select>
         <button
-          v-if="sessionState !== 'open' && sessionState !== 'connecting'"
+          v-if="sessionState !== 'open' && sessionState !== 'connecting' && hasShellMode"
           type="button"
           class="primary-button"
           :disabled="selectedDeviceId === null"
@@ -202,7 +239,7 @@ onBeforeUnmount(() => {
         >
           打开终端
         </button>
-        <button v-else type="button" class="ghost-button" @click="closeTerminal">关闭终端</button>
+        <button v-else-if="sessionState === 'open' || sessionState === 'connecting'" type="button" class="ghost-button" @click="closeTerminal">关闭终端</button>
       </div>
     </div>
 
