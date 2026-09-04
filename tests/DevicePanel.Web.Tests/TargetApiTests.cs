@@ -58,17 +58,6 @@ public class TargetApiTests : IDisposable
     }
 
     [Fact]
-    public async Task Create_Service_Type_Is_Not_Open_Yet()
-    {
-        var client = await AuthenticatedClientAsync();
-
-        var response = await client.PostAsJsonAsync("/api/targets", new { type = "service", name = "MC 服务", tags = Array.Empty<string>() });
-
-        // service 目标的探针采集在服务监测模块（二期模块 2）开放
-        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
-    }
-
-    [Fact]
     public async Task Create_With_Blank_Name_Returns_400()
     {
         var client = await AuthenticatedClientAsync();

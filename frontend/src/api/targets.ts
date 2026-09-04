@@ -1,4 +1,5 @@
 import { apiFetch } from './base'
+import type { MetricValueType } from './metrics'
 
 export type TargetType = 'device' | 'service'
 
@@ -15,6 +16,36 @@ export interface Target {
 
 export interface TargetCreated extends Target {
   agentToken: string
+}
+
+export interface ProbeMetricMappingInput {
+  metricKey: string
+  jsonPath: string
+  valueType: 'number' | 'enum' | 'string'
+  displayName: string
+  unit: string
+}
+
+export interface ProbeUpsertInput {
+  url: string
+  intervalSeconds?: number
+  mappings: ProbeMetricMappingInput[]
+}
+
+export interface ProbeMapping {
+  metricKey: string
+  jsonPath: string
+  valueType: MetricValueType
+  displayName: string
+  unit: string
+}
+
+export interface ProbeConfig {
+  url: string
+  intervalSeconds: number
+  mappings: ProbeMapping[]
+  createdAtUtc: string
+  updatedAtUtc: string
 }
 
 async function request<T>(input: string, init?: RequestInit): Promise<T> {
@@ -50,10 +81,28 @@ export function getTarget(id: number): Promise<Target> {
   return request<Target>(`/api/targets/${id}`)
 }
 
-export function createTarget(name: string, tags: string[]): Promise<TargetCreated> {
+export function createTarget(input: {
+  type: TargetType
+  name: string
+  tags: string[]
+  probe?: ProbeUpsertInput
+}): Promise<TargetCreated> {
   return request<TargetCreated>('/api/targets', {
     method: 'POST',
-    body: JSON.stringify({ name, tags }),
+    body: JSON.stringify(input),
+  })
+}
+
+/** 读取目标探针配置；未配置（204）返回 null。 */
+export async function getProbeConfig(id: number): Promise<ProbeConfig | null> {
+  const config = await request<ProbeConfig | null>(`/api/targets/${id}/probe`)
+  return config ?? null
+}
+
+export function updateProbeConfig(id: number, input: ProbeUpsertInput): Promise<ProbeConfig> {
+  return request<ProbeConfig>(`/api/targets/${id}/probe`, {
+    method: 'PUT',
+    body: JSON.stringify(input),
   })
 }
 

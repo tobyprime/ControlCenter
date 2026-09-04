@@ -1,7 +1,16 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { createTarget, deleteTarget, listTargets, resetTargetToken, updateTarget, type Target } from '@/api/targets'
+import {
+  createTarget,
+  deleteTarget,
+  listTargets,
+  resetTargetToken,
+  updateTarget,
+  type ProbeMetricMappingInput,
+  type Target,
+  type TargetType,
+} from '@/api/targets'
 
 const router = useRouter()
 const targets = ref<Target[]>([])
@@ -14,11 +23,34 @@ const showForm = ref(false)
 const editingTarget = ref<Target | null>(null)
 const formName = ref('')
 const formTags = ref('')
+const formType = ref<TargetType>('device')
 const submitting = ref(false)
+const formError = ref('')
+
+// 服务目标的探针配置（创建时填写，修改走详情页）
+interface MappingDraft {
+  metricKey: string
+  jsonPath: string
+  valueType: ProbeMetricMappingInput['valueType']
+  displayName: string
+  unit: string
+}
+const formProbeUrl = ref('')
+const formProbeInterval = ref('60')
+const formMappings = ref<MappingDraft[]>([])
 
 // token 展示（仅在创建/重置时返回一次）
 const tokenDialog = ref<{ targetName: string; token: string } | null>(null)
 const tokenCopied = ref(false)
+
+// 服务在线状态来源是探针 status 指标：正常/异常，从未探测（无最近探测时间）单独提示
+function statusInfo(target: Target): { label: string; cls: string } {
+  if (target.type === 'service') {
+    if (target.online) return { label: '正常', cls: 'online' }
+    return target.lastSeenAtUtc ? { label: '异常', cls: 'alarm' } : { label: '未探测', cls: 'offline' }
+  }
+  return target.online ? { label: '在线', cls: 'online' } : { label: '离线', cls: 'offline' }
+}
 
 async function refresh(showError = true) {
   try {
@@ -37,6 +69,11 @@ function openCreate() {
   editingTarget.value = null
   formName.value = ''
   formTags.value = ''
+  formType.value = 'device'
+  formProbeUrl.value = ''
+  formProbeInterval.value = '60'
+  formMappings.value = []
+  formError.value = ''
   showForm.value = true
 }
 
@@ -44,6 +81,8 @@ function openEdit(target: Target) {
   editingTarget.value = target
   formName.value = target.name
   formTags.value = target.tags.join('，')
+  formType.value = target.type
+  formError.value = ''
   showForm.value = true
 }
 
@@ -54,21 +93,47 @@ function parseTags(raw: string): string[] {
     .filter((tag) => tag.length > 0)
 }
 
+function buildProbeInput() {
+  const mappings = formMappings.value
+    .filter((m) => m.metricKey.trim() && m.jsonPath.trim())
+    .map((m) => ({
+      metricKey: m.metricKey.trim(),
+      jsonPath: m.jsonPath.trim(),
+      valueType: m.valueType,
+      displayName: m.displayName.trim(),
+      unit: m.unit.trim(),
+    }))
+  const interval = Number(formProbeInterval.value)
+  return {
+    url: formProbeUrl.value.trim(),
+    intervalSeconds: Number.isFinite(interval) && interval > 0 ? interval : undefined,
+    mappings,
+  }
+}
+
 async function submitForm() {
   if (submitting.value) return
   submitting.value = true
+  formError.value = ''
   try {
     const tags = parseTags(formTags.value)
     if (editingTarget.value) {
       await updateTarget(editingTarget.value.id, formName.value.trim(), tags)
+    } else if (formType.value === 'service') {
+      await createTarget({
+        type: 'service',
+        name: formName.value.trim(),
+        tags,
+        probe: buildProbeInput(),
+      })
     } else {
-      const created = await createTarget(formName.value.trim(), tags)
+      const created = await createTarget({ type: 'device', name: formName.value.trim(), tags })
       tokenDialog.value = { targetName: created.name, token: created.agentToken }
     }
     showForm.value = false
     await refresh()
   } catch (e) {
-    errorMessage.value = e instanceof Error ? e.message : '保存失败'
+    formError.value = e instanceof Error ? e.message : '保存失败'
   } finally {
     submitting.value = false
   }
@@ -149,9 +214,9 @@ onBeforeUnmount(() => {
       <div v-for="target in targets" :key="target.id" class="device-card">
         <div class="device-head">
           <span class="device-name">{{ target.name }}</span>
-          <span class="status-badge" :class="target.online ? 'online' : 'offline'">
+          <span class="status-badge" :class="statusInfo(target).cls">
             <span class="status-dot"></span>
-            {{ target.online ? '在线' : '离线' }}
+            {{ statusInfo(target).label }}
           </span>
         </div>
         <div class="device-tags">
@@ -161,7 +226,7 @@ onBeforeUnmount(() => {
         </div>
         <dl class="device-meta">
           <div>
-            <dt>最近心跳</dt>
+            <dt>{{ target.type === 'device' ? '最近心跳' : '最近探测' }}</dt>
             <dd>{{ formatTime(target.lastSeenAtUtc) }}</dd>
           </div>
           <div>
@@ -179,7 +244,7 @@ onBeforeUnmount(() => {
     </div>
 
     <div v-if="showForm" class="dialog-mask" @click.self="showForm = false">
-      <div class="dialog">
+      <div class="dialog" :class="{ wide: formType === 'service' && !editingTarget }">
         <h2 class="dialog-title">{{ editingTarget ? '编辑目标' : '新建目标' }}</h2>
         <label class="field">
           <span class="field-label">目标名称</span>
@@ -189,6 +254,44 @@ onBeforeUnmount(() => {
           <span class="field-label">标签（用逗号分隔，如位置/用途/网络区域）</span>
           <input v-model="formTags" type="text" placeholder="如：机房A，网关，内网" />
         </label>
+        <label class="field">
+          <span class="field-label">目标类型</span>
+          <select v-model="formType" class="control-select" :disabled="!!editingTarget">
+            <option value="device">设备（目标机部署 agent 上报）</option>
+            <option value="service">服务（面板侧定时探测，无需 agent）</option>
+          </select>
+        </label>
+        <template v-if="formType === 'service' && !editingTarget">
+          <label class="field">
+            <span class="field-label">探针 URL（面板定时 GET 该地址，2xx 视为可达）</span>
+            <input v-model="formProbeUrl" type="text" placeholder="如：https://map.zenoxs.cn/tiles/settings.json" />
+          </label>
+          <label class="field">
+            <span class="field-label">探测间隔（秒，10~3600，默认 60）</span>
+            <input v-model="formProbeInterval" type="number" min="10" max="3600" />
+          </label>
+          <div class="field">
+            <span class="field-label">指标提取映射（从 JSON 响应提取业务指标，可留空）</span>
+            <div v-for="(mapping, index) in formMappings" :key="index" class="mapping-row">
+              <input v-model="mapping.metricKey" type="text" placeholder="指标名，如 mc.players" />
+              <input v-model="mapping.jsonPath" type="text" placeholder="JSONPath，如 $.players.length()" />
+              <select v-model="mapping.valueType" class="control-select">
+                <option value="number">number</option>
+                <option value="enum">enum</option>
+                <option value="string">string</option>
+              </select>
+              <input v-model="mapping.displayName" type="text" placeholder="显示名" />
+              <input v-model="mapping.unit" type="text" placeholder="单位" />
+              <button type="button" class="mapping-remove" @click="formMappings.splice(index, 1)">删除</button>
+            </div>
+            <button type="button" class="ghost-button mapping-add" @click="formMappings.push({ metricKey: '', jsonPath: '$', valueType: 'number', displayName: '', unit: '' })">
+              + 添加映射
+            </button>
+          </div>
+          <p class="field-hint">服务状态（status）与响应时间（latency_ms）由探针自动产出；连续 3 次探测失败判定异常。提取的指标与状态均可在详情页配置告警规则。</p>
+        </template>
+        <p v-else-if="editingTarget && editingTarget.type === 'service'" class="field-hint">服务目标的探针配置在目标详情页维护。</p>
+        <p v-if="formError" class="error-note">{{ formError }}</p>
         <div class="dialog-actions">
           <button type="button" class="ghost-button" @click="showForm = false">取消</button>
           <button type="button" class="primary-button" :disabled="submitting" @click="submitForm">
@@ -356,6 +459,15 @@ onBeforeUnmount(() => {
   background: #9ca3af;
 }
 
+.status-badge.alarm {
+  background: #fef2f2;
+  color: #b91c1c;
+}
+
+.status-badge.alarm .status-dot {
+  background: #dc2626;
+}
+
 .device-tags {
   display: flex;
   flex-wrap: wrap;
@@ -418,6 +530,12 @@ onBeforeUnmount(() => {
   border-radius: 12px;
   padding: 20px;
   box-shadow: 0 20px 40px rgba(15, 23, 42, 0.2);
+  max-height: 90vh;
+  overflow-y: auto;
+}
+
+.dialog.wide {
+  max-width: 760px;
 }
 
 .dialog-title {
@@ -449,6 +567,72 @@ onBeforeUnmount(() => {
 .field input:focus {
   outline: none;
   border-color: var(--color-primary, #2563eb);
+}
+
+.control-select {
+  width: 100%;
+  padding: 9px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: #fff;
+  font-size: 0.875rem;
+  color: var(--color-text);
+  box-sizing: border-box;
+}
+
+.field-hint {
+  margin: -4px 0 12px;
+  color: var(--color-text-light);
+  font-size: 0.75rem;
+  line-height: 1.5;
+}
+
+.mapping-row {
+  display: grid;
+  grid-template-columns: 1.2fr 1.4fr 0.7fr 1fr 0.6fr auto;
+  gap: 6px;
+  margin-bottom: 6px;
+  align-items: center;
+}
+
+.mapping-row input {
+  min-width: 0;
+  padding: 7px 8px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  font-size: 0.78rem;
+  box-sizing: border-box;
+}
+
+.mapping-row .control-select {
+  padding: 7px 6px;
+  font-size: 0.78rem;
+}
+
+.mapping-remove {
+  padding: 7px 8px;
+  border: 1px solid #fecaca;
+  border-radius: 6px;
+  background: #fef2f2;
+  color: var(--color-danger, #dc2626);
+  font-size: 0.75rem;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.mapping-add {
+  padding: 6px 10px;
+  font-size: 0.78rem;
+}
+
+.error-note {
+  margin: 0 0 12px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  color: var(--color-danger);
+  font-size: 0.8rem;
 }
 
 .dialog-actions {
@@ -496,6 +680,10 @@ onBeforeUnmount(() => {
 
   .device-actions {
     flex-wrap: wrap;
+  }
+
+  .mapping-row {
+    grid-template-columns: 1fr 1fr;
   }
 }
 </style>
