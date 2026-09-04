@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# 面板真实环境部署脚本（TOB-357）：在 k3s 集群节点以 root 执行。
-# 前置：镜像与 busybox tar 已导入 containerd（k8s.io 命名空间）；同目录有 deploy.env 与 secret.env。
+# 面板真实环境部署脚本（TOB-357）：在 k3s 集群节点执行。
+# 前置：镜像与 busybox tar 已导入 containerd（k8s.io 命名空间）；同目录有 deploy.env 与 secret.env；
+#       执行身份需具备集群管理权限（kubeconfig，如节点用户 toby 的 ~/.kube/config），无需 root。
 # 用法：./deploy.sh [deploy.env 路径]   （secret.env 固定在同目录）
 set -euo pipefail
 cd "$(dirname "$0")"

@@ -24,7 +24,7 @@ ctr -n k8s.io images import images/busybox-1.36.tar
 crictl img | grep -E 'controlcenter-panel|busybox'   # 应能看到两个镜像
 ```
 
-## 2. 填参数（root；secret 只落节点，不进 issue/git）
+## 2. 填参数（具备集群权限的节点用户即可，无需 root；secret 只落节点，不进 issue/git）
 
 ```bash
 cp deploy.env.example deploy.env
@@ -44,7 +44,7 @@ vi secret.env          # 初始账号密码；napcat 地址优先填集群内 Se
 脚本依次：namespace/PVC → ConfigMap（真实值，含 CORS 与 Cookie 策略）→ Secret → Deployment/Service →
 rollout 等待 → 经集群内 Service 探针 `/healthz`。
 
-## 4. 部署后验证（root）
+## 4. 部署后验证（同 §2 执行身份）
 
 ```bash
 # Pod Running、READY 1/1
