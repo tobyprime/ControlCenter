@@ -1,3 +1,5 @@
+import { apiFetch } from './base'
+
 export type LogKind = 'systemd' | 'docker'
 
 export type LogLevel = 'error' | 'warn' | 'info' | 'debug'
@@ -15,7 +17,7 @@ export interface LogLineInfo {
 }
 
 async function request<T>(path: string): Promise<T> {
-  const response = await fetch(path)
+  const response = await apiFetch(path)
   if (!response.ok) {
     let message = `请求失败（${response.status}）`
     try {

@@ -60,6 +60,8 @@ scripts/e2e-acceptance.sh                    # 端到端验收：面板+agent+na
 | `DevicePanel:Auth:MaxFailedAttempts` | `DevicePanel__Auth__MaxFailedAttempts` | `5` | 登录失败锁定阈值 |
 | `DevicePanel:Auth:LockoutSeconds` | `DevicePanel__Auth__LockoutSeconds` | `600` | 锁定时长（秒） |
 | `DevicePanel:Auth:SessionHours` | `DevicePanel__Auth__SessionHours` | `24` | 会话有效期（小时） |
+| `DevicePanel:Auth:SessionCookieSameSite` | `DevicePanel__Auth__SessionCookieSameSite` | `Lax` | 会话 Cookie SameSite（Lax/Strict/None）；`None` 自动附带 Secure。跨域部署（前端独立域名）时按 [docs/deploy-real.md](docs/deploy-real.md) §3 选择 |
+| `DevicePanel:Cors:AllowedOrigins` | `DevicePanel__Cors__AllowedOrigins` | 空（不启用） | 跨域前端允许来源，分号/逗号分隔（如 `https://cc.pages.dev`）；凭据模式回显具体来源 |
 | `DevicePanel:Agent:HeartbeatIntervalSeconds` | `DevicePanel__Agent__HeartbeatIntervalSeconds` | `30` | agent 心跳周期（秒），离线阈值 = 2×该值 |
 | `DevicePanel:Metrics:RetentionDays` | `DevicePanel__Metrics__RetentionDays` | `30` | 指标保留天数（明细与聚合），过期清理任务删除 |
 | `DevicePanel:Metrics:CleanupIntervalMinutes` | `DevicePanel__Metrics__CleanupIntervalMinutes` | `360` | 指标过期清理任务执行间隔（分钟） |

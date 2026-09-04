@@ -40,6 +40,20 @@ builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddSingleton<ISessionService, SessionService>();
 builder.Services.AddSingleton<ILoginRateLimiter, LoginRateLimiter>();
 
+// 跨域前端（如 Cloudflare Pages 独立域名）：配置了允许来源才启用 CORS（凭据模式，回显具体来源）
+var corsSettings = new CorsSettings();
+builder.Configuration.GetSection(CorsSettings.SectionName).Bind(corsSettings);
+var allowedOrigins = corsSettings.ResolvedAllowedOrigins();
+if (allowedOrigins.Count > 0)
+{
+    builder.Services.AddCors(options => options.AddDefaultPolicy(policy =>
+        policy.WithOrigins(allowedOrigins.ToArray())
+            .AllowCredentials()
+            .SetIsOriginAllowedToAllowWildcardSubdomains()
+            .AllowAnyHeader()
+            .AllowAnyMethod()));
+}
+
 // 设备台账与 agent 接入通道
 var agentOptions = new AgentOptions();
 builder.Configuration.GetSection(AgentOptions.SectionName).Bind(agentOptions);
@@ -108,6 +122,12 @@ builder.Services.AddSingleton<MetricsRetentionService>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<MetricsRetentionService>());
 
 var app = builder.Build();
+
+// CORS 必须先于登录门禁：预检 OPTIONS 请求不该被 /api 未登录拦截
+if (allowedOrigins.Count > 0)
+{
+    app.UseCors();
+}
 
 app.UseMiddleware<DevicePanel.Web.Auth.AuthenticationGateMiddleware>();
 app.UseStaticFiles();
