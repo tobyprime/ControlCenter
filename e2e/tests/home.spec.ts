@@ -309,3 +309,241 @@ test.describe('主页卡片面板（TOB-367）', () => {
     await expect(totalCard).toHaveCount(0)
   })
 })
+
+test.describe('主页指标卡（TOB-368）', () => {
+  const NOW = Date.parse('2026-09-05T08:00:00Z')
+
+  const METRIC_KEYS = [
+    {
+      key: 'player.count',
+      valueType: 'number',
+      displayName: '在线玩家',
+      unit: '人',
+      builtIn: false,
+      createdAtUtc: '2026-09-05T00:00:00Z',
+      updatedAtUtc: '2026-09-05T00:00:00Z',
+    },
+    {
+      key: 'svc.status',
+      valueType: 'enum',
+      displayName: '服务状态',
+      unit: '',
+      builtIn: false,
+      createdAtUtc: '2026-09-05T00:00:00Z',
+      updatedAtUtc: '2026-09-05T00:00:00Z',
+    },
+  ]
+
+  // 概览：player.count 最新 7，svc.status 最新 online
+  function overviewItems() {
+    return [
+      {
+        key: 'player.count',
+        valueType: 'number',
+        displayName: '在线玩家',
+        unit: '人',
+        builtIn: false,
+        latestTimeUtc: '2026-09-05T07:59:00Z',
+        latestValueNum: 7,
+        latestValueText: null,
+      },
+      {
+        key: 'svc.status',
+        valueType: 'enum',
+        displayName: '服务状态',
+        unit: '',
+        builtIn: false,
+        latestTimeUtc: '2026-09-05T07:59:00Z',
+        latestValueNum: null,
+        latestValueText: 'online',
+      },
+    ]
+  }
+
+  // 序列：12 个点（30 分钟间隔），player.count 递增至 12；svc.status 无数值序列
+  function seriesFor(key: string) {
+    const points =
+      key === 'player.count'
+        ? Array.from({ length: 12 }, (_, i) => ({
+            t: new Date(NOW - (11 - i) * 30 * 60 * 1000).toISOString(),
+            v: i + 1,
+          }))
+        : []
+    return [{ key, points }]
+  }
+
+  // 指标管道 mock：keys 注册表 / 指标概览 / 序列查询（序列 URL 捕获供时间窗断言）
+  async function mockMetricApis(page: Page, options?: { overviewEmpty?: boolean }) {
+    await page.route('**/api/metrics/keys', (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify(METRIC_KEYS),
+      }),
+    )
+    await page.route('**/api/metrics/*/overview', (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify(options?.overviewEmpty ? [] : overviewItems()),
+      }),
+    )
+  }
+
+  async function mockSeriesApi(page: Page) {
+    const urls: string[] = []
+    await page.route('**/api/metrics/*/series*', async (route: Route) => {
+      const url = route.request().url()
+      urls.push(url)
+      const key = new URL(url).searchParams.get('keys') ?? ''
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          targetId: Number(url.match(/\/api\/metrics\/(\d+)\//)?.[1]),
+          granularity: 'raw',
+          fromUtc: new URL(url).searchParams.get('from'),
+          toUtc: new URL(url).searchParams.get('to'),
+          series: seriesFor(key),
+        }),
+      })
+    })
+    return urls
+  }
+
+  async function configureCard(card: ReturnType<typeof cardLocator>, targetLabel: string, keyLabel: string, windowLabel: string) {
+    await card.getByLabel('目标').selectOption({ label: targetLabel })
+    await card.getByLabel('指标').selectOption({ label: keyLabel })
+    if (windowLabel) {
+      await card.getByLabel('时间窗').selectOption({ label: windowLabel })
+    }
+  }
+
+  test('曲线卡：配置来源与时间窗，保存刷新后按所选窗口渲染序列（验收 1/2）', async ({ page }) => {
+    await mockLayoutApi(page)
+    await mockMetricApis(page)
+    const seriesUrls = await mockSeriesApi(page)
+    await login(page)
+    await createDevicesViaApi(page, 1)
+    await page.reload()
+
+    await page.getByRole('button', { name: '进入编辑' }).click()
+    await page.getByRole('button', { name: '添加「曲线卡」' }).click()
+    const chartCard = cardLocator(page, 'metric-chart')
+    await configureCard(chartCard, '主页概览机 1', '在线玩家（player.count）', '最近 6 小时')
+    await page.getByRole('button', { name: '保存布局' }).click()
+
+    // 保存即渲染：曲线卡出现，带指标名与最新值
+    await expect(chartCard.getByRole('heading', { name: '在线玩家' })).toBeVisible()
+    await expect(chartCard.locator('svg')).toBeVisible()
+
+    // 序列请求走模块 0 统一管道：keys=player.count，窗口 6h
+    expect(seriesUrls.length).toBeGreaterThan(0)
+    const url = new URL(seriesUrls[seriesUrls.length - 1])
+    expect(url.searchParams.get('keys')).toBe('player.count')
+    const from = Date.parse(url.searchParams.get('from') ?? '')
+    const to = Date.parse(url.searchParams.get('to') ?? '')
+    expect(Math.round((to - from) / 3600000)).toBe(6)
+
+    // 刷新后配置保持：重新拉序列并渲染
+    await page.reload()
+    await expect(chartCard.getByRole('heading', { name: '在线玩家' })).toBeVisible()
+    await expect(chartCard.locator('svg')).toBeVisible()
+    await expect(chartCard.getByText(/最新：/)).toContainText('12')
+    await page.screenshot({ path: `${EVIDENCE_DIR}/home-metric-chart-card.png`, fullPage: true })
+  })
+
+  test('数值卡显示最新值与单位，状态卡显示状态文本；卡片类型可切换（验收 1/2）', async ({ page }) => {
+    await mockLayoutApi(page)
+    await mockMetricApis(page)
+    await mockSeriesApi(page)
+    await login(page)
+    await createDevicesViaApi(page, 1)
+    await page.reload()
+
+    await page.getByRole('button', { name: '进入编辑' }).click()
+    await page.getByRole('button', { name: '添加「数值卡」' }).click()
+    const valueCard = cardLocator(page, 'metric-value')
+    await configureCard(valueCard, '主页概览机 1', '在线玩家（player.count）', '')
+    await page.getByRole('button', { name: '保存布局' }).click()
+
+    // 数值卡：最新值 + 单位
+    await expect(valueCard).toBeVisible()
+    await expect(valueCard.locator('.overview-value')).toHaveText(/7/)
+    await expect(valueCard).toContainText('人')
+
+    // 状态卡：enum 指标显示状态文本；类型不兼容项不可选
+    await page.getByRole('button', { name: '进入编辑' }).click()
+    await page.getByRole('button', { name: '添加「状态卡」' }).click()
+    const statusCard = cardLocator(page, 'metric-status')
+    await configureCard(statusCard, '主页概览机 1', '服务状态（svc.status）', '')
+    await expect(statusCard.getByLabel('卡片类型').locator('option[value="metric-value"]')).toHaveAttribute('disabled', /.*/)
+    await page.getByRole('button', { name: '保存布局' }).click()
+    await expect(statusCard.locator('.overview-value')).toHaveText('online')
+
+    // 卡片类型可配：曲线卡切到数值卡后按数值卡渲染
+    await page.getByRole('button', { name: '进入编辑' }).click()
+    await page.getByRole('button', { name: '添加「曲线卡」' }).click()
+    const chartCard = cardLocator(page, 'metric-chart')
+    await configureCard(chartCard, '主页概览机 1', '在线玩家（player.count）', '')
+    await chartCard.getByLabel('卡片类型').selectOption({ label: '数值卡' })
+    await expect(cardLocator(page, 'metric-value')).toHaveCount(2)
+    await expect(chartCard).toHaveCount(0)
+    await page.getByRole('button', { name: '保存布局' }).click()
+    await expect(cardLocator(page, 'metric-value').first()).toBeVisible()
+    await page.screenshot({ path: `${EVIDENCE_DIR}/home-metric-value-status-cards.png`, fullPage: true })
+  })
+
+  test('指标无数据时卡片显示占位不报错（验收 3）', async ({ page }) => {
+    await mockLayoutApi(page)
+    await mockMetricApis(page, { overviewEmpty: true })
+    await mockSeriesApi(page)
+    await login(page)
+    await createDevicesViaApi(page, 1)
+    await page.reload()
+
+    await page.getByRole('button', { name: '进入编辑' }).click()
+    await page.getByRole('button', { name: '添加「数值卡」' }).click()
+    const valueCard = cardLocator(page, 'metric-value')
+    await configureCard(valueCard, '主页概览机 1', '在线玩家（player.count）', '')
+    await page.getByRole('button', { name: '保存布局' }).click()
+
+    await expect(valueCard.getByText('暂无数据')).toBeVisible()
+    // 页面不崩：其余卡片正常
+    await expect(cardLocator(page, 'overview-total-devices')).toBeVisible()
+  })
+
+  test('来源目标失效时卡片降级提示，页面不崩（验收 3）', async ({ page }) => {
+    // 预置已保存布局：引用不存在的目标 999
+    let stored: LayoutCard[] | null = [
+      { id: 'overview-total-devices', type: 'overview-total-devices', visible: true, sort: 0, config: {} },
+      {
+        id: 'metric-value-stale',
+        type: 'metric-value',
+        visible: true,
+        sort: 1,
+        config: { targetId: 999, key: 'player.count', windowHours: 24 },
+      },
+    ]
+    await page.route(LAYOUT_API, async (route: Route) => {
+      if (route.request().method() === 'PUT') {
+        stored = (route.request().postDataJSON() as { cards: LayoutCard[] }).cards
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ cards: stored }) })
+        return
+      }
+      if (stored) {
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ cards: stored }) })
+      } else {
+        await route.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ error: 'x' }) })
+      }
+    })
+    await mockMetricApis(page)
+    await login(page)
+
+    const staleCard = cardLocator(page, 'metric-value')
+    await expect(staleCard.getByText('来源目标不存在')).toBeVisible()
+    // 页面不崩：概览卡正常渲染
+    await expect(cardLocator(page, 'overview-total-devices')).toBeVisible()
+    await page.screenshot({ path: `${EVIDENCE_DIR}/home-metric-card-stale-source.png`, fullPage: true })
+  })
+})

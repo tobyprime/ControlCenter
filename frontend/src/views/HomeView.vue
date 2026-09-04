@@ -3,7 +3,27 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { fetchSession } from '@/router'
 import { listTargets, type Target } from '@/api/targets'
 import { fetchDashboardLayout, saveDashboardLayout, type DashboardCard } from '@/api/dashboard'
+import {
+  listMetricKeys,
+  fetchTargetOverview,
+  fetchTargetSeries,
+  type MetricKeyInfo,
+  type MetricOverviewItem,
+  type MetricSeries,
+} from '@/api/metrics'
 import { BUILTIN_CARD_DEFS, cardDef, createDefaultLayout, normalizeLayout } from '@/dashboard/cards'
+import {
+  compatibleCardTypes,
+  isMetricCardType,
+  keyInfoOf,
+  parseMetricCardConfig,
+  type MetricCardConfig,
+  type MetricCardDegradedReason,
+} from '@/dashboard/cardConfig'
+import DashboardValueCard from '@/components/DashboardValueCard.vue'
+import DashboardStatusCard from '@/components/DashboardStatusCard.vue'
+import DashboardChartCard from '@/components/DashboardChartCard.vue'
+import DashboardCardConfigForm from '@/components/DashboardCardConfigForm.vue'
 
 const username = ref('')
 fetchSession().then((session) => {
@@ -11,13 +31,15 @@ fetchSession().then((session) => {
 })
 
 const overview = ref({ total: '—', online: '—', alerts: '—' })
+const targets = ref<Target[]>([])
 let refreshTimer: number | undefined
 
 async function refreshOverview() {
   try {
-    const targets: Target[] = await listTargets()
-    overview.value.total = String(targets.length)
-    overview.value.online = String(targets.filter((target) => target.online).length)
+    const list: Target[] = await listTargets()
+    targets.value = list
+    overview.value.total = String(list.length)
+    overview.value.online = String(list.filter((target) => target.online).length)
   } catch {
     // 首页概览加载失败不打断页面，保留占位
   }
@@ -29,11 +51,19 @@ const draft = ref<DashboardCard[]>([])
 const saveError = ref('')
 const dragIndex = ref(-1)
 
+// TOB-368 指标卡数据：来源按 target 聚合拉取，曲线按卡片各拉一条
+const metricKeys = ref<MetricKeyInfo[]>([])
+const overviewByTarget = ref<Record<number, MetricOverviewItem[]>>({})
+const seriesByCard = ref<Record<string, MetricSeries | null>>({})
+const metricLoading = ref(false)
+let metricTimer: number | undefined
+
 const visibleCards = computed(() => cards.value.filter((card) => card.visible))
 
 const addableDefs = computed(() => {
   const present = new Set(draft.value.map((card) => card.type))
-  return BUILTIN_CARD_DEFS.filter((def) => !present.has(def.type))
+  // 指标卡可多实例（不同来源各一张）；概览卡单实例
+  return BUILTIN_CARD_DEFS.filter((def) => def.multiple || !present.has(def.type))
 })
 
 function cardLabel(type: string): string {
@@ -52,6 +82,106 @@ function overviewValue(type: string): string {
     return overview.value.online
   }
   return overview.value.alerts
+}
+
+function metricConfigOf(card: DashboardCard): MetricCardConfig | null {
+  return parseMetricCardConfig(card.config)
+}
+
+// 来源失效降级：未配置 / 目标已删除 / 指标已注销 / 指标类型与卡片不匹配
+function degradedReasonFor(card: DashboardCard): MetricCardDegradedReason {
+  const config = metricConfigOf(card)
+  if (!config) {
+    return 'unconfigured'
+  }
+  if (!targets.value.some((target) => target.id === config.targetId)) {
+    return 'target-missing'
+  }
+  const info = keyInfoOf(metricKeys.value, config.key)
+  if (!info) {
+    return 'key-missing'
+  }
+  if (isMetricCardType(card.type) && !compatibleCardTypes(info.valueType).includes(card.type)) {
+    return 'type-mismatch'
+  }
+  return ''
+}
+
+function overviewItemOf(card: DashboardCard): MetricOverviewItem | null {
+  const config = metricConfigOf(card)
+  if (!config) {
+    return null
+  }
+  return overviewByTarget.value[config.targetId]?.find((item) => item.key === config.key) ?? null
+}
+
+function chartSeriesOf(card: DashboardCard): MetricSeries | null {
+  return seriesByCard.value[card.id] ?? null
+}
+
+function chartKeyInfoOf(card: DashboardCard): MetricKeyInfo | undefined {
+  const config = metricConfigOf(card)
+  return config ? keyInfoOf(metricKeys.value, config.key) : undefined
+}
+
+async function refreshRegistries() {
+  try {
+    metricKeys.value = await listMetricKeys()
+  } catch {
+    // 注册表失败不阻塞主页，指标卡按无数据占位
+  }
+}
+
+async function refreshMetricCards() {
+  const configured = cards.value
+    .filter((card) => card.visible && isMetricCardType(card.type))
+    .map((card) => ({ card, config: parseMetricCardConfig(card.config) }))
+    .filter((entry): entry is { card: DashboardCard; config: MetricCardConfig } => entry.config !== null)
+  if (configured.length === 0) {
+    return
+  }
+  metricLoading.value = true
+  try {
+    const targetIds = [...new Set(configured.map((entry) => entry.config.targetId))]
+    const overviewEntries = await Promise.all(
+      targetIds.map(async (targetId) => {
+        try {
+          return [targetId, await fetchTargetOverview(targetId)] as const
+        } catch {
+          // 单目标接口失败按无数据处理；目标确已删除由 targets 校验降级
+          return [targetId, null] as const
+        }
+      }),
+    )
+    const nextOverview: Record<number, MetricOverviewItem[]> = {}
+    for (const [targetId, items] of overviewEntries) {
+      if (items) {
+        nextOverview[targetId] = items
+      }
+    }
+    overviewByTarget.value = nextOverview
+
+    const chartEntries = configured.filter((entry) => entry.card.type === 'metric-chart')
+    const seriesEntries = await Promise.all(
+      chartEntries.map(async ({ card, config }) => {
+        const to = new Date()
+        const from = new Date(to.getTime() - config.windowHours * 3_600_000)
+        try {
+          const result = await fetchTargetSeries(config.targetId, [config.key], from.toISOString(), to.toISOString())
+          return [card.id, result.series.find((series) => series.key === config.key) ?? null] as const
+        } catch {
+          return [card.id, null] as const
+        }
+      }),
+    )
+    const nextSeries: Record<string, MetricSeries | null> = {}
+    for (const [cardId, series] of seriesEntries) {
+      nextSeries[cardId] = series
+    }
+    seriesByCard.value = nextSeries
+  } finally {
+    metricLoading.value = false
+  }
 }
 
 async function loadLayout() {
@@ -84,6 +214,7 @@ async function persistLayout() {
     editing.value = false
     draft.value = []
     saveError.value = ''
+    refreshMetricCards()
   } catch (error) {
     saveError.value = error instanceof Error ? error.message : '布局保存失败，请稍后重试'
   }
@@ -132,14 +263,22 @@ function onDrop(index: number) {
 }
 
 onMounted(() => {
-  loadLayout()
+  loadLayout().then(() => refreshMetricCards())
   refreshOverview()
+  refreshRegistries()
   refreshTimer = window.setInterval(refreshOverview, 15000)
+  metricTimer = window.setInterval(() => {
+    refreshRegistries()
+    refreshMetricCards()
+  }, 30000)
 })
 
 onBeforeUnmount(() => {
   if (refreshTimer) {
     window.clearInterval(refreshTimer)
+  }
+  if (metricTimer) {
+    window.clearInterval(metricTimer)
   }
 })
 </script>
@@ -183,7 +322,7 @@ onBeforeUnmount(() => {
         v-for="(card, index) in editing ? draft : visibleCards"
         :key="card.id"
         class="overview-card"
-        :class="{ 'card-hidden': editing && !card.visible, 'card-dragging': dragIndex === index }"
+        :class="{ 'card-hidden': editing && !card.visible, 'card-dragging': dragIndex === index, 'card-chart': card.type === 'metric-chart' }"
         :data-card-type="card.type"
         :draggable="editing"
         @dragstart="onDragStart(index)"
@@ -200,9 +339,41 @@ onBeforeUnmount(() => {
           </button>
           <button type="button" class="danger-button" @click="removeCard(index)">删除</button>
         </div>
-        <span class="overview-label">{{ cardLabel(card.type) }}</span>
-        <span class="overview-value">{{ overviewValue(card.type) }}</span>
-        <span class="overview-hint">{{ cardHint(card.type) }}</span>
+
+        <!-- 一期概览卡 -->
+        <template v-if="!isMetricCardType(card.type)">
+          <span class="overview-label">{{ cardLabel(card.type) }}</span>
+          <span class="overview-value">{{ overviewValue(card.type) }}</span>
+          <span class="overview-hint">{{ cardHint(card.type) }}</span>
+        </template>
+
+        <!-- 指标卡（TOB-368）：编辑态配置来源/类型/时间窗，查看态按类型渲染 -->
+        <template v-else-if="editing">
+          <span class="overview-label">{{ cardLabel(card.type) }}</span>
+          <DashboardCardConfigForm :card="card" :targets="targets" :metric-keys="metricKeys" />
+        </template>
+        <DashboardValueCard
+          v-else-if="card.type === 'metric-value'"
+          :label="cardLabel(card.type)"
+          :item="overviewItemOf(card)"
+          :degraded-reason="degradedReasonFor(card)"
+          :loading="metricLoading"
+        />
+        <DashboardStatusCard
+          v-else-if="card.type === 'metric-status'"
+          :label="cardLabel(card.type)"
+          :item="overviewItemOf(card)"
+          :degraded-reason="degradedReasonFor(card)"
+          :loading="metricLoading"
+        />
+        <DashboardChartCard
+          v-else
+          :label="cardLabel(card.type)"
+          :series="chartSeriesOf(card)"
+          :key-info="chartKeyInfoOf(card)"
+          :degraded-reason="degradedReasonFor(card)"
+          :loading="metricLoading"
+        />
       </div>
     </div>
 
@@ -321,6 +492,11 @@ onBeforeUnmount(() => {
   min-width: 0;
 }
 
+/* 曲线卡占满整行，保证序列可读 */
+.card-chart {
+  grid-column: 1 / -1;
+}
+
 .overview-card[draggable='true'] {
   cursor: grab;
 }
@@ -371,6 +547,11 @@ onBeforeUnmount(() => {
 
 .overview-hint {
   font-size: 0.75rem;
+  color: var(--color-text-light);
+}
+
+.card-state {
+  font-size: 0.95rem;
   color: var(--color-text-light);
 }
 
