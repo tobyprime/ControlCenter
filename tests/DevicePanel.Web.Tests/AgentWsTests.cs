@@ -3,7 +3,7 @@ using System.Net.WebSockets;
 using System.Text;
 using System.Text.Json;
 using DevicePanel.Protocol;
-using DevicePanel.Web.Devices;
+using DevicePanel.Web.Targets;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Time.Testing;
 using Xunit;
@@ -101,7 +101,7 @@ public class AgentWsTests : IDisposable
         using var socket = await ConnectAsync();
         await SendAuthAsync(socket, created.AgentToken);
 
-        var reset = await client.PostAsJsonAsync($"/api/devices/{created.Id}/token", new { });
+        var reset = await client.PostAsJsonAsync($"/api/targets/{created.Id}/token", new { });
         reset.EnsureSuccessStatusCode();
         var newToken = (await reset.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("agentToken").GetString()!;
 
@@ -128,7 +128,7 @@ public class AgentWsTests : IDisposable
         using var socket = await ConnectAsync();
         await SendAuthAsync(socket, created.AgentToken);
 
-        var delete = await client.DeleteAsync($"/api/devices/{created.Id}");
+        var delete = await client.DeleteAsync($"/api/targets/{created.Id}");
         delete.EnsureSuccessStatusCode();
 
         var close = await DrainCloseAsync(socket);
@@ -172,7 +172,7 @@ public class AgentWsTests : IDisposable
 
     private static async Task<(long Id, string AgentToken)> CreateDeviceAsync(HttpClient client)
     {
-        var response = await client.PostAsJsonAsync("/api/devices", new { name = "验收设备", tags = new[] { "机房A" } });
+        var response = await client.PostAsJsonAsync("/api/targets", new { name = "验收设备", tags = new[] { "机房A" } });
         response.EnsureSuccessStatusCode();
         var payload = await response.Content.ReadFromJsonAsync<JsonElement>();
         return (payload.GetProperty("id").GetInt64(), payload.GetProperty("agentToken").GetString()!);
@@ -249,7 +249,7 @@ public class AgentWsTests : IDisposable
     private async Task<JsonElement[]> ListAsync()
     {
         var client = await AuthenticatedClientAsync();
-        var response = await client.GetAsync("/api/devices");
+        var response = await client.GetAsync("/api/targets");
         response.EnsureSuccessStatusCode();
         var list = await response.Content.ReadFromJsonAsync<JsonElement>();
         return list.EnumerateArray().ToArray();

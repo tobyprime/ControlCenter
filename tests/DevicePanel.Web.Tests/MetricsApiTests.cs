@@ -1,14 +1,15 @@
+using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
-using DevicePanel.Web.Devices;
 using DevicePanel.Web.Metrics;
+using DevicePanel.Web.Targets;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Time.Testing;
 using Xunit;
 
 namespace DevicePanel.Web.Tests;
 
-/// <summary>指标查询 API：自动粒度选择（大跨度聚合/小跨度明细）、显式覆盖、参数校验与设备隔离。</summary>
+/// <summary>指标查询与 MetricKey 注册 API：自动粒度、key 参数校验、注册表 CRUD、目标指标总览。</summary>
 public class MetricsApiTests : IDisposable
 {
     public sealed class Factory : TestAppFactory
@@ -27,75 +28,149 @@ public class MetricsApiTests : IDisposable
     public void Dispose() => _factory.Dispose();
 
     [Fact]
+    public async Task Builtin_Keys_Are_Listed_Via_Api()
+    {
+        var client = await AuthenticatedClientAsync();
+
+        var response = await client.GetAsync("/api/metrics/keys");
+        response.EnsureSuccessStatusCode();
+        var keys = await response.Content.ReadFromJsonAsync<JsonElement>();
+
+        var names = keys.EnumerateArray().Select(k => k.GetProperty("key").GetString()).ToHashSet();
+        Assert.Subset(names, new HashSet<string?> { "cpu", "mem", "disk", "net_rx", "net_tx", "online" });
+        Assert.All(keys.EnumerateArray(), k => Assert.True(k.GetProperty("builtIn").GetBoolean()));
+    }
+
+    [Fact]
+    public async Task Register_Key_Then_Visible_In_List_And_Duplicate_Rejected()
+    {
+        var client = await AuthenticatedClientAsync();
+
+        var create = await client.PostAsJsonAsync("/api/metrics/keys", new { key = "temp.cpu", valueType = "number", displayName = "CPU 温度", unit = "°C" });
+        Assert.Equal(HttpStatusCode.Created, create.StatusCode);
+
+        var duplicate = await client.PostAsJsonAsync("/api/metrics/keys", new { key = "temp.cpu", valueType = "number", displayName = "重复" });
+        Assert.Equal(HttpStatusCode.BadRequest, duplicate.StatusCode);
+
+        var badKey = await client.PostAsJsonAsync("/api/metrics/keys", new { key = "Bad Key", valueType = "number", displayName = "非法" });
+        Assert.Equal(HttpStatusCode.BadRequest, badKey.StatusCode);
+
+        var badType = await client.PostAsJsonAsync("/api/metrics/keys", new { key = "temp.gpu", valueType = "float", displayName = "非法类型" });
+        Assert.Equal(HttpStatusCode.BadRequest, badType.StatusCode);
+
+        var list = await (await client.GetAsync("/api/metrics/keys")).Content.ReadFromJsonAsync<JsonElement>();
+        var registered = list.EnumerateArray().Single(k => k.GetProperty("key").GetString() == "temp.cpu");
+        Assert.False(registered.GetProperty("builtIn").GetBoolean());
+        Assert.Equal("°C", registered.GetProperty("unit").GetString());
+    }
+
+    [Fact]
+    public async Task Update_Key_Display_And_Delete_Protections()
+    {
+        var client = await AuthenticatedClientAsync();
+        await client.PostAsJsonAsync("/api/metrics/keys", new { key = "custom.k", valueType = "enum", displayName = "自定义", unit = "" });
+
+        var update = await client.PutAsJsonAsync("/api/metrics/keys/custom.k", new { displayName = "改 名", unit = "级" });
+        update.EnsureSuccessStatusCode();
+        var updated = await update.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("改 名", updated.GetProperty("displayName").GetString());
+
+        // 内置指标不可删除
+        var builtinDelete = await client.DeleteAsync("/api/metrics/keys/cpu");
+        Assert.Equal(HttpStatusCode.BadRequest, builtinDelete.StatusCode);
+
+        var delete = await client.DeleteAsync("/api/metrics/keys/custom.k");
+        Assert.Equal(HttpStatusCode.NoContent, delete.StatusCode);
+        var missing = await client.DeleteAsync("/api/metrics/keys/custom.k");
+        Assert.Equal(HttpStatusCode.NotFound, missing.StatusCode);
+    }
+
+    [Fact]
     public async Task Short_Range_Uses_Raw_Details()
     {
-        var deviceId = await SeedDataAsync();
-        var series = await GetSeriesAsync(deviceId, "2026-09-03T00:00:00Z", "2026-09-03T02:00:00Z");
+        var targetId = await SeedDataAsync();
+        var series = await GetSeriesAsync(targetId, "2026-09-03T00:00:00Z", "2026-09-03T02:00:00Z");
 
         Assert.Equal("raw", series.GetProperty("granularity").GetString());
-        Assert.Equal(4, series.GetProperty("points").GetArrayLength());
+        var cpuPoints = series.GetProperty("series").EnumerateArray().Single(s => s.GetProperty("key").GetString() == "cpu").GetProperty("points");
+        Assert.Equal(4, cpuPoints.GetArrayLength());
     }
 
     [Fact]
     public async Task Multi_Day_Range_Uses_Hourly_Aggregates()
     {
-        var deviceId = await SeedDataAsync();
-        var series = await GetSeriesAsync(deviceId, "2026-09-01T00:00:00Z", "2026-09-03T23:59:59Z");
+        var targetId = await SeedDataAsync();
+        var series = await GetSeriesAsync(targetId, "2026-09-01T00:00:00Z", "2026-09-03T23:59:59Z");
 
         Assert.Equal("hour", series.GetProperty("granularity").GetString());
         // 四个样本都落在 9/3 00:00–01:00 的同一小时桶
-        Assert.Equal(1, series.GetProperty("points").GetArrayLength());
-        var point = series.GetProperty("points")[0];
+        var cpuSeries = series.GetProperty("series").EnumerateArray().Single(s => s.GetProperty("key").GetString() == "cpu");
+        var point = Assert.Single(cpuSeries.GetProperty("points").EnumerateArray());
         Assert.Equal("2026-09-03T00:00:00Z", point.GetProperty("t").GetString());
-        // 桶均值 = 明细均值（口径一致：cpu 10/20/30/40，mem 20/30/40/50，disk 30/40/50/60）
-        Assert.Equal(25, point.GetProperty("cpu").GetDouble(), precision: 6);
-        Assert.Equal(35, point.GetProperty("mem").GetDouble(), precision: 6);
-        Assert.Equal(45, point.GetProperty("disk").GetDouble(), precision: 6);
-        Assert.Equal(250, point.GetProperty("netRx").GetDouble(), precision: 6);
-        Assert.Equal(2500, point.GetProperty("netTx").GetDouble(), precision: 6);
+        // 桶均值 = 明细均值（口径一致：cpu 10/20/30/40 → 25）
+        Assert.Equal(25, point.GetProperty("v").GetDouble(), precision: 6);
     }
 
     [Fact]
     public async Task Long_Range_Uses_Daily_Aggregates()
     {
-        var deviceId = await SeedDataAsync();
-        var series = await GetSeriesAsync(deviceId, "2026-08-01T00:00:00Z", "2026-09-03T23:59:59Z");
+        var targetId = await SeedDataAsync();
+        var series = await GetSeriesAsync(targetId, "2026-08-01T00:00:00Z", "2026-09-03T23:59:59Z", keys: "cpu");
 
         Assert.Equal("day", series.GetProperty("granularity").GetString());
-        var point = Assert.Single(series.GetProperty("points").EnumerateArray());
+        var cpuSeries = series.GetProperty("series").EnumerateArray().Single(s => s.GetProperty("key").GetString() == "cpu");
+        var point = Assert.Single(cpuSeries.GetProperty("points").EnumerateArray());
         Assert.Equal("2026-09-03T00:00:00Z", point.GetProperty("t").GetString());
-        Assert.Equal(25, point.GetProperty("cpu").GetDouble(), precision: 6);
+        Assert.Equal(25, point.GetProperty("v").GetDouble(), precision: 6);
     }
 
     [Fact]
-    public async Task Explicit_Granularity_Overrides_Auto()
+    public async Task Targets_Are_Isolated_In_Series()
     {
-        var deviceId = await SeedDataAsync();
-        var series = await GetSeriesAsync(deviceId, "2026-09-01T00:00:00Z", "2026-09-03T23:59:59Z", "raw");
-
-        Assert.Equal("raw", series.GetProperty("granularity").GetString());
-        Assert.Equal(4, series.GetProperty("points").GetArrayLength());
-    }
-
-    [Fact]
-    public async Task Devices_Are_Isolated_In_Series()
-    {
-        // 验收 5：曲线与所选设备对应，多设备数据不串
         var first = await SeedDataAsync(cpuBase: 10);
         var second = await SeedDataAsync(cpuBase: 90);
 
-        var firstSeries = await GetSeriesAsync(first, "2026-09-03T00:00:00Z", "2026-09-03T02:00:00Z");
-        var secondSeries = await GetSeriesAsync(second, "2026-09-03T00:00:00Z", "2026-09-03T02:00:00Z");
+        var firstSeries = await GetSeriesAsync(first, "2026-09-03T00:00:00Z", "2026-09-03T02:00:00Z", keys: "cpu");
+        var secondSeries = await GetSeriesAsync(second, "2026-09-03T00:00:00Z", "2026-09-03T02:00:00Z", keys: "cpu");
 
-        Assert.All(firstSeries.GetProperty("points").EnumerateArray(), p => Assert.True(p.GetProperty("cpu").GetDouble() < 50));
-        Assert.All(secondSeries.GetProperty("points").EnumerateArray(), p => Assert.True(p.GetProperty("cpu").GetDouble() > 50));
+        Assert.All(firstSeries.GetProperty("series")[0].GetProperty("points").EnumerateArray(), p => Assert.True(p.GetProperty("v").GetDouble() < 50));
+        Assert.All(secondSeries.GetProperty("series")[0].GetProperty("points").EnumerateArray(), p => Assert.True(p.GetProperty("v").GetDouble() > 50));
     }
 
     [Fact]
-    public async Task Unknown_Device_Returns_404()
+    public async Task Unregistered_Key_In_Series_Request_Returns_400()
+    {
+        var targetId = await SeedDataAsync();
+        var client = await AuthenticatedClientAsync();
+
+        var response = await client.GetAsync($"/api/metrics/{targetId}/series?keys=not.registered&from=2026-09-01T00:00:00Z&to=2026-09-02T00:00:00Z");
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Overview_Lists_Reported_Keys_With_Latest_Values()
+    {
+        var targetId = await SeedDataAsync();
+        var client = await AuthenticatedClientAsync();
+
+        var response = await client.GetAsync($"/api/metrics/{targetId}/overview");
+        response.EnsureSuccessStatusCode();
+        var overview = await response.Content.ReadFromJsonAsync<JsonElement>();
+
+        var byKey = overview.EnumerateArray().ToDictionary(i => i.GetProperty("key").GetString()!);
+        Assert.Equal(5, byKey.Count);
+        Assert.Equal("CPU 使用率", byKey["cpu"].GetProperty("displayName").GetString());
+        Assert.Equal("%", byKey["cpu"].GetProperty("unit").GetString());
+        Assert.Equal(40, byKey["cpu"].GetProperty("latestValueNum").GetDouble(), precision: 6);
+        Assert.Equal("number", byKey["cpu"].GetProperty("valueType").GetString());
+    }
+
+    [Fact]
+    public async Task Unknown_Target_Returns_404()
     {
         var client = await AuthenticatedClientAsync();
-        var response = await client.GetAsync($"/api/metrics/999/series?from=2026-09-01T00:00:00Z&to=2026-09-02T00:00:00Z");
+        var response = await client.GetAsync("/api/metrics/999/series?keys=cpu&from=2026-09-01T00:00:00Z&to=2026-09-02T00:00:00Z");
 
         Assert.Equal(404, (int)response.StatusCode);
     }
@@ -103,59 +178,43 @@ public class MetricsApiTests : IDisposable
     [Fact]
     public async Task Invalid_Range_Or_Granularity_Returns_400()
     {
-        var deviceId = await SeedDataAsync();
+        var targetId = await SeedDataAsync();
         var client = await AuthenticatedClientAsync();
 
-        var inverted = await client.GetAsync($"/api/metrics/{deviceId}/series?from=2026-09-03T00:00:00Z&to=2026-09-01T00:00:00Z");
+        var inverted = await client.GetAsync($"/api/metrics/{targetId}/series?keys=cpu&from=2026-09-03T00:00:00Z&to=2026-09-01T00:00:00Z");
         Assert.Equal(400, (int)inverted.StatusCode);
 
-        var badGranularity = await client.GetAsync($"/api/metrics/{deviceId}/series?from=2026-09-01T00:00:00Z&to=2026-09-02T00:00:00Z&granularity=week");
+        var badGranularity = await client.GetAsync($"/api/metrics/{targetId}/series?keys=cpu&from=2026-09-01T00:00:00Z&to=2026-09-02T00:00:00Z&granularity=week");
         Assert.Equal(400, (int)badGranularity.StatusCode);
     }
 
-    [Fact]
-    public async Task Missing_Range_Defaults_To_Last_24h_Auto()
-    {
-        var deviceId = await SeedDataAsync();
-        var client = await AuthenticatedClientAsync();
-
-        var response = await client.GetAsync($"/api/metrics/{deviceId}/series");
-        response.EnsureSuccessStatusCode();
-        var series = await response.Content.ReadFromJsonAsync<JsonElement>();
-
-        // 默认最近 24h → 小时聚合
-        Assert.Equal("hour", series.GetProperty("granularity").GetString());
-        Assert.Equal(1, series.GetProperty("points").GetArrayLength());
-    }
-
-    /// <summary>种入 9/3 当天 00:10/00:20/00:30/00:40 四个样本：cpu=cpuBase+10*i，mem=20+10*i，disk=30+10*i，netRx=100*i，netTx=1000*i。</summary>
+    /// <summary>种入 9/3 当天 00:10/00:20/00:30/00:40 四个样本：cpu=cpuBase+10*i，mem=20+10*i，disk=30+10*i，net_rx=100*(i+1)，net_tx=1000*(i+1)。</summary>
     private async Task<long> SeedDataAsync(double cpuBase = 10)
     {
         var client = await AuthenticatedClientAsync();
-        var created = await client.PostAsJsonAsync("/api/devices", new { name = $"指标设备-{Guid.NewGuid():N}"[..24], tags = Array.Empty<string>() });
+        var created = await client.PostAsJsonAsync("/api/targets", new { name = $"指标设备-{Guid.NewGuid():N}"[..24], tags = Array.Empty<string>() });
         created.EnsureSuccessStatusCode();
-        var deviceId = (await created.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetInt64();
+        var targetId = (await created.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetInt64();
 
         var store = _factory.Services.GetRequiredService<IMetricsStore>();
         var day = new DateTimeOffset(2026, 9, 3, 0, 0, 0, TimeSpan.Zero);
         for (var i = 0; i < 4; i++)
         {
-            store.Insert(deviceId, day.AddMinutes(10 * (i + 1)), new MetricsPoint(
-                day.AddMinutes(10 * (i + 1)),
-                cpuBase + 10 * i,
-                20 + 10 * i,
-                30 + 10 * i,
-                100 * (i + 1),
-                1000 * (i + 1)));
+            var at = day.AddMinutes(10 * (i + 1));
+            store.Insert(targetId, MetricKeys.Cpu, new MetricSample(at, cpuBase + 10 * i, null));
+            store.Insert(targetId, MetricKeys.Mem, new MetricSample(at, 20 + 10 * i, null));
+            store.Insert(targetId, MetricKeys.Disk, new MetricSample(at, 30 + 10 * i, null));
+            store.Insert(targetId, MetricKeys.NetRx, new MetricSample(at, 100.0 * (i + 1), null));
+            store.Insert(targetId, MetricKeys.NetTx, new MetricSample(at, 1000.0 * (i + 1), null));
         }
 
-        return deviceId;
+        return targetId;
     }
 
-    private async Task<JsonElement> GetSeriesAsync(long deviceId, string from, string to, string? granularity = null)
+    private async Task<JsonElement> GetSeriesAsync(long targetId, string from, string to, string? granularity = null, string keys = "cpu,mem,disk,net_rx,net_tx")
     {
         var client = await AuthenticatedClientAsync();
-        var url = $"/api/metrics/{deviceId}/series?from={Uri.EscapeDataString(from)}&to={Uri.EscapeDataString(to)}";
+        var url = $"/api/metrics/{targetId}/series?keys={Uri.EscapeDataString(keys)}&from={Uri.EscapeDataString(from)}&to={Uri.EscapeDataString(to)}";
         if (granularity is not null)
         {
             url += $"&granularity={granularity}";

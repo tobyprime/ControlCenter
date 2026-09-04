@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
-import { listDevices, type Device } from '@/api/devices'
+import { listTargets as listDevices, type Target as Device } from '@/api/targets'
 import { fetchLogTail, listLogServices, type LogKind, type LogLineInfo, type LogServiceInfo } from '@/api/logs'
 
 const devices = ref<Device[]>([])

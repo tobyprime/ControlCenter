@@ -26,8 +26,8 @@ async function expectNoHorizontalOverflow(page: Page, label: string) {
   expect.soft(overflow, `${label} 横向溢出应为 0`).toBeLessThanOrEqual(0)
 }
 
-async function createDeviceViaApi(page: Page, name: string): Promise<{ id: number; agentToken: string }> {
-  const response = await page.request.post('/api/devices', {
+async function createTargetViaApi(page: Page, name: string): Promise<{ id: number; agentToken: string }> {
+  const response = await page.request.post('/api/targets', {
     data: { name, tags: ['E2E'] },
   })
   expect(response.ok()).toBeTruthy()
@@ -87,8 +87,8 @@ test.describe('指标曲线（TOB-338）', () => {
     // 两台“负载不同”的设备（验收 5：曲线与所选设备对应）
     const lowName = `低负载机 ${Date.now()}`
     const highName = `高负载机 ${Date.now()}`
-    const lowLoad = await createDeviceViaApi(page, lowName)
-    const highLoad = await createDeviceViaApi(page, highName)
+    const lowLoad = await createTargetViaApi(page, lowName)
+    const highLoad = await createTargetViaApi(page, highName)
 
     const lowReports = [10, 14, 12, 16, 11].map((cpu) => ({
       cpu,
@@ -119,8 +119,9 @@ test.describe('指标曲线（TOB-338）', () => {
     await expect(cpuCard.locator('svg polyline')).toHaveCount(1)
     await expect(page.locator('.chart-card', { hasText: '内存使用率' }).locator('svg polyline')).toHaveCount(1)
     await expect(page.locator('.chart-card', { hasText: '磁盘使用率' }).locator('svg polyline')).toHaveCount(1)
-    // 网络图：下行 + 上行两条曲线
-    await expect(page.locator('.chart-card', { hasText: '网络流量' }).locator('svg polyline')).toHaveCount(2)
+    // 网络收发为独立指标图（窄表 KV 模型：一个 key 一张图）
+    await expect(page.locator('.chart-card', { hasText: '网络接收速率' }).locator('svg polyline')).toHaveCount(1)
+    await expect(page.locator('.chart-card', { hasText: '网络发送速率' }).locator('svg polyline')).toHaveCount(1)
     await page.screenshot({ path: `${EVIDENCE_DIR}/metrics-low-load.png`, fullPage: true })
 
     // 切换到高负载设备：曲线数值随之切换（口径与设备对应）
@@ -134,8 +135,8 @@ test.describe('指标曲线（TOB-338）', () => {
   test('长跨度切聚合 + 375px 响应式', async ({ page }) => {
     await login(page)
 
-    const device = await createDeviceViaApi(page, `聚合口径机 ${Date.now()}`)
-    await reportMetricsViaWebSocket(page, device.agentToken, [
+    const target = await createTargetViaApi(page, `聚合口径机 ${Date.now()}`)
+    await reportMetricsViaWebSocket(page, target.agentToken, [
       { cpu: 20, mem: 50, disk: 45, netRx: 2048, netTx: 1024 },
     ])
 

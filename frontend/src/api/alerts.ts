@@ -18,18 +18,6 @@ export interface AlertSettingsInput {
   targetId?: string
 }
 
-export interface ThresholdOverride {
-  deviceId: number
-  deviceName: string
-  metric: string
-  value: number
-}
-
-export interface AlertThresholds {
-  global: Record<string, number>
-  overrides: ThresholdOverride[]
-}
-
 export interface QueueItem {
   id: number
   createdAtUtc: string
@@ -43,16 +31,6 @@ export interface QueueItem {
 export interface AlertQueue {
   count: number
   items: QueueItem[]
-}
-
-export const METRIC_OPTIONS = [
-  { value: 'cpu', label: 'CPU 使用率' },
-  { value: 'mem', label: '内存使用率' },
-  { value: 'disk', label: '磁盘使用率' },
-]
-
-export function metricLabel(metric: string): string {
-  return METRIC_OPTIONS.find((option) => option.value === metric)?.label ?? metric
 }
 
 async function request<T>(input: string, init?: RequestInit): Promise<T> {
@@ -87,28 +65,6 @@ export function saveAlertSettings(input: AlertSettingsInput): Promise<void> {
     method: 'PUT',
     body: JSON.stringify(input),
   })
-}
-
-export function fetchAlertThresholds(): Promise<AlertThresholds> {
-  return request<AlertThresholds>('/api/alerts/thresholds')
-}
-
-export function saveGlobalThreshold(metric: string, value: number): Promise<void> {
-  return request<void>('/api/alerts/thresholds/global', {
-    method: 'PUT',
-    body: JSON.stringify({ metric, value }),
-  })
-}
-
-export function saveDeviceThreshold(deviceId: number, metric: string, value: number): Promise<void> {
-  return request<void>(`/api/alerts/thresholds/devices/${deviceId}`, {
-    method: 'PUT',
-    body: JSON.stringify({ metric, value }),
-  })
-}
-
-export function deleteDeviceThreshold(deviceId: number, metric: string): Promise<void> {
-  return request<void>(`/api/alerts/thresholds/devices/${deviceId}/${metric}`, { method: 'DELETE' })
 }
 
 export function fetchAlertQueue(): Promise<AlertQueue> {

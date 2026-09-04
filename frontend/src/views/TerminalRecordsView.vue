@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
 import { listTerminalRecords, listTerminalSessions, type TerminalRecordInfo, type TerminalSessionInfo } from '@/api/terminal'
-import { listDevices, type Device } from '@/api/devices'
+import { listTargets as listDevices, type Target as Device } from '@/api/targets'
 
 const devices = ref<Device[]>([])
 const selectedDeviceId = ref<number | 'all'>('all')

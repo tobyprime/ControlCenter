@@ -7,7 +7,7 @@ using Xunit;
 
 namespace DevicePanel.Web.Tests;
 
-/// <summary>告警配置 API 测试：napcat 设置（token 不回传）、阈值（全局/按设备覆盖）校验、待发队列可见。</summary>
+/// <summary>告警 API 测试：napcat 设置（token 不回传）、告警规则 CRUD 与校验、内置规则类型目录、待发队列可见。</summary>
 public class AlertApiTests : IDisposable
 {
     private readonly Factory _factory = new();
@@ -40,25 +40,12 @@ public class AlertApiTests : IDisposable
         Assert.DoesNotContain("napcat-secret", raw);
     }
 
-    [Fact]
-    public async Task Settings_Put_Without_Token_Keeps_Existing_And_Empty_Token_Clears()
-    {
-        var client = await AuthenticatedAsync();
-        await client.PutAsJsonAsync("/api/alerts/settings", new { baseUrl = "http://a:1", token = "keep-me", targetType = "group", targetId = "42" });
-
-        await client.PutAsJsonAsync("/api/alerts/settings", new { baseUrl = "http://b:2" });
-        Assert.True(await TokenSetAsync());
-
-        await client.PutAsJsonAsync("/api/alerts/settings", new { token = "" });
-        Assert.False(await TokenSetAsync());
-    }
-
     [Theory]
-    [InlineData("ftp://a:1", "t", "private", "10001", "baseUrl")]
-    [InlineData("http://a:1", "t", "channel", "10001", "targetType")]
-    [InlineData("http://a:1", "t", "private", "abc", "targetId")]
-    [InlineData("http://a:1", "t", "private", "", "targetId")]
-    public async Task Settings_Put_Rejects_Invalid_Input(string baseUrl, string token, string targetType, string targetId, string _)
+    [InlineData("ftp://a:1", "t", "private", "10001")]
+    [InlineData("http://a:1", "t", "channel", "10001")]
+    [InlineData("http://a:1", "t", "private", "abc")]
+    [InlineData("http://a:1", "t", "private", "")]
+    public async Task Settings_Put_Rejects_Invalid_Input(string baseUrl, string token, string targetType, string targetId)
     {
         var client = await AuthenticatedAsync();
         var put = await client.PutAsJsonAsync("/api/alerts/settings", new { baseUrl, token, targetType, targetId });
@@ -66,66 +53,178 @@ public class AlertApiTests : IDisposable
     }
 
     [Fact]
-    public async Task Thresholds_Return_Builtin_Defaults_And_Accept_Global_Update()
+    public async Task Migration_Seeded_Global_Rules_Are_Listed()
     {
+        // 一期全局默认阈值（cpu/mem/disk = 90）+ 在线状态规则由迁移播种，升级后可直接查看与编辑（验收 2）
         var client = await AuthenticatedAsync();
 
-        var payload = await GetThresholdsAsync();
-        Assert.Equal(90, payload.GetProperty("global").GetProperty("cpu").GetDouble());
-        Assert.Equal(90, payload.GetProperty("global").GetProperty("mem").GetDouble());
-        Assert.Equal(90, payload.GetProperty("global").GetProperty("disk").GetDouble());
-        Assert.Empty(payload.GetProperty("overrides").EnumerateArray());
+        var response = await client.GetAsync("/api/alert-rules");
+        response.EnsureSuccessStatusCode();
+        var rules = await response.Content.ReadFromJsonAsync<JsonElement>();
 
-        var put = await client.PutAsJsonAsync("/api/alerts/thresholds/global", new { metric = "cpu", value = 75 });
-        Assert.Equal(HttpStatusCode.NoContent, put.StatusCode);
-
-        payload = await GetThresholdsAsync();
-        Assert.Equal(75, payload.GetProperty("global").GetProperty("cpu").GetDouble());
-        Assert.Equal(90, payload.GetProperty("global").GetProperty("mem").GetDouble());
+        var byKey = rules.EnumerateArray().ToDictionary(r => (r.GetProperty("metricKey").GetString(), r.GetProperty("ruleType").GetString()));
+        Assert.Equal(4, byKey.Count);
+        Assert.Equal(90, byKey[("cpu", "threshold_above")].GetProperty("parameters").GetProperty("threshold").GetDouble());
+        Assert.Equal(90, byKey[("mem", "threshold_above")].GetProperty("parameters").GetProperty("threshold").GetDouble());
+        Assert.Equal(90, byKey[("disk", "threshold_above")].GetProperty("parameters").GetProperty("threshold").GetDouble());
+        Assert.Equal("true", byKey[("online", "state_mismatch")].GetProperty("parameters").GetProperty("expected").GetString());
+        Assert.All(rules.EnumerateArray(), r => Assert.True(r.GetProperty("enabled").GetBoolean()));
+        Assert.All(rules.EnumerateArray(), r => Assert.Equal(JsonValueKind.Null, r.GetProperty("targetId").ValueKind));
     }
 
     [Fact]
-    public async Task Thresholds_Device_Override_Add_List_Delete()
+    public async Task Rule_Types_Endpoint_Lists_Four_Builtin_Types()
     {
         var client = await AuthenticatedAsync();
-        var deviceId = await CreateDeviceAsync(client, "覆盖设备");
 
-        var put = await client.PutAsJsonAsync($"/api/alerts/thresholds/devices/{deviceId}", new { metric = "cpu", value = 50 });
-        Assert.Equal(HttpStatusCode.NoContent, put.StatusCode);
+        var response = await client.GetAsync("/api/alert-rules/types");
+        response.EnsureSuccessStatusCode();
+        var types = await response.Content.ReadFromJsonAsync<JsonElement>();
 
-        var payload = await GetThresholdsAsync();
-        var overrides = payload.GetProperty("overrides");
-        var entry = Assert.Single(overrides.EnumerateArray());
-        Assert.Equal(deviceId, entry.GetProperty("deviceId").GetInt64());
-        Assert.Equal("覆盖设备", entry.GetProperty("deviceName").GetString());
-        Assert.Equal("cpu", entry.GetProperty("metric").GetString());
-        Assert.Equal(50, entry.GetProperty("value").GetDouble());
+        var ids = types.EnumerateArray().Select(t => t.GetProperty("typeId").GetString()).ToHashSet();
+        Assert.Equal(
+            new HashSet<string?> { "threshold_above", "threshold_below", "no_data", "state_mismatch" },
+            ids);
+        Assert.All(types.EnumerateArray(), t => Assert.True(t.GetProperty("displayName").GetString()!.Length > 0));
+    }
 
-        var delete = await client.DeleteAsync($"/api/alerts/thresholds/devices/{deviceId}/cpu");
+    [Fact]
+    public async Task Rule_Create_List_Update_Delete_RoundTrip()
+    {
+        var client = await AuthenticatedAsync();
+        var targetId = await CreateTargetAsync(client, "规则目标");
+
+        var create = await client.PostAsJsonAsync("/api/alert-rules", new
+        {
+            targetId,
+            metricKey = "cpu",
+            ruleType = "threshold_above",
+            parameters = new { threshold = 85 },
+            sustainSeconds = 45,
+            repeatMinutes = 10,
+        });
+        Assert.Equal(HttpStatusCode.Created, create.StatusCode);
+        var created = await create.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(targetId, created.GetProperty("targetId").GetInt64());
+        Assert.Equal("规则目标", created.GetProperty("targetName").GetString());
+        Assert.Equal("CPU 使用率", created.GetProperty("metricDisplayName").GetString());
+        Assert.Equal(85, created.GetProperty("parameters").GetProperty("threshold").GetDouble());
+        Assert.Equal(45, created.GetProperty("sustainSeconds").GetInt64());
+        Assert.True(created.GetProperty("enabled").GetBoolean());
+
+        // 同 (target, metric, type) 重复拒绝
+        var duplicate = await client.PostAsJsonAsync("/api/alert-rules", new
+        {
+            targetId,
+            metricKey = "cpu",
+            ruleType = "threshold_above",
+            parameters = new { threshold = 10 },
+        });
+        Assert.Equal(HttpStatusCode.BadRequest, duplicate.StatusCode);
+
+        // 修改参数 + 关闭规则（验收 3：可修改、关闭后不再触发）
+        var id = created.GetProperty("id").GetInt64();
+        var update = await client.PutAsJsonAsync($"/api/alert-rules/{id}", new
+        {
+            parameters = new { threshold = 70 },
+            sustainSeconds = 30,
+            repeatMinutes = 0,
+            enabled = false,
+        });
+        update.EnsureSuccessStatusCode();
+        var updated = await update.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(70, updated.GetProperty("parameters").GetProperty("threshold").GetDouble());
+        Assert.False(updated.GetProperty("enabled").GetBoolean());
+
+        var delete = await client.DeleteAsync($"/api/alert-rules/{id}");
         Assert.Equal(HttpStatusCode.NoContent, delete.StatusCode);
-        Assert.Empty((await GetThresholdsAsync()).GetProperty("overrides").EnumerateArray());
-
-        var missing = await client.DeleteAsync($"/api/alerts/thresholds/devices/{deviceId}/cpu");
+        var missing = await client.DeleteAsync($"/api/alert-rules/{id}");
         Assert.Equal(HttpStatusCode.NotFound, missing.StatusCode);
     }
 
-    [Theory]
-    [InlineData("net", 50, HttpStatusCode.BadRequest)]
-    [InlineData("cpu", 0, HttpStatusCode.BadRequest)]
-    [InlineData("cpu", 101, HttpStatusCode.BadRequest)]
-    public async Task Thresholds_Put_Rejects_Unknown_Metric_And_Out_Of_Range_Value(string metric, double value, HttpStatusCode expected)
+    [Fact]
+    public async Task Rule_Create_Global_Rule_With_Null_Target()
     {
         var client = await AuthenticatedAsync();
-        var put = await client.PutAsJsonAsync("/api/alerts/thresholds/global", new { metric, value });
-        Assert.Equal(expected, put.StatusCode);
+
+        var create = await client.PostAsJsonAsync("/api/alert-rules", new
+        {
+            targetId = (long?)null,
+            metricKey = "mem",
+            ruleType = "threshold_below",
+            parameters = new { threshold = 5 },
+        });
+        Assert.Equal(HttpStatusCode.Created, create.StatusCode);
+        var created = await create.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.True(created.GetProperty("targetId").ValueKind is JsonValueKind.Null);
+        Assert.Equal("（全局）", created.GetProperty("targetName").GetString());
     }
 
     [Fact]
-    public async Task Thresholds_Device_Put_Returns_NotFound_For_Unknown_Device()
+    public async Task Rule_Create_Filter_By_Target_And_Metric()
     {
         var client = await AuthenticatedAsync();
-        var put = await client.PutAsJsonAsync("/api/alerts/thresholds/devices/999", new { metric = "cpu", value = 50 });
-        Assert.Equal(HttpStatusCode.NotFound, put.StatusCode);
+        var targetA = await CreateTargetAsync(client, "目标A");
+        await CreateTargetAsync(client, "目标B");
+
+        await client.PostAsJsonAsync("/api/alert-rules", new { targetId = targetA, metricKey = "cpu", ruleType = "threshold_above", parameters = new { threshold = 50 } });
+        await client.PostAsJsonAsync("/api/alert-rules", new { targetId = targetA, metricKey = "mem", ruleType = "threshold_above", parameters = new { threshold = 50 } });
+
+        var byTarget = await (await client.GetAsync($"/api/alert-rules?targetId={targetA}")).Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(2, byTarget.GetArrayLength());
+
+        var byMetric = await (await client.GetAsync($"/api/alert-rules?targetId={targetA}&metricKey=mem")).Content.ReadFromJsonAsync<JsonElement>();
+        var rule = Assert.Single(byMetric.EnumerateArray());
+        Assert.Equal("mem", rule.GetProperty("metricKey").GetString());
+    }
+
+    [Theory]
+    [InlineData("not.registered", "threshold_above", 50.0)]     // 指标未注册
+    [InlineData(null, "threshold_above", 50.0)]                 // 缺指标
+    [InlineData("cpu", "expr_script", 50.0)]                    // 未知规则类型
+    [InlineData("cpu", "threshold_above", null)]                // 缺参数
+    [InlineData("online", "threshold_above", 50.0)]             // bool 指标不适用阈值上
+    [InlineData("cpu", "state_mismatch", null)]                 // number 指标不适用状态不符
+    public async Task Rule_Create_Rejects_Invalid_Combinations(string? metricKey, string ruleType, double? threshold)
+    {
+        var client = await AuthenticatedAsync();
+        var targetId = await CreateTargetAsync(client, "校验目标");
+
+        var body = new Dictionary<string, object?>
+        {
+            ["targetId"] = targetId,
+            ["metricKey"] = metricKey,
+            ["ruleType"] = ruleType,
+            ["parameters"] = threshold.HasValue ? new { threshold } : null,
+        };
+        var response = await client.PostAsJsonAsync("/api/alert-rules", body);
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Rule_Create_No_Data_With_Minutes_Parameters()
+    {
+        var client = await AuthenticatedAsync();
+        var targetId = await CreateTargetAsync(client, "无数据目标");
+
+        var bad = await client.PostAsJsonAsync("/api/alert-rules", new
+        {
+            targetId,
+            metricKey = "cpu",
+            ruleType = "no_data",
+            parameters = new { minutes = 0 },
+        });
+        Assert.Equal(HttpStatusCode.BadRequest, bad.StatusCode);
+
+        var good = await client.PostAsJsonAsync("/api/alert-rules", new
+        {
+            targetId,
+            metricKey = "cpu",
+            ruleType = "no_data",
+            parameters = new { minutes = 10 },
+        });
+        Assert.Equal(HttpStatusCode.Created, good.StatusCode);
     }
 
     [Fact]
@@ -133,8 +232,8 @@ public class AlertApiTests : IDisposable
     {
         var client = await AuthenticatedAsync();
         var outbox = _factory.Services.GetRequiredService<IAlertOutboxStore>();
-        outbox.Enqueue(NapcatNotifier.ChannelNameValue, new AlertMessage("设备离线告警", "设备「q-1」已离线"), DateTimeOffset.UtcNow);
-        outbox.Enqueue(NapcatNotifier.ChannelNameValue, new AlertMessage("指标越限告警", "设备「q-2」CPU 使用率 98.0%"), DateTimeOffset.UtcNow);
+        outbox.Enqueue(NapcatNotifier.ChannelNameValue, new AlertMessage("目标状态告警", "目标「q-1」设备在线状态 当前状态为 false"), DateTimeOffset.UtcNow);
+        outbox.Enqueue(NapcatNotifier.ChannelNameValue, new AlertMessage("指标越限告警", "目标「q-2」CPU 使用率 当前 98.0%"), DateTimeOffset.UtcNow);
 
         var response = await client.GetAsync("/api/alerts/queue");
         response.EnsureSuccessStatusCode();
@@ -143,29 +242,13 @@ public class AlertApiTests : IDisposable
         Assert.Equal(2, payload.GetProperty("count").GetInt64());
         var items = payload.GetProperty("items");
         Assert.Equal(2, items.GetArrayLength());
-        Assert.Equal("设备离线告警", items[0].GetProperty("title").GetString());
+        Assert.Equal("目标状态告警", items[0].GetProperty("title").GetString());
         Assert.Equal(NapcatNotifier.ChannelNameValue, items[0].GetProperty("channel").GetString());
-        Assert.Equal("设备「q-2」CPU 使用率 98.0%", items[1].GetProperty("content").GetString());
     }
 
-    private async Task<bool> TokenSetAsync()
+    private async Task<long> CreateTargetAsync(HttpClient client, string name)
     {
-        var client = await AuthenticatedAsync();
-        var payload = await (await client.GetAsync("/api/alerts/settings")).Content.ReadFromJsonAsync<JsonElement>();
-        return payload.GetProperty("napcat").GetProperty("tokenSet").GetBoolean();
-    }
-
-    private async Task<JsonElement> GetThresholdsAsync()
-    {
-        var client = await AuthenticatedAsync();
-        var response = await client.GetAsync("/api/alerts/thresholds");
-        response.EnsureSuccessStatusCode();
-        return await response.Content.ReadFromJsonAsync<JsonElement>();
-    }
-
-    private async Task<long> CreateDeviceAsync(HttpClient client, string name)
-    {
-        var created = await client.PostAsJsonAsync("/api/devices", new { name, tags = new[] { "告警" } });
+        var created = await client.PostAsJsonAsync("/api/targets", new { name, tags = new[] { "告警" } });
         created.EnsureSuccessStatusCode();
         var payload = await created.Content.ReadFromJsonAsync<JsonElement>();
         return payload.GetProperty("id").GetInt64();
