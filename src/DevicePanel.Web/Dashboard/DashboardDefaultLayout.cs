@@ -13,5 +13,14 @@ public static class DashboardDefaultLayout
     public const string CardTypeOnlineDevices = "overview-online-devices";
     public const string CardTypeActiveAlerts = "overview-active-alerts";
 
-    public static DashboardLayout Create() => new([]);
+    public static DashboardLayout Create()
+    {
+        var config = JsonDocument.Parse("{}").RootElement.Clone();
+        return new DashboardLayout(
+        [
+            new DashboardCard(CardIdTotalDevices, CardTypeTotalDevices, 0, Visible: true, config),
+            new DashboardCard(CardIdOnlineDevices, CardTypeOnlineDevices, 1, Visible: true, config),
+            new DashboardCard(CardIdActiveAlerts, CardTypeActiveAlerts, 2, Visible: true, config),
+        ]);
+    }
 }

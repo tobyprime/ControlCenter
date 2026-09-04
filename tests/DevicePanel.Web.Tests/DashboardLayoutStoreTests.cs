@@ -45,21 +45,22 @@ public class DashboardLayoutStoreTests : IDisposable
 
         Assert.NotNull(loaded);
         Assert.Equal(2, loaded.Cards.Count);
-        Assert.Equal("card-total", loaded.Cards[0].Id);
-        Assert.Equal("overview-total-devices", loaded.Cards[0].Type);
-        Assert.Equal(0, loaded.Cards[0].Sort);
-        Assert.True(loaded.Cards[0].Visible);
-        JsonElementAssertions.JsonEquals(EmptyObject(), loaded.Cards[0].Config);
+        // 存储层按保存顺序原样往返（不按 sort 重排，排序归 API 层）
+        Assert.Equal("card-metric", loaded.Cards[0].Id);
+        Assert.Equal("metric-line", loaded.Cards[0].Type);
+        Assert.Equal(3, loaded.Cards[0].Sort);
+        Assert.False(loaded.Cards[0].Visible);
+        Assert.True(loaded.Cards[0].Config.ValueKind == JsonValueKind.Object);
+        JsonElementAssertions.JsonEquals(config, loaded.Cards[0].Config);
+        Assert.Equal("内存", loaded.Cards[0].Config.GetProperty("tags")[1].GetString());
+        Assert.Equal(1.50, loaded.Cards[0].Config.GetProperty("threshold").GetDouble());
 
         var card = loaded.Cards[1];
-        Assert.Equal("card-metric", card.Id);
-        Assert.Equal("metric-line", card.Type);
-        Assert.Equal(3, card.Sort);
-        Assert.False(card.Visible);
-        Assert.True(card.Config.ValueKind == JsonValueKind.Object);
-        JsonElementAssertions.JsonEquals(config, card.Config);
-        Assert.Equal("内存", card.Config.GetProperty("tags")[1].GetString());
-        Assert.Equal(1.50, card.Config.GetProperty("threshold").GetDouble());
+        Assert.Equal("card-total", card.Id);
+        Assert.Equal("overview-total-devices", card.Type);
+        Assert.Equal(0, card.Sort);
+        Assert.True(card.Visible);
+        JsonElementAssertions.JsonEquals(EmptyObject(), card.Config);
     }
 
     [Fact]

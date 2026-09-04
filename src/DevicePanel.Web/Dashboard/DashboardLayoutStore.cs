@@ -19,6 +19,7 @@ public interface IDashboardLayoutStore
     void SaveLayout(DashboardLayout layout);
 }
 
+/// <summary>dashboard_layouts 上的主页布局读写；整份布局以 JSON 文本存储，与设备/目标数据无外键关联。</summary>
 public sealed class DashboardLayoutStore : IDashboardLayoutStore
 {
     private readonly SqliteConnectionFactory _connectionFactory;
@@ -30,9 +31,38 @@ public sealed class DashboardLayoutStore : IDashboardLayoutStore
         _timeProvider = timeProvider ?? TimeProvider.System;
     }
 
-    public DashboardLayout? GetLayout() => null;
+    public DashboardLayout? GetLayout()
+    {
+        using var connection = _connectionFactory.CreateOpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = "SELECT layout_json FROM dashboard_layouts WHERE id = 1";
+        var json = command.ExecuteScalar() as string;
+        if (json is null)
+        {
+            return null;
+        }
+
+        try
+        {
+            return JsonSerializer.Deserialize<DashboardLayout>(json);
+        }
+        catch (JsonException)
+        {
+            // 存储内容损坏时按未配置处理，上层回退默认布局，读路径不因脏数据 500
+            return null;
+        }
+    }
 
     public void SaveLayout(DashboardLayout layout)
     {
+        using var connection = _connectionFactory.CreateOpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+            INSERT INTO dashboard_layouts(id, layout_json, updated_at_utc) VALUES (1, $layoutJson, $updatedAt)
+            ON CONFLICT(id) DO UPDATE SET layout_json = excluded.layout_json, updated_at_utc = excluded.updated_at_utc
+            """;
+        command.Parameters.AddWithValue("$layoutJson", JsonSerializer.Serialize(layout));
+        command.Parameters.AddWithValue("$updatedAt", _timeProvider.GetUtcNow().ToString("O"));
+        command.ExecuteNonQuery();
     }
 }
