@@ -1,0 +1,10 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/DevicePanel.Web/DevicePanel.Web.csproj" />
+    <Project Path="src/DevicePanel.Agent/DevicePanel.Agent.csproj" />
+    <Project Path="src/DevicePanel.Protocol/DevicePanel.Protocol.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/DevicePanel.Web.Tests/DevicePanel.Web.Tests.csproj" />
+  </Folder>
+</Solution>

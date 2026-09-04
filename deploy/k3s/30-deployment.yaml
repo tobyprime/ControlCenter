@@ -1,0 +1,80 @@
+# 单副本 Deployment（SQLite 单写者约束，不做多副本/高可用，见 issue 非范围声明）
+# 镜像获取见 docs/deploy-k3s.md：本地导入（k3s ctr images import）或推送镜像仓库后改 image 字段
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: device-panel
+  namespace: controlcenter
+  labels:
+    app.kubernetes.io/name: device-panel
+    app.kubernetes.io/part-of: controlcenter
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: device-panel
+  strategy:
+    type: Recreate # SQLite 单写者：旧 Pod 必须完全退出再起新 Pod，避免双写
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: device-panel
+        app.kubernetes.io/part-of: controlcenter
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1654
+        runAsGroup: 1654
+        fsGroup: 1654
+      initContainers:
+        # PVC 首次挂载的目录归属因存储类而异：以 root 修一次权限，应用容器保持非 root
+        # 注意：Pod 级 securityContext 会作用于 init 容器，必须在此以容器级覆盖回 root，
+        # 否则非 root 身份对 root 属主目录 chown 报 EPERM、Pod 卡在 Init:Error
+        - name: init-data-permissions
+          image: busybox:1.36
+          command: ["chown", "-R", "1654:1654", "/data"]
+          securityContext:
+            runAsNonRoot: false
+            runAsUser: 0
+            runAsGroup: 0
+          volumeMounts:
+            - name: data
+              mountPath: /data
+      containers:
+        - name: device-panel
+          image: controlcenter-panel:local # 按环境替换为实际镜像引用
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8080
+          envFrom:
+            - configMapRef:
+                name: device-panel-config
+            - secretRef:
+                name: device-panel-secret
+          volumeMounts:
+            - name: data
+              mountPath: /data
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: "1"
+              memory: 512Mi
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: device-panel-data

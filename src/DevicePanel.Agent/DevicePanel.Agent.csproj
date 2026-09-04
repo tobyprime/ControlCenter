@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>DevicePanel.Agent</RootNamespace>
+    <AssemblyName>DevicePanel.Agent</AssemblyName>
+    <!-- NativeAOT：发布为静态单二进制（linux-musl-x64/linux-musl-arm64），目标机无需 .NET 运行时 -->
+    <PublishAot>true</PublishAot>
+    <StaticExecutable>true</StaticExecutable>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <StripSymbols>true</StripSymbols>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\DevicePanel.Protocol\DevicePanel.Protocol.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="DevicePanel.Agent.Tests" />
+  </ItemGroup>
+
+</Project>

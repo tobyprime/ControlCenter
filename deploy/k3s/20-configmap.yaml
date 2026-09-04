@@ -1,0 +1,14 @@
+# 非敏感部署参数。数据目录 /data 为镜像契约（Dockerfile 已内置，这里显式声明保持可读）。
+# PANEL_PUBLIC_BASE_URL / PANEL_AGENT_WSS_PATH 供部署文档与 agent 接入参考：
+# agent 接入地址 = PANEL_PUBLIC_BASE_URL + PANEL_AGENT_WSS_PATH（如 wss://panel.example.com/agent/ws）
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: device-panel-config
+  namespace: controlcenter
+  labels:
+    app.kubernetes.io/part-of: controlcenter
+data:
+  DEVICEPANEL__DATADIR: /data
+  PANEL_PUBLIC_BASE_URL: https://panel.example.com
+  PANEL_AGENT_WSS_PATH: /agent/ws
