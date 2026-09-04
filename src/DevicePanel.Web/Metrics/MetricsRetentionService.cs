@@ -10,17 +10,20 @@ namespace DevicePanel.Web.Metrics;
 public sealed class MetricsRetentionService : BackgroundService
 {
     private readonly SqliteConnectionFactory _connectionFactory;
+    private readonly IMetricValueStore _metricValues;
     private readonly MetricsOptions _options;
     private readonly TimeProvider _clock;
     private readonly ILogger<MetricsRetentionService> _logger;
 
     public MetricsRetentionService(
         SqliteConnectionFactory connectionFactory,
+        IMetricValueStore metricValues,
         MetricsOptions options,
         TimeProvider clock,
         ILogger<MetricsRetentionService>? logger = null)
     {
         _connectionFactory = connectionFactory;
+        _metricValues = metricValues;
         _options = options;
         _clock = clock;
         _logger = logger ?? NullLogger<MetricsRetentionService>.Instance;
@@ -59,11 +62,13 @@ public sealed class MetricsRetentionService : BackgroundService
         var store = new MetricsStore(_connectionFactory);
         var cutoff = _clock.GetUtcNow().AddDays(-Math.Max(1, _options.RetentionDays));
         var result = store.DeleteOlderThan(cutoff);
-        if (result is { DetailDeleted: > 0 } or { HourlyDeleted: > 0 } or { DailyDeleted: > 0 })
+        // 通用指标序列（metric_values，TOB-360）与一期明细同保留期
+        var genericDeleted = _metricValues.DeleteOlderThan(cutoff);
+        if (result is { DetailDeleted: > 0 } or { HourlyDeleted: > 0 } or { DailyDeleted: > 0 } || genericDeleted > 0)
         {
             _logger.LogInformation(
-                "指标过期清理完成：明细 {Detail} 条、小时聚合 {Hourly} 条、天聚合 {Daily} 条（保留 {Days} 天）",
-                result.DetailDeleted, result.HourlyDeleted, result.DailyDeleted, _options.RetentionDays);
+                "指标过期清理完成：明细 {Detail} 条、小时聚合 {Hourly} 条、天聚合 {Daily} 条、通用序列 {Generic} 条（保留 {Days} 天）",
+                result.DetailDeleted, result.HourlyDeleted, result.DailyDeleted, genericDeleted, _options.RetentionDays);
         }
 
         return await Task.FromResult(result);

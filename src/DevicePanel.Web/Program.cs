@@ -5,6 +5,7 @@ using DevicePanel.Web.Endpoints;
 using DevicePanel.Web.Infrastructure;
 using DevicePanel.Web.Logs;
 using DevicePanel.Web.Metrics;
+using DevicePanel.Web.Targets;
 using DevicePanel.Web.Terminal;
 
 // wwwroot 双候选解析：发布产物从仓库根目录运行时，静态文件回退到应用目录自带的 wwwroot。
@@ -72,7 +73,14 @@ builder.Services.AddSingleton(metricsOptions);
 builder.Services.AddSingleton<IMetricsStore, MetricsStore>();
 builder.Services.AddSingleton<IAgentMessageHandler, MetricsMessageHandler>();
 
-// 告警分发：规则（离线 / 阈值越限）→ 渠道抽象（QQ/napcat 首实现）→ 本地待发队列断线补发（无丢失）
+// 二期目标统一模型（TOB-360 模块 0）：目标注册表、指标键注册表、通用类型化指标序列
+builder.Services.AddSingleton<ITargetStore, TargetStore>();
+builder.Services.AddSingleton<IMetricKeyRegistry, MetricKeyRegistry>();
+builder.Services.AddSingleton<IMetricValueStore, MetricValueStore>();
+builder.Services.AddSingleton<IPanelSettingsStore, PanelSettingsStore>();
+// 指标键种子依赖迁移后的表结构：注册为 hosted service，但排在 DatabaseInitializer 之后启动（见下方）
+
+// 告警分发：规则实例（可插拔类型）→ 渠道抽象（QQ/napcat 首实现）→ 本地待发队列断线补发（无丢失）
 var alertOptions = new AlertOptions();
 builder.Configuration.GetSection(AlertOptions.SectionName).Bind(alertOptions);
 builder.Services.AddSingleton(alertOptions);
@@ -83,12 +91,21 @@ builder.Services.AddSingleton<IAlertOutboxStore, AlertOutboxStore>();
 builder.Services.AddSingleton<IAlertSettingsStore, AlertSettingsStore>();
 builder.Services.AddSingleton<IAlertThresholdStore, AlertThresholdStore>();
 builder.Services.AddSingleton<IAlertStateStore, AlertStateStore>();
+builder.Services.AddSingleton<IAlertRuleStore, AlertRuleStore>();
 builder.Services.AddSingleton<HttpClient>(_ => new HttpClient { Timeout = TimeSpan.FromSeconds(10) });
 builder.Services.AddSingleton<INotifier, NapcatNotifier>();
 builder.Services.AddSingleton<AlertDispatcher>();
-builder.Services.AddSingleton<IThresholdAlertEvaluator, ThresholdAlertEvaluator>();
 builder.Services.AddSingleton<AlertDispatchWorker>();
-builder.Services.AddSingleton<OfflineAlertScanner>();
+builder.Services.AddSingleton<AlertRuleDecisionApplier>();
+// 规则类型注册表：新增一种规则类型 = 实现 IAlertRuleTypeHandler + 在此注册（约束 B）
+builder.Services.AddSingleton<IAlertRuleTypeHandler, ThresholdAboveRuleHandler>();
+builder.Services.AddSingleton<IAlertRuleTypeHandler, ThresholdBelowRuleHandler>();
+builder.Services.AddSingleton<IAlertRuleTypeHandler, StatusMismatchRuleHandler>();
+builder.Services.AddSingleton<IAlertRuleTypeHandler, NoDataRuleHandler>();
+builder.Services.AddSingleton<IAlertRuleEngine, AlertRuleEngine>();
+builder.Services.AddSingleton<AlertRuleSeeder>();
+builder.Services.AddSingleton<AlertRuleScanService>();
+builder.Services.AddSingleton<AlertRuleMigrator>();
 
 // Web 终端：浏览器 ↔ agent 中继、留痕存储与 term.* 下行处理
 builder.Services.AddSingleton<ITerminalStore, TerminalStore>();
@@ -109,13 +126,18 @@ builder.Services.AddSingleton<IAgentMessageHandler, LogsErrorHandler>();
 
 builder.Services.AddHostedService<DatabaseInitializer>();
 builder.Services.AddHostedService<AccountSeeder>();
+builder.Services.AddHostedService<MetricKeySeeder>();
 
 // napcat 配置种子依赖迁移后的表结构：必须在 DatabaseInitializer 之后、分发 worker 之前执行
 builder.Services.AddHostedService<AlertSettingsSeeder>();
 
+// 一期告警迁移（阈值/离线 → 规则实例 + 状态搬运）：必须在 DatabaseInitializer 之后、
+// 规则扫描与分发 worker 之前执行，且早于任何指标评估（保证 agent 一上线规则即就绪）
+builder.Services.AddHostedService(sp => sp.GetRequiredService<AlertRuleMigrator>());
+
 // 告警分发 worker 依赖迁移完成后的表结构：必须排在 DatabaseInitializer 之后启动
 builder.Services.AddHostedService(sp => sp.GetRequiredService<AlertDispatchWorker>());
-builder.Services.AddHostedService(sp => sp.GetRequiredService<OfflineAlertScanner>());
+builder.Services.AddHostedService(sp => sp.GetRequiredService<AlertRuleScanService>());
 
 // 清理任务依赖迁移完成后的表结构：必须排在 DatabaseInitializer 之后启动
 builder.Services.AddSingleton<MetricsRetentionService>();
@@ -137,7 +159,10 @@ app.MapHealthEndpoints();
 app.MapAuthEndpoints();
 app.MapDeviceEndpoints();
 app.MapMetricsEndpoints();
+app.MapTargetEndpoints();
+app.MapTargetSeriesEndpoints();
 app.MapAlertEndpoints();
+app.MapAlertRuleEndpoints();
 app.MapTerminalEndpoints();
 app.MapLogEndpoints();
 app.MapAgentWsEndpoints();

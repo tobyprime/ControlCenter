@@ -40,7 +40,8 @@ public static class DeviceEndpoints
 
         devices.MapPost("/", (
             [FromBody] CreateDeviceRequest request,
-            IDeviceRegistry registry) =>
+            IDeviceRegistry registry,
+            Alerting.AlertRuleSeeder alertRuleSeeder) =>
         {
             if (!TryNormalize(request.Name, request.Tags, out var name, out var tags, out var error))
             {
@@ -48,6 +49,16 @@ public static class DeviceEndpoints
             }
 
             var created = registry.Create(name, tags);
+            try
+            {
+                // 设备目标与默认告警规则（阈值上限 ×3 + 心跳无数据）随创建落地，与一期离线/阈值行为对齐
+                alertRuleSeeder.EnsureForDevice(created.Device.Id, created.Device.Name);
+            }
+            catch (Exception)
+            {
+                // 种子失败不阻断设备创建：设备台账先行，规则缺失仅告警侧降级（迁移器/重启后可补齐）
+            }
+
             return Results.Json(ToCreatedResponse(created.Device, created.AgentToken), statusCode: StatusCodes.Status201Created);
         });
 

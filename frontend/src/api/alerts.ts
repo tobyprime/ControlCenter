@@ -18,18 +18,6 @@ export interface AlertSettingsInput {
   targetId?: string
 }
 
-export interface ThresholdOverride {
-  deviceId: number
-  deviceName: string
-  metric: string
-  value: number
-}
-
-export interface AlertThresholds {
-  global: Record<string, number>
-  overrides: ThresholdOverride[]
-}
-
 export interface QueueItem {
   id: number
   createdAtUtc: string
@@ -45,14 +33,41 @@ export interface AlertQueue {
   items: QueueItem[]
 }
 
-export const METRIC_OPTIONS = [
-  { value: 'cpu', label: 'CPU 使用率' },
-  { value: 'mem', label: '内存使用率' },
-  { value: 'disk', label: '磁盘使用率' },
-]
+export interface AlertRuleParamDescriptor {
+  name: string
+  type: 'number' | 'string'
+  required: boolean
+  defaultValue: string | null
+  description: string
+}
 
-export function metricLabel(metric: string): string {
-  return METRIC_OPTIONS.find((option) => option.value === metric)?.label ?? metric
+export interface AlertRuleType {
+  type: string
+  displayName: string
+  description: string
+  requiresMetric: boolean
+  allowsNullMetric: boolean
+  paramDescriptors: AlertRuleParamDescriptor[]
+}
+
+export interface AlertRule {
+  id: number
+  targetId: number
+  targetName: string
+  metric: string | null
+  metricDisplayName: string | null
+  ruleType: string
+  paramsJson: string
+  enabled: boolean
+  updatedAtUtc: string
+}
+
+export interface AlertRuleInput {
+  targetId: number
+  metric: string | null
+  ruleType: string
+  params: Record<string, number | string>
+  enabled: boolean
 }
 
 async function request<T>(input: string, init?: RequestInit): Promise<T> {
@@ -70,7 +85,9 @@ async function request<T>(input: string, init?: RequestInit): Promise<T> {
     } catch {
       // 忽略非 JSON 响应体
     }
-    throw new Error(message)
+    const error = new Error(message) as Error & { status?: number }
+    error.status = response.status
+    throw error
   }
   if (response.status === 204) {
     return undefined as T
@@ -89,28 +106,40 @@ export function saveAlertSettings(input: AlertSettingsInput): Promise<void> {
   })
 }
 
-export function fetchAlertThresholds(): Promise<AlertThresholds> {
-  return request<AlertThresholds>('/api/alerts/thresholds')
-}
-
-export function saveGlobalThreshold(metric: string, value: number): Promise<void> {
-  return request<void>('/api/alerts/thresholds/global', {
-    method: 'PUT',
-    body: JSON.stringify({ metric, value }),
-  })
-}
-
-export function saveDeviceThreshold(deviceId: number, metric: string, value: number): Promise<void> {
-  return request<void>(`/api/alerts/thresholds/devices/${deviceId}`, {
-    method: 'PUT',
-    body: JSON.stringify({ metric, value }),
-  })
-}
-
-export function deleteDeviceThreshold(deviceId: number, metric: string): Promise<void> {
-  return request<void>(`/api/alerts/thresholds/devices/${deviceId}/${metric}`, { method: 'DELETE' })
-}
-
 export function fetchAlertQueue(): Promise<AlertQueue> {
   return request<AlertQueue>('/api/alerts/queue')
+}
+
+export function listRuleTypes(): Promise<AlertRuleType[]> {
+  return request<AlertRuleType[]>('/api/alerts/rules/types')
+}
+
+export function listRules(targetId?: number): Promise<{ items: AlertRule[] }> {
+  const query = targetId ? `?targetId=${targetId}` : ''
+  return request<{ items: AlertRule[] }>(`/api/alerts/rules${query}`)
+}
+
+export function createRule(input: AlertRuleInput): Promise<{ id: number }> {
+  return request<{ id: number }>('/api/alerts/rules', {
+    method: 'POST',
+    body: JSON.stringify(input),
+  })
+}
+
+export function updateRule(id: number, input: Partial<Omit<AlertRuleInput, 'targetId'>> & { targetId?: number }): Promise<void> {
+  return request<void>(`/api/alerts/rules/${id}`, {
+    method: 'PUT',
+    body: JSON.stringify(input),
+  })
+}
+
+export function setRuleEnabled(id: number, enabled: boolean): Promise<void> {
+  return request<void>(`/api/alerts/rules/${id}/enabled`, {
+    method: 'PUT',
+    body: JSON.stringify({ enabled }),
+  })
+}
+
+export function deleteRule(id: number): Promise<void> {
+  return request<void>(`/api/alerts/rules/${id}`, { method: 'DELETE' })
 }

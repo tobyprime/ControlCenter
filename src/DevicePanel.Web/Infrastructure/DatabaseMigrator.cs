@@ -23,23 +23,45 @@ public static class DatabaseMigrator
                 continue;
             }
 
-            using var transaction = connection.BeginTransaction();
-            using (var script = connection.CreateCommand())
+            ApplyOne(connection, version, sql);
+        }
+    }
+
+    /// <summary>升级到指定版本为止（含）。用于模拟旧版本库的增量升级路径（如一期库回填目标表）。</summary>
+    internal static void MigrateUpTo(SqliteConnection connection, string maxVersion)
+    {
+        EnsureMigrationsTable(connection);
+        var appliedVersions = LoadAppliedVersions(connection);
+
+        foreach (var (version, sql) in LoadEmbeddedMigrations())
+        {
+            if (appliedVersions.Contains(version) || string.CompareOrdinal(version, maxVersion) > 0)
             {
-                script.Transaction = transaction;
-                script.CommandText = sql;
-                script.ExecuteNonQuery();
+                continue;
             }
 
-            using var record = connection.CreateCommand();
-            record.Transaction = transaction;
-            record.CommandText = "INSERT INTO schema_migrations(version, applied_at_utc) VALUES ($version, $appliedAt)";
-            record.Parameters.AddWithValue("$version", version);
-            record.Parameters.AddWithValue("$appliedAt", DateTime.UtcNow.ToString("O"));
-            record.ExecuteNonQuery();
-
-            transaction.Commit();
+            ApplyOne(connection, version, sql);
         }
+    }
+
+    private static void ApplyOne(SqliteConnection connection, string version, string sql)
+    {
+        using var transaction = connection.BeginTransaction();
+        using (var script = connection.CreateCommand())
+        {
+            script.Transaction = transaction;
+            script.CommandText = sql;
+            script.ExecuteNonQuery();
+        }
+
+        using var record = connection.CreateCommand();
+        record.Transaction = transaction;
+        record.CommandText = "INSERT INTO schema_migrations(version, applied_at_utc) VALUES ($version, $appliedAt)";
+        record.Parameters.AddWithValue("$version", version);
+        record.Parameters.AddWithValue("$appliedAt", DateTime.UtcNow.ToString("O"));
+        record.ExecuteNonQuery();
+
+        transaction.Commit();
     }
 
     private static void EnsureMigrationsTable(SqliteConnection connection)

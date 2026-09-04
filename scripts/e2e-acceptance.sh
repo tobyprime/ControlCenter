@@ -244,14 +244,20 @@ if [ "$NAPCAT_OBSERVABLE" != "1" ]; then
   record "5-阈值越限告警" "SKIP" "远程模式：napcat 侧收件不可脚本观测——请在目标机施压（如 stress-ng）后人工核对 QQ/napcat 收到含设备名/指标/当前值的告警（checklist 验收 5）"
 else
   start_spinners
-  # 记录验收前的全局 CPU 阈值：验收 5 结束后还原，避免静默改变用户环境的告警灵敏度
-  ORIG_CPU_THR=$(curl -sf -b "$COOKIE" "$PANEL_BASE/api/alerts/thresholds" \
-    | python3 -c 'import sys,json;print(json.load(sys.stdin)["global"]["cpu"])') \
-    || { stop_spinners; die "读取当前全局 CPU 阈值失败"; }
+  # 设备目标 ID（TOB-360：规则挂在目标上）
+  TARGET_ID=$(curl -sf -b "$COOKIE" "$PANEL_BASE/api/targets" \
+    | DEV_ID="$DEV_ID" python3 -c 'import os,sys,json;print([t["id"] for t in json.load(sys.stdin) if t["deviceId"]==int(os.environ["DEV_ID"])][0])') \
+    || { stop_spinners; die "解析设备目标 ID 失败"; }
+  # 记录验收前设备的 CPU 越限规则参数：验收 5 结束后还原，避免静默改变用户环境的告警灵敏度（TOB-360：规则实例化）
+  CPU_RULE=$(curl -sf -b "$COOKIE" "$PANEL_BASE/api/alerts/rules?targetId=$TARGET_ID" \
+    | python3 -c 'import sys,json;rs=json.load(sys.stdin)["items"];print(next(json.dumps(r) for r in rs if r["metric"]=="cpu" and r["ruleType"]=="threshold_above"))') \
+    || { stop_spinners; die "读取设备 CPU 越限规则失败"; }
+  CPU_RULE_ID=$(printf '%s' "$CPU_RULE" | python3 -c 'import sys,json;print(json.load(sys.stdin)["id"])')
   curl -sf -b "$COOKIE" -X PUT -H 'Content-Type: application/json' \
-    -d '{"metric":"cpu","value":5}' "$PANEL_BASE/api/alerts/thresholds/global" >/dev/null \
-    || { stop_spinners; die "设置全局 CPU 阈值失败"; }
-  echo "== 全局 CPU 阈值已设为 5%，等待持续越限告警（≤${CPU_WAIT}s）…"
+    -d "$(printf '%s' "$CPU_RULE" | python3 -c 'import sys,json;p=json.load(sys.stdin);q=json.loads(p["paramsJson"]);q["threshold"]=5;print(json.dumps({"params":q}))')" \
+    "$PANEL_BASE/api/alerts/rules/$CPU_RULE_ID" >/dev/null \
+    || { stop_spinners; die "设置 CPU 越限阈值 5% 失败"; }
+  echo "== CPU 越限阈值已设为 5%，等待持续越限告警（≤${CPU_WAIT}s）…"
   if poll_until "$CPU_WAIT" "napcat 收到指标越限告警" grep -q "指标越限告警" "$NAPCAT_LOG"; then
     ALERT_CPU=$(grep "指标越限告警" "$NAPCAT_LOG" | head -1)
     printf '%s' "$ALERT_CPU" | python3 -c '
@@ -267,7 +273,8 @@ print(f"  napcat 收到：{text}")
   fi
   stop_spinners
   curl -sf -b "$COOKIE" -X PUT -H 'Content-Type: application/json' \
-    -d "{\"metric\":\"cpu\",\"value\":$ORIG_CPU_THR}" "$PANEL_BASE/api/alerts/thresholds/global" >/dev/null
+    -d "$(printf '%s' "$CPU_RULE" | python3 -c 'import sys,json;p=json.load(sys.stdin);print(json.dumps({"params":json.loads(p["paramsJson"])}))')" \
+    "$PANEL_BASE/api/alerts/rules/$CPU_RULE_ID" >/dev/null
 fi
 
 # ---------- 验收 4：agent 停止 → 离线 + QQ 离线告警（napcat 正常，直发） ----------

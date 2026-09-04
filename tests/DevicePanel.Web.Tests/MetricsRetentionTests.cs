@@ -1,5 +1,6 @@
 using DevicePanel.Web.Devices;
 using DevicePanel.Web.Metrics;
+using DevicePanel.Web.Targets;
 using Microsoft.Extensions.Time.Testing;
 using Xunit;
 
@@ -11,10 +12,14 @@ public class MetricsRetentionTests : IDisposable
     private readonly TempSqliteDatabase _database = new();
     private readonly FakeTimeProvider _clock = new(new DateTimeOffset(2026, 9, 3, 12, 0, 0, TimeSpan.Zero));
     private readonly long _deviceId;
+    private readonly MetricKeyRegistry _keys;
+    private readonly MetricValueStore _genericValues;
 
     public MetricsRetentionTests()
     {
         _deviceId = new DeviceRegistry(_database.Factory, _clock).Create("保留期设备", []).Device.Id;
+        _keys = new MetricKeyRegistry(_database.Factory, _clock);
+        _genericValues = new MetricValueStore(_database.Factory, _keys);
     }
 
     public void Dispose() => _database.Dispose();
@@ -22,7 +27,25 @@ public class MetricsRetentionTests : IDisposable
     private MetricsRetentionService CreateService(int retentionDays = 30)
     {
         var options = new MetricsOptions { RetentionDays = retentionDays };
-        return new MetricsRetentionService(_database.Factory, options, _clock);
+        return new MetricsRetentionService(_database.Factory, _genericValues, options, _clock);
+    }
+
+    [Fact]
+    public async Task CleanupOnce_Deletes_Expired_Generic_Series_Too()
+    {
+        var targetStore = new TargetStore(_database.Factory, _clock);
+        var target = targetStore.GetByDeviceId(_deviceId) ?? targetStore.ProvisionForDevice(_deviceId, "保留期设备");
+        _keys.Register("players", MetricValueType.Number, "人", "在线玩家数");
+        var expired = _clock.GetUtcNow().AddDays(-45);
+        var recent = _clock.GetUtcNow().AddDays(-2);
+        _genericValues.Insert(target.Id, "players", expired, new MetricValue(expired, 1, null));
+        _genericValues.Insert(target.Id, "players", recent, new MetricValue(recent, 2, null));
+
+        var service = CreateService();
+        await service.CleanupOnceAsync(CancellationToken.None);
+
+        Assert.Single(_genericValues.QueryRaw(target.Id, "players", recent.AddMinutes(-1), recent.AddMinutes(1)));
+        Assert.Empty(_genericValues.QueryRaw(target.Id, "players", expired.AddMinutes(-1), expired.AddMinutes(1)));
     }
 
     [Fact]

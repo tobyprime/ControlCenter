@@ -6,8 +6,6 @@ namespace DevicePanel.Web.Endpoints;
 
 public sealed record SaveAlertSettingsRequest(string? BaseUrl, string? Token, string? TargetType, string? TargetId);
 
-public sealed record SaveThresholdRequest(string? Metric, double? Value);
-
 public static class AlertEndpoints
 {
     public static IEndpointRouteBuilder MapAlertEndpoints(this IEndpointRouteBuilder endpoints)
@@ -72,58 +70,6 @@ public static class AlertEndpoints
             return Results.NoContent();
         });
 
-        alerts.MapGet("/thresholds", (IAlertThresholdStore thresholds, IDeviceRegistry devices) =>
-        {
-            var names = devices.List().ToDictionary(d => d.Id, d => d.Name);
-            return Results.Ok(new
-            {
-                global = new Dictionary<string, double>
-                {
-                    [AlertMetrics.Cpu] = thresholds.GetGlobal(AlertMetrics.Cpu),
-                    [AlertMetrics.Mem] = thresholds.GetGlobal(AlertMetrics.Mem),
-                    [AlertMetrics.Disk] = thresholds.GetGlobal(AlertMetrics.Disk),
-                },
-                overrides = thresholds.ListOverrides()
-                    .Select(o => new
-                    {
-                        deviceId = o.DeviceId,
-                        deviceName = names.GetValueOrDefault(o.DeviceId, $"设备 {o.DeviceId}"),
-                        metric = o.Metric,
-                        value = o.ThresholdValue,
-                    })
-                    .ToList(),
-            });
-        });
-
-        alerts.MapPut("/thresholds/global", ([FromBody] SaveThresholdRequest request, IAlertThresholdStore thresholds) =>
-            !TryValidateThreshold(request, out var metric, out var value, out var error)
-                ? Results.BadRequest(new { error })
-                : SaveAndNoContent(() => thresholds.SetGlobal(metric, value)));
-
-        alerts.MapPut("/thresholds/devices/{deviceId:long}", (
-            long deviceId,
-            [FromBody] SaveThresholdRequest request,
-            IAlertThresholdStore thresholds,
-            IDeviceRegistry devices) =>
-        {
-            if (devices.Get(deviceId) is null)
-            {
-                return Results.NotFound(new { error = "设备不存在" });
-            }
-
-            return !TryValidateThreshold(request, out var metric, out var value, out var error)
-                ? Results.BadRequest(new { error })
-                : SaveAndNoContent(() => thresholds.SetOverride(deviceId, metric, value));
-        });
-
-        alerts.MapDelete("/thresholds/devices/{deviceId:long}/{metric}", (
-            long deviceId,
-            string metric,
-            IAlertThresholdStore thresholds) =>
-            thresholds.DeleteOverride(deviceId, metric)
-                ? Results.NoContent()
-                : Results.NotFound(new { error = "该设备没有此指标的覆盖配置" }));
-
         alerts.MapGet("/queue", (IAlertOutboxStore outbox) =>
         {
             var entries = outbox.List();
@@ -144,32 +90,5 @@ public static class AlertEndpoints
         });
 
         return endpoints;
-    }
-
-    private static IResult SaveAndNoContent(Action save)
-    {
-        save();
-        return Results.NoContent();
-    }
-
-    private static bool TryValidateThreshold(SaveThresholdRequest request, out string metric, out double value, out string error)
-    {
-        metric = (request.Metric ?? string.Empty).Trim();
-        value = 0;
-        error = string.Empty;
-        if (!AlertMetrics.IsKnown(metric))
-        {
-            error = $"不支持的指标：仅支持 {string.Join('/', AlertMetrics.Known)}";
-            return false;
-        }
-
-        if (request.Value is not { } parsed || parsed <= 0 || parsed > 100)
-        {
-            error = "阈值必须是 0-100 之间的百分比数值";
-            return false;
-        }
-
-        value = parsed;
-        return true;
     }
 }
