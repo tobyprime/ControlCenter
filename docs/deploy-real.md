@@ -52,8 +52,9 @@ Pages 域名打开的是独立托管前端（跨域配置见 §3）。
 >
 > **本次实际值（TOB-357 已落地）**：`<Tunnel 域名>`=`srv-control-panel.tobylinas.top`（清单 B 已完成）；
 > `<Pages 域名>`=`https://controlcenter-5qk.pages.dev`（清单 A 由部署方经 `wrangler pages` 完成，重名分配 -5qk 后缀）；
-> 预留自定义域 `control-panel.tobylinas.top`（用户绑定后，后端切 Cookie `Lax` 同站形态并收窄 CORS，一条 ConfigMap 更新）。
-> 后端 CORS 当前允许：`https://controlcenter-5qk.pages.dev,https://control-panel.tobylinas.top`。
+> 用户已绑自定义域 `control-center.tobylinas.top`（与预留名 `control-panel` 拼写不同，后端 CORS 随实际域名单独更新过一次）。
+> 后端 CORS 当前允许：`https://controlcenter-5qk.pages.dev,https://control-center.tobylinas.top`；
+> 会话 Cookie 维持 `None+Secure`（pages.dev 跨站与自定义域同站两形态均可用；确认仅用自定义域后可切 `Lax` 并收窄 CORS）。
 
 ### A. 建前端 Pages 项目
 
