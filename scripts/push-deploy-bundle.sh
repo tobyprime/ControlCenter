@@ -39,7 +39,12 @@ chmod +x "${BUNDLE}/deploy.sh"
 
 echo "==> 4/4 推送到 ${NODE_SSH}:${REMOTE_DIR}"
 ssh "${NODE_SSH}" "mkdir -p ${REMOTE_DIR}"
-rsync -az --info=progress2 "${BUNDLE}/" "${NODE_SSH}:${REMOTE_DIR}/"
+if ssh "${NODE_SSH}" "command -v rsync >/dev/null 2>&1"; then
+  rsync -az --info=progress2 "${BUNDLE}/" "${NODE_SSH}:${REMOTE_DIR}/"
+else
+  echo "（远端无 rsync，改用 scp）"
+  scp -q -r "${BUNDLE}"/. "${NODE_SSH}:${REMOTE_DIR}/"
+fi
 ssh "${NODE_SSH}" "cd ${REMOTE_DIR} && sha256sum -c sha256sums --quiet && echo '远端校验 OK' && ls -la"
 
 echo
