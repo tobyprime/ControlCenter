@@ -49,8 +49,17 @@ Pages 域名打开的是独立托管前端（跨域配置见 §3）。
 
 > 占位符约定：`<Tunnel 域名>`=后端公网域名（如 `cc.example.com`）；`<Pages 域名>`=Pages 分配的
 > `https://<项目名>.pages.dev`。完成后逐项验证。清单按顺序执行。
+>
+> **本次实际值（TOB-357 已落地）**：`<Tunnel 域名>`=`srv-control-panel.tobylinas.top`（清单 B 已完成）；
+> `<Pages 域名>`=`https://controlcenter-5qk.pages.dev`（清单 A 由部署方经 `wrangler pages` 完成，重名分配 -5qk 后缀）；
+> 预留自定义域 `control-panel.tobylinas.top`（用户绑定后，后端切 Cookie `Lax` 同站形态并收窄 CORS，一条 ConfigMap 更新）。
+> 后端 CORS 当前允许：`https://controlcenter-5qk.pages.dev,https://control-panel.tobylinas.top`。
 
 ### A. 建前端 Pages 项目
+
+> 本次由部署方以 CLI 完成（`wrangler pages project create controlcenter --production-branch=main` +
+> `wrangler pages deploy dist --project-name controlcenter --branch main`），结果即上注实际值；
+> 手动路径保留如下，供重建/迁移时参考。
 
 1. **操作位置**：Cloudflare Dashboard → Workers & Pages → Create → Pages → **Upload assets（直接上传）**；
    项目名填 **`controlcenter`**（若重名则换名，并通知部署方同步改后端 CORS 配置）。
