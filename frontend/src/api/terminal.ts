@@ -1,4 +1,4 @@
-import { apiUrl, wsUrl } from './base'
+import { apiFetch, wsUrl } from './base'
 
 export interface TerminalSessionInfo {
   id: string
@@ -34,7 +34,7 @@ export async function listTerminalSessions(
     query.set('to', toIso)
   }
   const suffix = query.size > 0 ? `?${query.toString()}` : ''
-  const response = await fetch(apiUrl(`/api/terminal/sessions${suffix}`))
+  const response = await apiFetch(`/api/terminal/sessions${suffix}`)
   if (!response.ok) {
     let message = `请求失败（${response.status}）`
     try {
@@ -51,7 +51,7 @@ export async function listTerminalSessions(
 }
 
 export async function listTerminalRecords(sessionId: string): Promise<TerminalRecordInfo[]> {
-  const response = await fetch(apiUrl(`/api/terminal/sessions/${encodeURIComponent(sessionId)}/records`))
+  const response = await apiFetch(`/api/terminal/sessions/${encodeURIComponent(sessionId)}/records`)
   if (!response.ok) {
     let message = `请求失败（${response.status}）`
     try {

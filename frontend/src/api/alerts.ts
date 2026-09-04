@@ -1,4 +1,4 @@
-import { apiUrl } from './base'
+import { apiFetch } from './base'
 
 export interface NapcatSettings {
   baseUrl: string | null
@@ -56,7 +56,7 @@ export function metricLabel(metric: string): string {
 }
 
 async function request<T>(input: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(apiUrl(input), {
+  const response = await apiFetch(input, {
     headers: { 'Content-Type': 'application/json' },
     ...init,
   })

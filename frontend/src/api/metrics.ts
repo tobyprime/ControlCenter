@@ -1,4 +1,4 @@
-import { apiUrl } from './base'
+import { apiFetch } from './base'
 
 export type Granularity = 'raw' | 'hour' | 'day'
 
@@ -26,7 +26,7 @@ export async function fetchMetricsSeries(
   granularity: 'auto' | Granularity = 'auto',
 ): Promise<MetricsSeries> {
   const query = new URLSearchParams({ from: fromIso, to: toIso, granularity })
-  const response = await fetch(apiUrl(`/api/metrics/${deviceId}/series?${query.toString()}`))
+  const response = await apiFetch(`/api/metrics/${deviceId}/series?${query.toString()}`)
   if (!response.ok) {
     let message = `请求失败（${response.status}）`
     try {

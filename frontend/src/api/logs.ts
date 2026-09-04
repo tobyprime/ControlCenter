@@ -1,4 +1,4 @@
-import { apiUrl } from './base'
+import { apiFetch } from './base'
 
 export type LogKind = 'systemd' | 'docker'
 
@@ -17,7 +17,7 @@ export interface LogLineInfo {
 }
 
 async function request<T>(path: string): Promise<T> {
-  const response = await fetch(apiUrl(path))
+  const response = await apiFetch(path)
   if (!response.ok) {
     let message = `请求失败（${response.status}）`
     try {
