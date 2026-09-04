@@ -10,7 +10,7 @@ namespace DevicePanel.Web.Alerting;
 /// alert_thresholds 全局行 ?? 内置 90）与心跳无数据（离线）规则。幂等：已有规则不重复建。
 /// 一期数据迁移（AlertRuleMigrator）与新建设备（DeviceEndpoints）共用此入口，保证行为一致。
 /// </summary>
-public sealed class AlertRuleSeeder
+public class AlertRuleSeeder
 {
     private readonly ITargetStore _targets;
     private readonly IAlertRuleStore _rules;
@@ -42,7 +42,7 @@ public sealed class AlertRuleSeeder
     /// true = 按设备生效阈值实例化（覆盖 ?? 全局 ?? 内置，一期迁移口径）；
     /// false = 全局默认阈值（新建设备口径）。
     /// </param>
-    public TargetInfo EnsureForDevice(long deviceId, string deviceName, bool useEffectiveThresholds = false)
+    public virtual TargetInfo EnsureForDevice(long deviceId, string deviceName, bool useEffectiveThresholds = false)
     {
         var target = _targets.ProvisionForDevice(deviceId, deviceName);
 

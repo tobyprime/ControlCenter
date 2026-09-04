@@ -1,4 +1,4 @@
--- 二期地基（TOB-360 模块 0）：
+-- 二期地基（TOB-360 模块 0，随基线 006_dashboard_layout 之后应用）：
 -- ① targets 统一设备与服务两类目标（device 目标挂接现有 devices 行，历史数据零迁移零重装）；
 -- ② metric_keys 指标键注册表（类型 + unit 展示元数据，核心不内置指标业务含义）；
 -- ③ metric_values 通用类型化指标序列（number 落 num_value，enum/string/bool 落 text_value）；

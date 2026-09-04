@@ -1,6 +1,9 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Logging;
 using Xunit;
 
 namespace DevicePanel.Web.Tests;
@@ -28,6 +31,77 @@ public class DeviceApiTests : IDisposable
         var response = await client.GetAsync("/api/devices");
 
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Create_Still_Succeeds_And_Logs_Warning_When_Rule_Seeder_Fails()
+    {
+        // 默认告警规则种子失败：设备创建不受阻（台账先行），但必须有 Warning 日志便于发现补配
+        var logs = new List<string>();
+        var factory = new Factory();
+        factory.TestServices = services =>
+        {
+            services.RemoveAll<Alerting.AlertRuleSeeder>();
+            services.AddSingleton<Alerting.AlertRuleSeeder>(new ThrowingRuleSeeder());
+            services.AddSingleton<ILoggerProvider>(new CollectingLoggerProvider(logs));
+        };
+        try
+        {
+            var client = factory.CreateClient();
+            await LoginAsync(client);
+
+            var create = await client.PostAsJsonAsync("/api/devices", new { name = "种子故障设备", tags = new[] { "告警" } });
+            Assert.Equal(HttpStatusCode.Created, create.StatusCode);
+
+            Assert.Contains(logs, line => line.Contains("Warning") && line.Contains("种子故障设备"));
+        }
+        finally
+        {
+            factory.Dispose();
+        }
+    }
+
+    private static async Task LoginAsync(HttpClient client)
+    {
+        var login = await client.PostAsJsonAsync("/api/auth/login", new { username = "admin", password = "test-password-1" });
+        login.EnsureSuccessStatusCode();
+    }
+
+    private sealed class ThrowingRuleSeeder : Alerting.AlertRuleSeeder
+    {
+        public ThrowingRuleSeeder() : base(null!, null!, null!, new Alerting.AlertOptions(), new Devices.AgentOptions())
+        {
+        }
+
+        public override Targets.TargetInfo EnsureForDevice(long deviceId, string deviceName, bool useEffectiveThresholds = false) =>
+            throw new InvalidOperationException("注入的种子故障");
+    }
+
+    private sealed class CollectingLoggerProvider : ILoggerProvider
+    {
+        private readonly List<string> _logs;
+
+        public CollectingLoggerProvider(List<string> logs) => _logs = logs;
+
+        public ILogger CreateLogger(string categoryName) => new CollectingLogger(_logs);
+
+        public void Dispose()
+        {
+        }
+
+        private sealed class CollectingLogger : ILogger
+        {
+            private readonly List<string> _logs;
+
+            public CollectingLogger(List<string> logs) => _logs = logs;
+
+            public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
+            public bool IsEnabled(LogLevel logLevel) => logLevel >= LogLevel.Warning;
+
+            public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter) =>
+                _logs.Add($"{logLevel}: {formatter(state, exception)}");
+        }
     }
 
     [Fact]

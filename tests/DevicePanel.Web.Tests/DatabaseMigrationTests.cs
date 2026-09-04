@@ -70,28 +70,15 @@ public class DatabaseMigrationTests : IClassFixture<TestAppFactory>
     [Fact]
     public void Migration_006_Applies_Cleanly_On_Phase1_Upgraded_Database()
     {
-        // 模拟一期升级库：仅标记 001-005 已应用（一期真实表结构无关本迁移，006 不依赖既有表），
-        // 重启迁移只补执行 006 且无错误
+        // 模拟一期升级库：真实应用 001-005（007 的 targets 回填依赖 devices 表，伪造版本记录不再构成合法升级态），
+        // 重启迁移只补执行 006 及之后版本且无错误
         var dataDir = Path.Combine(Path.GetTempPath(), "device-panel-upgrade-tests", Guid.NewGuid().ToString("N"));
         var factory = new SqliteConnectionFactory(new DatabaseOptions { DataDir = dataDir });
         try
         {
             using (var connection = factory.CreateOpenConnection())
             {
-                using var seed = connection.CreateCommand();
-                seed.CommandText = """
-                    CREATE TABLE schema_migrations (
-                        version        TEXT PRIMARY KEY,
-                        applied_at_utc TEXT NOT NULL
-                    );
-                    INSERT INTO schema_migrations(version, applied_at_utc) VALUES
-                        ('001_init', '2026-01-01T00:00:00.000Z'),
-                        ('002_devices', '2026-01-01T00:00:00.000Z'),
-                        ('003_metrics', '2026-01-01T00:00:00.000Z'),
-                        ('004_terminal_sessions', '2026-01-01T00:00:00.000Z'),
-                        ('005_alerting', '2026-01-01T00:00:00.000Z');
-                    """;
-                seed.ExecuteNonQuery();
+                DatabaseMigrator.MigrateUpTo(connection, "005_alerting");
             }
 
             using (var connection = factory.CreateOpenConnection())

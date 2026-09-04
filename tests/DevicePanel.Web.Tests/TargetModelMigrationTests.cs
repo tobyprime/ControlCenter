@@ -5,7 +5,7 @@ using Xunit;
 
 namespace DevicePanel.Web.Tests;
 
-/// <summary>迁移 006（TOB-360 模块 0）：目标统一表 + 指标注册表 + 通用指标序列 + 告警规则，现有设备回填为 device 目标。</summary>
+/// <summary>迁移 007（TOB-360 模块 0）：目标统一表 + 指标注册表 + 通用指标序列 + 告警规则，现有设备回填为 device 目标。</summary>
 public class TargetModelMigrationTests : IDisposable
 {
     private static readonly string RootDir = Path.Combine(Path.GetTempPath(), "device-panel-unit-tests");

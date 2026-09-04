@@ -4,6 +4,11 @@ using Microsoft.AspNetCore.Mvc;
 
 namespace DevicePanel.Web.Endpoints;
 
+/// <summary>设备端点日志类别（端点宿主为 static class，不能作 ILogger 泛型实参）。</summary>
+public sealed class DeviceEndpointsLog
+{
+}
+
 public sealed record DeviceResponse(
     long Id,
     string Name,
@@ -41,7 +46,8 @@ public static class DeviceEndpoints
         devices.MapPost("/", (
             [FromBody] CreateDeviceRequest request,
             IDeviceRegistry registry,
-            Alerting.AlertRuleSeeder alertRuleSeeder) =>
+            Alerting.AlertRuleSeeder alertRuleSeeder,
+            ILogger<DeviceEndpointsLog> logger) =>
         {
             if (!TryNormalize(request.Name, request.Tags, out var name, out var tags, out var error))
             {
@@ -54,9 +60,15 @@ public static class DeviceEndpoints
                 // 设备目标与默认告警规则（阈值上限 ×3 + 心跳无数据）随创建落地，与一期离线/阈值行为对齐
                 alertRuleSeeder.EnsureForDevice(created.Device.Id, created.Device.Name);
             }
-            catch (Exception)
+            catch (Exception ex)
             {
-                // 种子失败不阻断设备创建：设备台账先行，规则缺失仅告警侧降级（迁移器/重启后可补齐）
+                // 种子失败不阻断设备创建：设备台账先行。默认告警规则此时缺失，且迁移器为一次性
+                // flag（alert_rules_migrated_v1）控制、重启不会为此设备补建——需在告警页手动补配，日志留痕以便发现
+                logger.LogWarning(
+                    ex,
+                    "设备「{DeviceName}」（ID {DeviceId}）的默认告警规则种子失败，请在告警页手动补配规则",
+                    created.Device.Name,
+                    created.Device.Id);
             }
 
             return Results.Json(ToCreatedResponse(created.Device, created.AgentToken), statusCode: StatusCodes.Status201Created);
