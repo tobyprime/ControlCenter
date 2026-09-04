@@ -110,6 +110,51 @@ public class DashboardApiTests : IDisposable
         Assert.Equal(JsonValueKind.Object, payload.GetProperty("cards")[0].GetProperty("config").ValueKind);
     }
 
+    [Fact]
+    public async Task Layout_Put_Omitted_Config_Normalizes_To_Empty_Object()
+    {
+        var client = await AuthenticatedAsync();
+
+        var putResponse = await PutLayoutAsync(
+            client,
+            """{ "cards": [ { "id": "a", "type": "t-a", "sort": 0, "visible": true } ] }""");
+        Assert.Equal(HttpStatusCode.NoContent, putResponse.StatusCode);
+
+        var payload = await ReadJsonAsync(await client.GetAsync("/api/dashboard/layout"));
+        var config = payload.GetProperty("cards")[0].GetProperty("config");
+        Assert.Equal(JsonValueKind.Object, config.ValueKind);
+        Assert.Equal("{}", config.GetRawText());
+    }
+
+    [Fact]
+    public async Task Layout_Put_Id_Type_Length_At_Boundary()
+    {
+        var client = await AuthenticatedAsync();
+        var idAtLimit = new string('i', 128);
+        var typeOverLimit = new string('t', 129);
+        var idOverLimit = new string('i', 129);
+
+        // 恰好 128 字符：允许
+        var atLimit = await PutLayoutAsync(
+            client,
+            $$"""{ "cards": [ { "id": "{{idAtLimit}}", "type": "t", "sort": 0, "visible": true, "config": {} } ] }""");
+        Assert.Equal(HttpStatusCode.NoContent, atLimit.StatusCode);
+        var payload = await ReadJsonAsync(await client.GetAsync("/api/dashboard/layout"));
+        Assert.Equal(idAtLimit, payload.GetProperty("cards")[0].GetProperty("id").GetString());
+
+        // type 超 128 字符：400
+        var typeTooLong = await PutLayoutAsync(
+            client,
+            $$"""{ "cards": [ { "id": "a", "type": "{{typeOverLimit}}", "sort": 0, "visible": true, "config": {} } ] }""");
+        Assert.Equal(HttpStatusCode.BadRequest, typeTooLong.StatusCode);
+
+        // id 超 128 字符：400
+        var idTooLong = await PutLayoutAsync(
+            client,
+            $$"""{ "cards": [ { "id": "{{idOverLimit}}", "type": "t", "sort": 0, "visible": true, "config": {} } ] }""");
+        Assert.Equal(HttpStatusCode.BadRequest, idTooLong.StatusCode);
+    }
+
     [Theory]
     [InlineData("null")]
     [InlineData("[]")]
