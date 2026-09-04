@@ -9,6 +9,8 @@ interface ReportPayload {
   disk: number
   netRx: number
   netTx: number
+  /** 扩展指标（TOB-362）：温度/磁盘读写/内存实际数值，经注册 metric key 走同一管道 */
+  extra?: Record<string, number | string>
 }
 
 async function login(page: Page) {
@@ -96,6 +98,14 @@ test.describe('指标曲线（TOB-338）', () => {
       disk: 55,
       netRx: 102_400,
       netTx: 51_200,
+      extra: {
+        temp: 45.5,
+        temp_sensor: 'coretemp Package id 0',
+        disk_rx: 512_000,
+        disk_tx: 102_400,
+        mem_used: 4 * 1024 ** 3,
+        mem_total: 8 * 1024 ** 3,
+      },
     }))
     const highReports = [88, 93, 90, 95, 91].map((cpu) => ({
       cpu,
@@ -122,6 +132,18 @@ test.describe('指标曲线（TOB-338）', () => {
     // 网络收发为独立指标图（窄表 KV 模型：一个 key 一张图）
     await expect(page.locator('.chart-card', { hasText: '网络接收速率' }).locator('svg polyline')).toHaveCount(1)
     await expect(page.locator('.chart-card', { hasText: '网络发送速率' }).locator('svg polyline')).toHaveCount(1)
+
+    // TOB-362：温度/磁盘读写曲线（agent extra 经注册 key 入库）；内存卡副标题展示 used/total 实际数值；
+    // 温度卡副标题保留传感器名；字节速率轴换算单位展示
+    const memCard = page.locator('.chart-card', { hasText: '内存使用率' })
+    await expect(memCard.locator('.chart-subtitle')).toContainText('已用 4.0 GB / 共 8.0 GB')
+    const tempCard = page.locator('.chart-card', { hasText: /^温度/ })
+    await expect(tempCard.locator('svg polyline')).toHaveCount(1)
+    await expect(tempCard.locator('.chart-subtitle')).toContainText('传感器：coretemp Package id 0')
+    await expect(tempCard.locator('.chart-latest')).toContainText('45.5')
+    await expect(page.locator('.chart-card', { hasText: '磁盘读取速率' }).locator('svg polyline')).toHaveCount(1)
+    await expect(page.locator('.chart-card', { hasText: '磁盘读取速率' }).locator('.axis-label', { hasText: 'KB/s' }).first()).toBeVisible()
+    await expect(page.locator('.chart-card', { hasText: '磁盘写入速率' }).locator('svg polyline')).toHaveCount(1)
     await page.screenshot({ path: `${EVIDENCE_DIR}/metrics-low-load.png`, fullPage: true })
 
     // 切换到高负载设备：曲线数值随之切换（口径与设备对应）

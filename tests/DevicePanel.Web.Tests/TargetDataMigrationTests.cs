@@ -24,9 +24,9 @@ public class TargetDataMigrationTests
         ApplyMigrationsUpTo(connection, "006_dashboard_layout");
         InsertLegacyData(connection);
 
-        // —— 升级（006-008）——
+        // —— 升级（006 起）——
         ApplyMigrations(connection);
-        Assert.Equal(9L, Count(connection, "SELECT COUNT(*) FROM schema_migrations"));
+        Assert.Equal(10L, Count(connection, "SELECT COUNT(*) FROM schema_migrations"));
 
         // 设备 → device 目标（type 自动补齐，token 保留）
         Assert.Equal(("旧设备A", "device"), QueryTuple(connection, "SELECT name, type FROM targets WHERE id = 1"));
