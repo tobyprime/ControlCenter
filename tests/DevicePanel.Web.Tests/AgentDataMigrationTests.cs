@@ -30,7 +30,7 @@ public class AgentDataMigrationTests
 
         // —— 升级（013 起）——
         DatabaseMigrator.Migrate(connection);
-        Assert.Equal(14L, Count(connection, "SELECT COUNT(*) FROM schema_migrations"));
+        Assert.Equal(16L, Count(connection, "SELECT COUNT(*) FROM schema_migrations"));
 
         // device 目标 → agent：名字沿用、token hash 原样平移、last_seen 随 agent、关联建立
         Assert.Equal((1L, "在线设备", "hash-device-a", "2026-08-30T12:00:00.0000000+00:00"),
@@ -56,7 +56,7 @@ public class AgentDataMigrationTests
         using var database = new TempSqliteDatabase(applyMigrations: true);
         using var connection = database.CreateOpenConnection();
 
-        Assert.Equal(14L, Count(connection, "SELECT COUNT(*) FROM schema_migrations"));
+        Assert.Equal(16L, Count(connection, "SELECT COUNT(*) FROM schema_migrations"));
         Assert.Equal(0L, Count(connection, "SELECT COUNT(*) FROM agents"));
     }
 

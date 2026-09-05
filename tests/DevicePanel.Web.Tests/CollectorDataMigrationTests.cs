@@ -46,7 +46,7 @@ public class CollectorDataMigrationTests
 
         // —— 升级（014 起）——
         DatabaseMigrator.Migrate(connection);
-        Assert.Equal(14L, Count(connection, "SELECT COUNT(*) FROM schema_migrations"));
+        Assert.Equal(16L, Count(connection, "SELECT COUNT(*) FROM schema_migrations"));
 
         // 台账更名 collectors，行数据无损；type 列移除
         Assert.Equal(0L, Count(connection, "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'targets'"));
@@ -83,7 +83,7 @@ public class CollectorDataMigrationTests
         using var database = new TempSqliteDatabase(applyMigrations: true);
         using var connection = database.CreateOpenConnection();
 
-        Assert.Equal(14L, Count(connection, "SELECT COUNT(*) FROM schema_migrations"));
+        Assert.Equal(16L, Count(connection, "SELECT COUNT(*) FROM schema_migrations"));
         Assert.Equal(0L, Count(connection, "SELECT COUNT(*) FROM collectors"));
     }
 

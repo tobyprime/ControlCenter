@@ -60,7 +60,7 @@ internal interface ITerminalChannel
 /// 面板下行（agent 侧）默认实现：单条 WS 连接上的信封发送器。
 /// ClientWebSocket 不允许并发发送：节拍（心跳/指标）与终端泵的发送共用一把锁串行化。
 /// </summary>
-internal sealed class AgentDownlink : IAgentDownlink, ILogsDownlink
+internal sealed class AgentDownlink : IAgentDownlink, ILogsDownlink, IControllersDownlink
 {
     private readonly ClientWebSocket _socket;
     private readonly SemaphoreSlim _sendLock = new(1, 1);
@@ -133,6 +133,19 @@ internal sealed class AgentDownlink : IAgentDownlink, ILogsDownlink
         SendCoreAsync(AgentMessageTypes.MetricsError,
             () => AgentEnvelope.Create(AgentMessageTypes.MetricsError, seq,
                 JsonSerializer.SerializeToElement(new LogsErrorPayload(message), AgentJsonContext.Default.LogsErrorPayload)),
+            cancellationToken);
+
+    // ctrl.* 响应按请求 seq 回包（请求-响应关联，与 logs.* 一致）
+    public Task SendInvokeResponseAsync(long seq, string? message, CancellationToken cancellationToken) =>
+        SendCoreAsync(AgentMessageTypes.ControlInvokeResponse,
+            () => AgentEnvelope.Create(AgentMessageTypes.ControlInvokeResponse, seq,
+                JsonSerializer.SerializeToElement(new ControlInvokeResponsePayload(message), AgentJsonContext.Default.ControlInvokeResponsePayload)),
+            cancellationToken);
+
+    public Task SendControlErrorAsync(long seq, string message, CancellationToken cancellationToken) =>
+        SendCoreAsync(AgentMessageTypes.ControlError,
+            () => AgentEnvelope.Create(AgentMessageTypes.ControlError, seq,
+                JsonSerializer.SerializeToElement(new ControlErrorPayload(message), AgentJsonContext.Default.ControlErrorPayload)),
             cancellationToken);
 
     private Task SendCoreAsync(string type, Func<AgentEnvelope> envelopeFactory, CancellationToken ct) =>

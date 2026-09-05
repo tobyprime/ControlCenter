@@ -165,6 +165,12 @@ public static class DashboardEndpoints
             return false;
         }
 
+        if (type == DashboardCardCatalog.TypeControl
+            && !TryValidateControlConfig(config, subject, out error))
+        {
+            return false;
+        }
+
         card = new DashboardCard(id, type, sort, visibleElement.GetBoolean(), config);
         return true;
     }
@@ -212,6 +218,59 @@ public static class DashboardEndpoints
         {
             error = $"{subject} config.windowHours 必须是正数";
             return false;
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// 控制卡编排结构校验（与前端 parseControlCardConfig 的结构契约对齐）：
+    /// controllers 非空数组，每项 { collectorId 正整数, key 非空字符串 }；未知键仍透传（语义归前端）。
+    /// </summary>
+    private static bool TryValidateControlConfig(JsonElement config, string subject, [NotNullWhen(false)] out string? error)
+    {
+        error = null;
+        if (config.ValueKind != JsonValueKind.Object)
+        {
+            error = $"{subject} 为控制卡，必须携带 config（controllers）";
+            return false;
+        }
+
+        if (!config.TryGetProperty("controllers", out var controllers)
+            || controllers.ValueKind != JsonValueKind.Array
+            || controllers.GetArrayLength() == 0)
+        {
+            error = $"{subject} config.controllers 必须是非空数组";
+            return false;
+        }
+
+        var index = 0;
+        foreach (var entry in controllers.EnumerateArray())
+        {
+            index++;
+            if (entry.ValueKind != JsonValueKind.Object
+                || !entry.TryGetProperty("collectorId", out var collectorIdElement)
+                || collectorIdElement.ValueKind != JsonValueKind.Number
+                || !collectorIdElement.TryGetInt64(out var collectorId)
+                || collectorId <= 0)
+            {
+                error = $"{subject} config.controllers 第 {index} 项的 collectorId 必须是正整数";
+                return false;
+            }
+
+            if (!entry.TryGetProperty("key", out var keyElement)
+                || keyElement.ValueKind != JsonValueKind.String
+                || string.IsNullOrWhiteSpace(keyElement.GetString()))
+            {
+                error = $"{subject} config.controllers 第 {index} 项的 key 必须是非空字符串";
+                return false;
+            }
+
+            if (keyElement.GetString() is { Length: > MaxCardFieldLength })
+            {
+                error = $"{subject} config.controllers 第 {index} 项的 key 长度不能超过 {MaxCardFieldLength} 个字符";
+                return false;
+            }
         }
 
         return true;
