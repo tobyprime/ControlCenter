@@ -70,3 +70,11 @@ export function saveAlertSettings(input: AlertSettingsInput): Promise<void> {
 export function fetchAlertQueue(): Promise<AlertQueue> {
   return request<AlertQueue>('/api/alerts/queue')
 }
+
+export interface ActiveAlertCount {
+  count: number
+}
+
+export function fetchActiveAlertCount(): Promise<ActiveAlertCount> {
+  return request<ActiveAlertCount>('/api/alerts/active-count')
+}

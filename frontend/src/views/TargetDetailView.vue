@@ -26,6 +26,7 @@ import {
   type AlertRule,
   type AlertRuleTypeInfo,
 } from '@/api/alertRules'
+import { targetStatusInfo } from '@/utils/targetStatus'
 
 interface RangeOption {
   label: string
@@ -69,16 +70,6 @@ interface MappingDraft {
 const probeMappings = ref<MappingDraft[]>([])
 const probeSubmitting = ref(false)
 const probeError = ref('')
-
-// 服务状态来源是探针 status 指标：正常/异常，从未探测（无最近探测时间）单独提示
-function statusInfo(item: Target | null): { label: string; cls: string } {
-  if (!item) return { label: '—', cls: 'offline' }
-  if (item.type === 'service') {
-    if (item.online) return { label: '正常', cls: 'online' }
-    return item.lastSeenAtUtc ? { label: '异常', cls: 'alarm' } : { label: '未探测', cls: 'offline' }
-  }
-  return item.online ? { label: '在线', cls: 'online' } : { label: '离线', cls: 'offline' }
-}
 
 // 规则创建表单
 const showRuleForm = ref(false)
@@ -262,46 +253,57 @@ async function onToggleRule(rule: AlertRule) {
   }
 }
 
-async function onEditThreshold(rule: AlertRule) {
-  const raw = rule.parameters['threshold']
-  const input = window.prompt(`修改「${rule.metricDisplayName}」阈值（当前 ${String(raw)}）：`, String(raw ?? ''))
-  if (input === null) return
-  const value = Number(input)
-  if (Number.isNaN(value)) {
-    window.alert('请输入数值')
-    return
-  }
-  try {
-    await updateAlertRule(rule.id, {
-      parameters: { threshold: value },
-      sustainSeconds: rule.sustainSeconds,
-      repeatMinutes: rule.repeatMinutes,
-      enabled: rule.enabled,
-    })
-    await refresh(false)
-  } catch (e) {
-    errorMessage.value = e instanceof Error ? e.message : '修改规则失败'
-  }
+// 规则参数修改表单（替代 window.prompt）：mode 区分阈值/持续窗口，校验错误显示在弹窗内
+const showEditForm = ref(false)
+const editRule = ref<AlertRule | null>(null)
+const editMode = ref<'threshold' | 'sustain'>('threshold')
+const editValue = ref('')
+const editSubmitting = ref(false)
+const editError = ref('')
+
+const editFieldLabel = computed(() =>
+  editMode.value === 'threshold' ? '阈值' : '持续窗口（秒，0 = 判定即告警）',
+)
+
+function openEditThreshold(rule: AlertRule) {
+  editRule.value = rule
+  editMode.value = 'threshold'
+  editValue.value = String(rule.parameters['threshold'] ?? '')
+  editError.value = ''
+  showEditForm.value = true
 }
 
-async function onEditSustain(rule: AlertRule) {
-  const input = window.prompt(`修改「${rule.metricDisplayName}」规则的持续窗口（秒，当前 ${rule.sustainSeconds}）：`, String(rule.sustainSeconds))
-  if (input === null) return
-  const value = Number(input)
-  if (Number.isNaN(value) || value < 0) {
-    window.alert('请输入不小于 0 的秒数')
+function openEditSustain(rule: AlertRule) {
+  editRule.value = rule
+  editMode.value = 'sustain'
+  editValue.value = String(rule.sustainSeconds)
+  editError.value = ''
+  showEditForm.value = true
+}
+
+async function submitEdit() {
+  const rule = editRule.value
+  if (!rule || editSubmitting.value) return
+  const value = Number(editValue.value)
+  if (Number.isNaN(value) || (editMode.value === 'sustain' && value < 0)) {
+    editError.value = editMode.value === 'threshold' ? '请输入数值' : '请输入不小于 0 的秒数'
     return
   }
+  editSubmitting.value = true
+  editError.value = ''
   try {
     await updateAlertRule(rule.id, {
-      parameters: rule.parameters,
-      sustainSeconds: value,
+      parameters: editMode.value === 'threshold' ? { threshold: value } : rule.parameters,
+      sustainSeconds: editMode.value === 'sustain' ? value : rule.sustainSeconds,
       repeatMinutes: rule.repeatMinutes,
       enabled: rule.enabled,
     })
+    showEditForm.value = false
     await refresh(false)
   } catch (e) {
-    errorMessage.value = e instanceof Error ? e.message : '修改规则失败'
+    editError.value = e instanceof Error ? e.message : '修改规则失败'
+  } finally {
+    editSubmitting.value = false
   }
 }
 
@@ -385,9 +387,9 @@ onBeforeUnmount(() => {
       <div v-if="target" class="detail-title-row">
         <h1 class="detail-title">{{ target.name }}</h1>
         <span class="tag">{{ target.type === 'device' ? '设备' : '服务' }}</span>
-        <span class="status-badge" :class="statusInfo(target).cls">
+        <span class="status-badge" :class="targetStatusInfo(target).cls">
           <span class="status-dot"></span>
-          {{ statusInfo(target).label }}
+          {{ targetStatusInfo(target).label }}
         </span>
       </div>
     </div>
@@ -521,7 +523,7 @@ onBeforeUnmount(() => {
               <td>
                 <template v-if="rule.parameters['threshold'] !== undefined">
                   阈值 {{ rule.parameters['threshold'] }}
-                  <button type="button" class="link-button" @click="onEditThreshold(rule)">修改</button>
+                  <button type="button" class="link-button" @click="openEditThreshold(rule)">修改</button>
                 </template>
                 <template v-else-if="rule.parameters['minutes'] !== undefined">
                   {{ rule.parameters['minutes'] }} 分钟
@@ -532,7 +534,7 @@ onBeforeUnmount(() => {
               </td>
               <td>
                 {{ rule.sustainSeconds }} 秒
-                <button type="button" class="link-button" @click="onEditSustain(rule)">修改</button>
+                <button type="button" class="link-button" @click="openEditSustain(rule)">修改</button>
               </td>
               <td>
                 <span class="status-badge" :class="rule.enabled ? 'online' : 'offline'">
@@ -593,6 +595,29 @@ onBeforeUnmount(() => {
               <button type="button" class="ghost-button" @click="showRuleForm = false">取消</button>
               <button type="button" class="primary-button" :disabled="ruleSubmitting || usableRuleTypes.length === 0" @click="submitRule">
                 {{ ruleSubmitting ? '创建中…' : '创建规则' }}
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div v-if="showEditForm" class="dialog-mask" @click.self="showEditForm = false">
+          <div class="dialog">
+            <h2 class="dialog-title">修改规则</h2>
+            <p v-if="editRule" class="field-hint">{{ editRule.metricDisplayName }} · {{ ruleTypeLabel(editRule.ruleType) }}</p>
+            <label class="field">
+              <span class="field-label">{{ editFieldLabel }}</span>
+              <input
+                v-model="editValue"
+                type="number"
+                :min="editMode === 'sustain' ? '0' : undefined"
+                :step="editMode === 'threshold' ? 'any' : '1'"
+              />
+            </label>
+            <p v-if="editError" class="error-note">{{ editError }}</p>
+            <div class="dialog-actions">
+              <button type="button" class="ghost-button" @click="showEditForm = false">取消</button>
+              <button type="button" class="primary-button" :disabled="editSubmitting" @click="submitEdit">
+                {{ editSubmitting ? '保存中…' : '保存' }}
               </button>
             </div>
           </div>

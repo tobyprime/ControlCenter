@@ -11,6 +11,7 @@ import {
   type Target,
   type TargetType,
 } from '@/api/targets'
+import { targetStatusInfo } from '@/utils/targetStatus'
 
 const router = useRouter()
 const targets = ref<Target[]>([])
@@ -42,15 +43,6 @@ const formMappings = ref<MappingDraft[]>([])
 // token 展示（仅在创建/重置时返回一次）
 const tokenDialog = ref<{ targetName: string; token: string } | null>(null)
 const tokenCopied = ref(false)
-
-// 服务在线状态来源是探针 status 指标：正常/异常，从未探测（无最近探测时间）单独提示
-function statusInfo(target: Target): { label: string; cls: string } {
-  if (target.type === 'service') {
-    if (target.online) return { label: '正常', cls: 'online' }
-    return target.lastSeenAtUtc ? { label: '异常', cls: 'alarm' } : { label: '未探测', cls: 'offline' }
-  }
-  return target.online ? { label: '在线', cls: 'online' } : { label: '离线', cls: 'offline' }
-}
 
 async function refresh(showError = true) {
   try {
@@ -214,9 +206,9 @@ onBeforeUnmount(() => {
       <div v-for="target in targets" :key="target.id" class="device-card">
         <div class="device-head">
           <span class="device-name">{{ target.name }}</span>
-          <span class="status-badge" :class="statusInfo(target).cls">
+          <span class="status-badge" :class="targetStatusInfo(target).cls">
             <span class="status-dot"></span>
-            {{ statusInfo(target).label }}
+            {{ targetStatusInfo(target).label }}
           </span>
         </div>
         <div class="device-tags">

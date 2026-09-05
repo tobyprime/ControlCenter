@@ -135,7 +135,8 @@ async function refresh(): Promise<void> {
 
 onMounted(async () => {
   try {
-    devices.value = await listDevices()
+    // 日志经设备上的 agent 拉取：下拉只列 device 型目标，服务目标（HTTP 探针）无 agent 无日志
+    devices.value = (await listDevices()).filter((device) => device.type === 'device')
     if (devices.value.length > 0) {
       selectedDeviceId.value = devices.value[0].id
       await loadServices()
