@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import type { DashboardCard } from '@/api/dashboard'
-import type { Target } from '@/api/targets'
+import type { Collector } from '@/api/collectors'
 import type { MetricKeyInfo, MetricValueType } from '@/api/metrics'
 import {
   compatibleCardTypes,
@@ -18,7 +18,7 @@ import {
 // 直接改写编辑态 draft 卡片（保存布局时才随 config 落库），只读的 props 对象在编辑模型内。
 const props = defineProps<{
   card: DashboardCard
-  targets: Target[]
+  targets: Collector[]
   metricKeys: MetricKeyInfo[]
   // 按来源可用指标（TOB-374 ①）：targetId → 该来源可用指标集合，由页面预取传入
   availableByTarget: Record<number, MetricKeyInfo[]>

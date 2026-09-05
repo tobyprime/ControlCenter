@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
-import { listTargets, type Target } from '@/api/targets'
+import { listCollectors, type Collector } from '@/api/collectors'
 import { fetchTargetAvailableMetrics, listMetricKeys, type MetricKeyInfo } from '@/api/metrics'
 import {
   createAlertRule,
@@ -28,7 +28,7 @@ const savingNapcat = ref(false)
 const napcatMessage = ref('')
 const napcatError = ref('')
 
-const targets = ref<Target[]>([])
+const targets = ref<Collector[]>([])
 const metricKeys = ref<MetricKeyInfo[]>([])
 const ruleTypes = ref<AlertRuleTypeInfo[]>([])
 const rules = ref<AlertRule[]>([])
@@ -357,7 +357,7 @@ function parameterText(rule: AlertRule): string {
 onMounted(async () => {
   try {
     await Promise.all([loadSettings(), loadQueue(), listRuleTypes().then((types) => (ruleTypes.value = types))])
-    const [targetList, keys, ruleList] = await Promise.all([listTargets(), listMetricKeys(), listAlertRules()])
+    const [targetList, keys, ruleList] = await Promise.all([listCollectors(), listMetricKeys(), listAlertRules()])
     targets.value = targetList
     metricKeys.value = keys
     rules.value = ruleList

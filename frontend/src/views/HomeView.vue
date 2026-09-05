@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { fetchSession } from '@/router'
-import { listTargets, type Target } from '@/api/targets'
+import { listCollectors, type Collector } from '@/api/collectors'
 import { fetchActiveAlertCount } from '@/api/alerts'
 import { fetchDashboardLayout, saveDashboardLayout, type DashboardCard } from '@/api/dashboard'
 import {
@@ -33,12 +33,12 @@ fetchSession().then((session) => {
 })
 
 const overview = ref({ total: '—', online: '—', alerts: '—' })
-const targets = ref<Target[]>([])
+const targets = ref<Collector[]>([])
 let refreshTimer: number | undefined
 
 async function refreshOverview() {
   try {
-    const list: Target[] = await listTargets()
+    const list: Collector[] = await listCollectors()
     targets.value = list
     targetsReady.value = true
     overview.value.total = String(list.length)

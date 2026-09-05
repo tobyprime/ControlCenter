@@ -114,7 +114,7 @@ async function onResetToken(agent: Agent) {
 }
 
 async function onDelete(agent: Agent) {
-  if (agent.targetId) {
+  if (agent.collectorId) {
     errorMessage.value = '该 Agent 已关联目标，请在目标管理页删除'
     return
   }
@@ -206,7 +206,7 @@ onBeforeUnmount(() => {
           </span>
         </div>
         <div class="agent-tags">
-          <span v-if="agent.targetId" class="tag linked-tag">已关联目标 #{{ agent.targetId }}</span>
+          <span v-if="agent.collectorId" class="tag linked-tag">已关联目标 #{{ agent.collectorId }}</span>
           <span v-for="label in agent.labels" :key="label" class="tag">{{ label }}</span>
           <span v-if="agent.labels.length === 0" class="no-tags">无标签</span>
         </div>
