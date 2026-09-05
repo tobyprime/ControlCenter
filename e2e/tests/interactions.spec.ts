@@ -11,7 +11,7 @@ async function login(page: Page) {
 }
 
 async function createDeviceViaApi(page: Page, name: string): Promise<{ id: number }> {
-  const response = await page.request.post('/api/targets', {
+  const response = await page.request.post('/api/collectors', {
     data: { name, tags: ['E2E'] },
   })
   expect(response.ok()).toBeTruthy()
@@ -19,7 +19,7 @@ async function createDeviceViaApi(page: Page, name: string): Promise<{ id: numbe
 }
 
 test.describe('交互模式注册表（TOB-365）', () => {
-  test('模式清单与目标声明入口由注册表驱动，终端页支持 ?device 深链', async ({ page }) => {
+  test('模式清单与采集器声明入口由注册表驱动，终端页支持 ?device 深链', async ({ page }) => {
     await login(page)
 
     // 注册表清单：shell 终端注册为首个模式
@@ -30,7 +30,7 @@ test.describe('交互模式注册表（TOB-365）', () => {
     expect(shell, '注册表含 shell 模式').toBeTruthy()
     expect(shell!.displayName).toContain('Shell')
 
-    // 目标声明入口：设备目标声明 shell；未声明交互模式的断言随 TOB-361 service 目标补充
+    // 采集器声明入口：push 采集器（设备）声明 shell；未声明交互模式的断言随 TOB-361 补充
     const deviceName = `交互模式验收机 ${Date.now()}`
     const device = await createDeviceViaApi(page, deviceName)
     const declaredResponse = await page.request.get(`/api/devices/${device.id}/interaction-modes`)

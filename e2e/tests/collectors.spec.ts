@@ -18,17 +18,17 @@ async function expectNoHorizontalOverflow(page: Page, label: string) {
   expect.soft(overflow, `${label} 横向溢出应为 0`).toBeLessThanOrEqual(0)
 }
 
-test.describe('目标管理（TOB-337 → TOB-361 泛化）', () => {
-  test('新建目标 → 签发 token → 列表离线展示 → 编辑 → 重置 token → 删除', async ({ page }) => {
+test.describe('采集器管理（TOB-361 → 三期模块3 统一采集器）', () => {
+  test('新建 push 采集器 → 签发 token → 列表离线展示 → 编辑 → 重置 token → 删除', async ({ page }) => {
     await login(page)
 
     const deviceName = `E2E 测试机 ${Date.now()}`
 
-    await page.getByRole('link', { name: '目标管理' }).click()
-    await expect(page.getByRole('heading', { name: '目标管理' })).toBeVisible()
+    await page.getByRole('link', { name: '采集器' }).click()
+    await expect(page.getByRole('heading', { name: '采集器' })).toBeVisible()
 
-    // 新建设备
-    await page.getByRole('button', { name: '新建目标' }).click()
+    // 新建设备（push：轮询地址留空 = agent 上报模式）
+    await page.getByRole('button', { name: '新建采集器' }).click()
     await page.getByPlaceholder('如：机房A 边缘网关').fill(deviceName)
     await page.getByPlaceholder('如：机房A，网关，内网').fill('机房E2E，冒烟')
     await page.getByRole('button', { name: '保存' }).click()
@@ -37,28 +37,28 @@ test.describe('目标管理（TOB-337 → TOB-361 泛化）', () => {
     await expect(page.getByText(`「${deviceName}」的 agent token`)).toBeVisible()
     const tokenText = await page.locator('code.token-value').innerText()
     expect(tokenText.startsWith('dpk_')).toBe(true)
-    await page.screenshot({ path: `${EVIDENCE_DIR}/targets-token-dialog.png`, fullPage: true })
+    await page.screenshot({ path: `${EVIDENCE_DIR}/collectors-token-dialog.png`, fullPage: true })
     await page.getByRole('button', { name: '我已保存，关闭' }).click()
 
     // 列表：离线状态 + 标签
-    const card = page.locator('.device-card', { hasText: deviceName })
+    const card = page.locator('.collector-card', { hasText: deviceName })
     await expect(card).toBeVisible()
     await expect(card.getByText('离线')).toBeVisible()
     await expect(card.getByText('机房E2E')).toBeVisible()
     await expect(card.getByText('冒烟')).toBeVisible()
-    await page.screenshot({ path: `${EVIDENCE_DIR}/targets-list-offline.png`, fullPage: true })
+    await page.screenshot({ path: `${EVIDENCE_DIR}/collectors-list-offline.png`, fullPage: true })
 
     // 编辑
     await card.getByRole('button', { name: '编辑' }).click()
     await page.getByPlaceholder('如：机房A 边缘网关').fill(`${deviceName}（改）`)
     await page.getByPlaceholder('如：机房A，网关，内网').fill('机房E2E')
     await page.getByRole('button', { name: '保存' }).click()
-    await expect(page.locator('.device-card', { hasText: `${deviceName}（改）` })).toBeVisible()
+    await expect(page.locator('.collector-card', { hasText: `${deviceName}（改）` })).toBeVisible()
 
     // 重置 token：旧 token 提示、新 token 展示
     page.once('dialog', (dialog) => dialog.accept())
     await page
-      .locator('.device-card', { hasText: `${deviceName}（改）` })
+      .locator('.collector-card', { hasText: `${deviceName}（改）` })
       .getByRole('button', { name: '重置 Token' })
       .click()
     await expect(page.getByText(`「${deviceName}（改）」的 agent token`)).toBeVisible()
@@ -69,48 +69,46 @@ test.describe('目标管理（TOB-337 → TOB-361 泛化）', () => {
     // 删除（确认对话框）
     page.once('dialog', (dialog) => dialog.accept())
     await page
-      .locator('.device-card', { hasText: `${deviceName}（改）` })
+      .locator('.collector-card', { hasText: `${deviceName}（改）` })
       .getByRole('button', { name: '删除', exact: true })
       .click()
-    await expect(page.locator('.device-card', { hasText: deviceName })).toHaveCount(0)
+    await expect(page.locator('.collector-card', { hasText: deviceName })).toHaveCount(0)
   })
 
-  test('新建服务目标 → 探针自动探测 → 详情三指标与规则入口 → 删除', async ({ page }) => {
+  test('新建 pull 采集器 → 轮询自动探测 → 详情轮询配置与指标入口 → 删除', async ({ page }) => {
     await login(page)
-    await page.getByRole('link', { name: '目标管理' }).click()
-    await page.getByRole('button', { name: '新建目标' }).click()
+    await page.getByRole('link', { name: '采集器' }).click()
+    await page.getByRole('button', { name: '新建采集器' }).click()
 
-    // 类型切到服务：出现探针配置表单（URL / 间隔 / 提取映射）
+    // 填轮询地址 = pull 采集器（面板定时 GET，无需 agent），出现间隔与提取映射表单
     const serviceName = `E2E MC 服务 ${Date.now()}`
     await page.getByPlaceholder('如：机房A 边缘网关').fill(serviceName)
-    await page.getByRole('combobox').first().selectOption('service')
-    // 探针指向面板自身 healthz：2xx + JSON，首轮探测即成功
-    await page.getByPlaceholder('如：https://map.zenoxs.cn/tiles/settings.json').fill('http://127.0.0.1:5099/healthz')
+    await page.getByPlaceholder('如：https://mc.zenoxs.cn/api/status（留空 = agent 上报模式）').fill('http://127.0.0.1:5099/healthz')
     await page.getByRole('button', { name: '+ 添加映射' }).click()
     await page.getByPlaceholder('指标名，如 mc.players').fill('e2e.status')
     await page.getByPlaceholder('JSONPath，如 $.players.length()').fill('$.status')
     await page.locator('.mapping-row select').selectOption('string')
-    await page.screenshot({ path: `${EVIDENCE_DIR}/service-target-create-form.png`, fullPage: true })
+    await page.screenshot({ path: `${EVIDENCE_DIR}/pull-collector-create-form.png`, fullPage: true })
     await page.getByRole('button', { name: '保存' }).click()
 
-    // 服务目标不签发 token（无需 agent），直接出现在列表
-    const card = page.locator('.device-card', { hasText: serviceName })
+    // pull 采集器不签发 token（无需 agent），直接出现在列表
+    const card = page.locator('.collector-card', { hasText: serviceName })
     await expect(card).toBeVisible()
     await expect(page.getByText(/的 agent token/)).toHaveCount(0)
     await expect(card.getByRole('button', { name: '重置 Token' })).toHaveCount(0)
 
-    // 探针首轮即探测：状态转「正常」，最近探测时间刷新
+    // 首轮轮询即探测：状态转「正常」，最近探测时间刷新
     await expect(card.getByText('正常')).toBeVisible({ timeout: 20000 })
 
-    // 详情：探针配置卡片 + 三指标总览（服务状态 / 响应时间 / 提取指标）
+    // 详情：轮询配置卡片 + 指标总览（服务状态 / 响应时间 / 提取指标）
     await card.getByRole('button', { name: '详情' }).click()
-    await expect(page.getByRole('heading', { name: '探针配置' })).toBeVisible()
+    await expect(page.getByRole('heading', { name: '轮询配置' })).toBeVisible()
     await expect(page.locator('code', { hasText: 'http://127.0.0.1:5099/healthz' })).toBeVisible()
     const overview = page.locator('.overview-table')
     await expect(overview.locator('code', { hasText: 'status' }).first()).toBeVisible()
     await expect(overview.getByText('服务状态')).toBeVisible()
     await expect(overview.getByText('响应时间')).toBeVisible()
-    await page.screenshot({ path: `${EVIDENCE_DIR}/service-target-detail.png`, fullPage: true })
+    await page.screenshot({ path: `${EVIDENCE_DIR}/pull-collector-detail.png`, fullPage: true })
 
     // 提取指标与状态指标均可直接配置告警规则（规则类型随指标值类型过滤）
     await page.getByRole('button', { name: '新建规则' }).click()
@@ -118,18 +116,18 @@ test.describe('目标管理（TOB-337 → TOB-361 泛化）', () => {
     await page.getByRole('button', { name: '取消' }).click()
 
     // 删除清理
-    await page.getByRole('button', { name: '返回目标列表' }).click()
+    await page.getByRole('button', { name: '返回采集器列表' }).click()
     page.once('dialog', (dialog) => dialog.accept())
-    await page.locator('.device-card', { hasText: serviceName }).getByRole('button', { name: '删除', exact: true }).click()
-    await expect(page.locator('.device-card', { hasText: serviceName })).toHaveCount(0)
+    await page.locator('.collector-card', { hasText: serviceName }).getByRole('button', { name: '删除', exact: true }).click()
+    await expect(page.locator('.collector-card', { hasText: serviceName })).toHaveCount(0)
   })
 
-  test('375px 移动视口目标页响应式无横向溢出', async ({ page }) => {
+  test('375px 移动视口采集器页响应式无横向溢出', async ({ page }) => {
     await login(page)
     await page.setViewportSize({ width: 375, height: 720 })
-    await page.goto('/targets')
-    await expect(page.getByRole('heading', { name: '目标管理' })).toBeVisible()
-    await expectNoHorizontalOverflow(page, '目标页 375px')
-    await page.screenshot({ path: `${EVIDENCE_DIR}/targets-mobile-375.png`, fullPage: true })
+    await page.goto('/collectors')
+    await expect(page.getByRole('heading', { name: '采集器' })).toBeVisible()
+    await expectNoHorizontalOverflow(page, '采集器页 375px')
+    await page.screenshot({ path: `${EVIDENCE_DIR}/collectors-mobile-375.png`, fullPage: true })
   })
 })

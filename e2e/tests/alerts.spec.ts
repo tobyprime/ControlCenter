@@ -10,15 +10,15 @@ async function login(page: Page) {
   await expect(page.getByRole('heading', { name: /欢迎/ })).toBeVisible()
 }
 
-async function createTargetViaApi(page: Page, name: string): Promise<{ id: number; agentToken: string }> {
-  const response = await page.request.post('/api/targets', {
+async function createCollectorViaApi(page: Page, name: string): Promise<{ id: number; agentToken: string }> {
+  const response = await page.request.post('/api/collectors', {
     data: { name, tags: ['E2E'] },
   })
   expect(response.ok()).toBeTruthy()
   return (await response.json()) as { id: number; agentToken: string }
 }
 
-/** 模拟 agent 经 WS 上报一次指标，使目标拥有"已上报指标"（详情页按指标建规则的数据基础）。 */
+/** 模拟 agent 经 WS 上报一次指标，使采集器拥有"已上报指标"（详情页按指标建规则的数据基础）。 */
 async function reportOnceViaWebSocket(page: Page, token: string): Promise<void> {
   await page.evaluate(async (token) => {
     const ws = new WebSocket(`ws://${location.host}/agent/ws`)
@@ -76,17 +76,17 @@ test('告警规则页：迁移播种的全局规则可见、可新建/关闭/删
   await memRow.getByRole('button', { name: '删除' }).click()
   await expect(rulesCard.locator('tbody tr', { hasText: '内存使用率' }).filter({ hasText: '阈值下越限' })).toHaveCount(0)
 
-  // 目标详情页按已上报指标创建规则（验收 3/5：已上报指标可配规则）
-  const targetName = `规则目标-${Date.now()}`
-  const target = await createTargetViaApi(page, targetName)
-  await reportOnceViaWebSocket(page, target.agentToken)
-  await page.goto(`/targets/${target.id}`)
-  await expect(page.getByRole('heading', { name: targetName })).toBeVisible()
+  // 采集器详情页按已上报指标创建规则（验收 3/5：已上报指标可配规则）
+  const collectorName = `规则采集器-${Date.now()}`
+  const collector = await createCollectorViaApi(page, collectorName)
+  await reportOnceViaWebSocket(page, collector.agentToken)
+  await page.goto(`/collectors/${collector.id}`)
+  await expect(page.getByRole('heading', { name: collectorName })).toBeVisible()
   await page.getByRole('button', { name: '新建规则' }).click()
-  const targetDialog = page.locator('.dialog')
-  await targetDialog.locator('select').nth(1).selectOption({ label: '无数据' })
-  await targetDialog.locator('input[type="number"]').first().fill('10')
-  await targetDialog.getByRole('button', { name: '创建规则' }).click()
+  const detailDialog = page.locator('.dialog')
+  await detailDialog.locator('select').nth(1).selectOption({ label: '无数据' })
+  await detailDialog.locator('input[type="number"]').first().fill('10')
+  await detailDialog.getByRole('button', { name: '创建规则' }).click()
   const detailRuleRow = page.locator('.rules-table tbody tr', { hasText: '无数据' }).first()
   await expect(detailRuleRow).toBeVisible()
   await expect(detailRuleRow).toContainText('10 分钟')
