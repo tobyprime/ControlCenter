@@ -19,4 +19,12 @@
     <InternalsVisibleTo Include="DevicePanel.Agent.Tests" />
   </ItemGroup>
 
+  <ItemGroup Condition="'$(PublishAot)' == 'true'">
+    <!-- 静态单二进制（StaticExecutable）下动态加载器是桩实现，DllImport("libc") 运行期解析必然
+         报 "Dynamic loading not supported"（终端 PTY 即此症状）。Direct P/Invoke 把 libc 符号
+         （openpty/posix_spawn*/ioctl/fcntl/close/kill/waitpid）改为静态符号引用，由链接器从
+         静态 libc（musl 自含；glibc ≥2.34 亦然）直接解析。仅 NativeAOT 发布生效，普通构建不受影响。 -->
+    <DirectPInvoke Include="libc" />
+  </ItemGroup>
+
 </Project>

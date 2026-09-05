@@ -1,24 +1,43 @@
 using System.Globalization;
-using DevicePanel.Web.Devices;
+using DevicePanel.Web.Alerting;
 using DevicePanel.Web.Metrics;
+using DevicePanel.Web.Targets;
 using Microsoft.AspNetCore.Mvc;
 
 namespace DevicePanel.Web.Endpoints;
 
 public sealed record SeriesResponse(
-    long DeviceId,
+    long TargetId,
     string Granularity,
     string FromUtc,
     string ToUtc,
-    IReadOnlyList<SeriesPoint> Points);
+    IReadOnlyList<MetricSeriesResponse> Series);
 
-public sealed record SeriesPoint(string T, double Cpu, double Mem, double Disk, double NetRx, double NetTx);
+public sealed record MetricSeriesResponse(string Key, IReadOnlyList<SeriesPoint> Points);
+
+public sealed record SeriesPoint(string T, double? V);
+
+public sealed record MetricOverviewItem(
+    string Key,
+    string ValueType,
+    string DisplayName,
+    string Unit,
+    bool BuiltIn,
+    DateTimeOffset? LatestTimeUtc,
+    double? LatestValueNum,
+    string? LatestValueText);
+
+public sealed record RegisterMetricKeyRequest(string? Key, string? ValueType, string? DisplayName, string? Unit);
+
+public sealed record UpdateMetricKeyRequest(string? DisplayName, string? Unit);
 
 public static class MetricsEndpoints
 {
     public const string Raw = "raw";
     public const string Hour = "hour";
     public const string Day = "day";
+
+    private const int MaxSeriesKeys = 10;
 
     /// <summary>明细/聚合联动的默认策略：≤6h 看明细，≤10 天用小时聚合，更长用天聚合。</summary>
     public static string ResolveGranularity(TimeSpan span, string? requested)
@@ -37,18 +56,158 @@ public static class MetricsEndpoints
     {
         var metrics = endpoints.MapGroup("/api/metrics");
 
-        metrics.MapGet("/{deviceId:long}/series", (
-            long deviceId,
+        // MetricKey 注册表（约束 A）：新增一种指标 = 注册 key + 类型
+        metrics.MapGet("/keys", (IMetricKeyRegistry registry) => Results.Ok(registry.List().Select(ToKeyResponse)));
+
+        metrics.MapPost("/keys", ([FromBody] RegisterMetricKeyRequest request, IMetricKeyRegistry registry) =>
+        {
+            var key = MetricKeyRegistry.NormalizeKey(request.Key);
+            if (key is null)
+            {
+                return Results.BadRequest(new { error = "指标 key 不合法：小写字母开头，仅小写字母/数字/下划线，段间用 '.'，最长 64 字符" });
+            }
+
+            if (request.ValueType is null || !MetricValueTypeExtensions.TryFromStorage(request.ValueType.Trim(), out var valueType))
+            {
+                return Results.BadRequest(new { error = "值类型仅支持 number / enum / string / bool" });
+            }
+
+            if (!TryNormalizeDisplay(request.DisplayName, out var displayName, out var displayError))
+            {
+                return Results.BadRequest(new { error = displayError });
+            }
+
+            var unit = (request.Unit ?? string.Empty).Trim();
+            if (unit.Length > 20)
+            {
+                return Results.BadRequest(new { error = "单位不能超过 20 个字符" });
+            }
+
+            if (registry.Get(key) is not null)
+            {
+                return Results.BadRequest(new { error = $"指标 {key} 已注册" });
+            }
+
+            var registered = registry.Register(key, valueType, displayName, unit);
+            return Results.Json(ToKeyResponse(registered), statusCode: StatusCodes.Status201Created);
+        });
+
+        metrics.MapPut("/keys/{**key}", (string key, [FromBody] UpdateMetricKeyRequest request, IMetricKeyRegistry registry) =>
+        {
+            var normalized = MetricKeyRegistry.NormalizeKey(key);
+            if (normalized is null || registry.Get(normalized) is null)
+            {
+                return Results.NotFound(new { error = "指标不存在" });
+            }
+
+            if (!TryNormalizeDisplay(request.DisplayName, out var displayName, out var displayError))
+            {
+                return Results.BadRequest(new { error = displayError });
+            }
+
+            var unit = (request.Unit ?? string.Empty).Trim();
+            if (unit.Length > 20)
+            {
+                return Results.BadRequest(new { error = "单位不能超过 20 个字符" });
+            }
+
+            var updated = registry.UpdateDisplay(normalized, displayName, unit);
+            return updated is null ? Results.NotFound(new { error = "指标不存在" }) : Results.Ok(ToKeyResponse(updated));
+        });
+
+        metrics.MapDelete("/keys/{**key}", (
+            string key,
+            IMetricKeyRegistry registry,
+            IMetricsStore store,
+            IAlertRuleStore rules) =>
+        {
+            var normalized = MetricKeyRegistry.NormalizeKey(key);
+            if (normalized is null || registry.Get(normalized) is null)
+            {
+                return Results.NotFound(new { error = "指标不存在" });
+            }
+
+            if (registry.Get(normalized)!.BuiltIn)
+            {
+                return Results.BadRequest(new { error = "内置指标不可删除" });
+            }
+
+            if (store.HasAnySample(normalized))
+            {
+                return Results.BadRequest(new { error = "该指标已有上报数据，不可删除（可先停止上报并清理数据后再删除）" });
+            }
+
+            if (rules.CountByMetricKey(normalized) > 0)
+            {
+                return Results.BadRequest(new { error = "该指标已配置告警规则，请先删除规则" });
+            }
+
+            return registry.Delete(normalized) ? Results.NoContent() : Results.NotFound(new { error = "指标不存在" });
+        });
+
+        // 目标已上报指标总览（最新值 + 注册元数据），供目标详情与规则创建使用
+        metrics.MapGet("/{targetId:long}/overview", (long targetId, IMetricsStore store, IMetricKeyRegistry registry, ITargetRegistry targets) =>
+        {
+            if (targets.Get(targetId) is null)
+            {
+                return Results.NotFound(new { error = "目标不存在" });
+            }
+
+            var items = store.ListReportedKeys(targetId)
+                .Select(key =>
+                {
+                    var info = registry.Get(key);
+                    var latest = store.GetLatest(targetId, key);
+                    return new MetricOverviewItem(
+                        key,
+                        info?.ValueType.ToStorage() ?? "number",
+                        info?.DisplayName ?? key,
+                        info?.Unit ?? string.Empty,
+                        info?.BuiltIn ?? false,
+                        latest?.TimeUtc,
+                        latest?.ValueNum,
+                        latest?.ValueText);
+                })
+                .ToList();
+            return Results.Ok(items);
+        });
+
+        metrics.MapGet("/{targetId:long}/series", (
+            long targetId,
+            [FromQuery] string? keys,
             [FromQuery] string? from,
             [FromQuery] string? to,
             [FromQuery] string? granularity,
             IMetricsStore store,
-            IDeviceRegistry devices,
+            IMetricKeyRegistry registry,
+            ITargetRegistry targets,
             TimeProvider clock) =>
         {
-            if (devices.Get(deviceId) is null)
+            if (targets.Get(targetId) is null)
             {
-                return Results.NotFound(new { error = "设备不存在" });
+                return Results.NotFound(new { error = "目标不存在" });
+            }
+
+            if (string.IsNullOrWhiteSpace(keys))
+            {
+                return Results.BadRequest(new { error = "请指定要查询的指标 key（逗号分隔）" });
+            }
+
+            var requestedKeys = keys.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
+                .Distinct(StringComparer.Ordinal)
+                .Take(MaxSeriesKeys)
+                .ToList();
+            if (requestedKeys.Count == 0)
+            {
+                return Results.BadRequest(new { error = "请指定要查询的指标 key（逗号分隔）" });
+            }
+
+            foreach (var key in requestedKeys)
+            {
+                if (registry.Get(key) is null)
+                {
+                    return Results.BadRequest(new { error = $"指标 {key} 未注册" });
+                }
             }
 
             if (!TryParseRange(from, to, clock, out var fromUtc, out var toUtc, out var error))
@@ -62,27 +221,51 @@ public static class MetricsEndpoints
             }
 
             var resolved = ResolveGranularity(toUtc - fromUtc, granularity);
-            var points = resolved switch
+            var series = requestedKeys.Select(key =>
             {
-                Hour => store.QueryHourly(deviceId, fromUtc, toUtc).Select(ToPoint).ToList(),
-                Day => store.QueryDaily(deviceId, fromUtc, toUtc).Select(ToPoint).ToList(),
-                _ => store.QueryRaw(deviceId, fromUtc, toUtc).Select(ToPoint).ToList(),
-            };
+                var points = resolved switch
+                {
+                    Hour => store.QueryHourly(targetId, key, fromUtc, toUtc).Select(b => new SeriesPoint(FormatUtc(b.TimeUtc), b.Avg)),
+                    Day => store.QueryDaily(targetId, key, fromUtc, toUtc).Select(b => new SeriesPoint(FormatUtc(b.TimeUtc), b.Avg)),
+                    _ => store.QueryRaw(targetId, key, fromUtc, toUtc).Select(s => new SeriesPoint(FormatUtc(s.TimeUtc), s.ValueNum)),
+                };
+                return new MetricSeriesResponse(key, points.ToList());
+            });
 
             return Results.Ok(new SeriesResponse(
-                deviceId,
+                targetId,
                 resolved,
                 FormatUtc(fromUtc),
                 FormatUtc(toUtc),
-                points));
+                series.ToList()));
         });
 
         return endpoints;
     }
 
-    private static SeriesPoint ToPoint(MetricsPoint p) => new(FormatUtc(p.TimeUtc), p.Cpu, p.Mem, p.Disk, p.NetRx, p.NetTx);
+    private static object ToKeyResponse(MetricKeyInfo info) => new
+    {
+        key = info.Key,
+        valueType = info.ValueType.ToStorage(),
+        displayName = info.DisplayName,
+        unit = info.Unit,
+        builtIn = info.BuiltIn,
+        createdAtUtc = info.CreatedAtUtc,
+        updatedAtUtc = info.UpdatedAtUtc,
+    };
 
-    private static SeriesPoint ToPoint(MetricsBucket b) => new(FormatUtc(b.TimeUtc), b.CpuAvg, b.MemAvg, b.DiskAvg, b.NetRxAvg, b.NetTxAvg);
+    private static bool TryNormalizeDisplay(string? displayName, out string normalized, out string error)
+    {
+        normalized = (displayName ?? string.Empty).Trim();
+        if (normalized.Length is 0 or > 50)
+        {
+            error = "显示名必填且不能超过 50 个字符";
+            return false;
+        }
+
+        error = string.Empty;
+        return true;
+    }
 
     private static bool TryParseRange(string? from, string? to, TimeProvider clock, out DateTimeOffset fromUtc, out DateTimeOffset toUtc, out string error)
     {

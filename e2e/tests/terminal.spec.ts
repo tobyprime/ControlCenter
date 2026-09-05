@@ -19,7 +19,7 @@ async function expectNoHorizontalOverflow(page: Page, label: string) {
 }
 
 async function createDeviceViaApi(page: Page, name: string): Promise<{ id: number; agentToken: string }> {
-  const response = await page.request.post('/api/devices', {
+  const response = await page.request.post('/api/targets', {
     data: { name, tags: ['E2E'] },
   })
   expect(response.ok()).toBeTruthy()
@@ -122,6 +122,40 @@ test.describe('Web 终端（TOB-339）', () => {
     await page.screenshot({ path: `${EVIDENCE_DIR}/terminal-records.png`, fullPage: true })
 
     await expectNoHorizontalOverflow(page, '终端留痕 1280px')
+  })
+
+  test('服务目标不提供终端入口：下拉不列 service 目标，modes 声明为空（集成审查问题 1）', async ({ page }) => {
+    await login(page)
+
+    // device + service 目标各建一台：服务目标无 agent 通道，不应出现可连接终端入口
+    const deviceName = `终端可见设备 ${Date.now()}`
+    const serviceName = `探针服务目标 ${Date.now()}`
+    const device = await createDeviceViaApi(page, deviceName)
+    const serviceResponse = await page.request.post('/api/targets', {
+      data: {
+        type: 'service',
+        name: serviceName,
+        tags: ['E2E'],
+        probe: { url: 'http://127.0.0.1:9/health', mappings: [] },
+      },
+    })
+    expect(serviceResponse.ok()).toBeTruthy()
+    const service = (await serviceResponse.json()) as { id: number }
+
+    // API 契约：device 声明 shell，service 声明为空（端点返回 mode 对象数组）
+    const modeKeys = (modes: { key: string }[]) => modes.map((mode) => mode.key)
+    const serviceModes = await (await page.request.get(`/api/devices/${service.id}/interaction-modes`)).json()
+    expect(modeKeys(serviceModes)).toEqual([])
+    const deviceModes = await (await page.request.get(`/api/devices/${device.id}/interaction-modes`)).json()
+    expect(modeKeys(deviceModes)).toEqual(['shell'])
+
+    // 终端页下拉：服务目标不作为可连接选项出现
+    await page.getByRole('link', { name: 'Web 终端' }).click()
+    await expect(page.getByRole('heading', { name: 'Web 终端' })).toBeVisible()
+
+    const options = page.locator('select.device-select option')
+    await expect(options.filter({ hasText: serviceName })).toHaveCount(0)
+    await expect(options.filter({ hasText: deviceName })).toHaveCount(1)
   })
 
   test('终端页 375px 响应式', async ({ page }) => {

@@ -62,6 +62,23 @@ public class LinuxLogsSourceTests
     }
 
     [Fact]
+    public void Docker_Format_Argument_Carries_No_Shell_Quotes()
+    {
+        // _runner 直接 exec（不经 shell），格式串里的单引号会原样进入 docker 模板，
+        // 输出的容器名被引号包裹 → 面板校验拒绝「服务名包含非法字符」（TOB-357 线上故障）
+        var runner = new FakeCommandRunner();
+        runner.Enqueue("docker", exitCode: 0, stdout: "cloudflared\tcloudflare/cloudflared:latest\tUp 3 days");
+        var source = new LinuxLogsSource(runner);
+
+        var services = source.ListServices().Where(s => s.Kind == LogsSourceNames.KindDocker).ToList();
+
+        var dockerArgs = runner.Invocations.Single(i => i.FileName == "docker").Arguments;
+        Assert.DoesNotContain("'", dockerArgs);
+        Assert.Contains("{{.Names}}", dockerArgs);
+        Assert.Equal("cloudflared", Assert.Single(services).Name);
+    }
+
+    [Fact]
     public void Systemd_Source_Listed_Before_Docker_Source()
     {
         var runner = new FakeCommandRunner();

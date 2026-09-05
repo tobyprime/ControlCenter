@@ -21,6 +21,11 @@ spec:
         app.kubernetes.io/name: device-panel
         app.kubernetes.io/part-of: controlcenter
     spec:
+      # 镜像经本地导入分发（docker save → ctr import，无 registry 可拉取，见 docs/deploy-k3s.md）：
+      # 必须调度到已导入镜像的 control-plane 节点，否则 ImagePullBackOff。
+      # k3s 控制面默认无污点，无需 toleration；节点更换时同步修改此值。
+      nodeSelector:
+        kubernetes.io/hostname: toby-laptop-debian
       securityContext:
         runAsNonRoot: true
         runAsUser: 1654

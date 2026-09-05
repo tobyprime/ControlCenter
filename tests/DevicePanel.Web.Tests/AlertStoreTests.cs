@@ -4,7 +4,7 @@ using Xunit;
 
 namespace DevicePanel.Web.Tests;
 
-/// <summary>告警存储单元测试：待发队列 FIFO/失败记账/持久化、napcat 设置往返、阈值有效值合成、规则状态。</summary>
+/// <summary>告警存储单元测试：待发队列 FIFO/失败记账/持久化、napcat 设置往返、规则状态。</summary>
 public class AlertStoreTests : IDisposable
 {
     private readonly TempSqliteDatabase _db = new();
@@ -79,42 +79,6 @@ public class AlertStoreTests : IDisposable
         Assert.Equal("http://127.0.0.1:3001", updated.NapcatBaseUrl);
         Assert.Equal("private", updated.NapcatTargetType);
         Assert.Equal("10001", updated.NapcatTargetId);
-    }
-
-    [Fact]
-    public void Thresholds_Effective_Value_Prefers_Device_Override_Over_Global_Over_Builtin()
-    {
-        var store = new AlertThresholdStore(_db.Factory);
-
-        // 内置默认：cpu/mem/disk = 90
-        Assert.Equal(90, store.GetEffective(7, AlertMetrics.Cpu));
-        Assert.Equal(90, store.GetGlobal(AlertMetrics.Mem));
-
-        store.SetGlobal(AlertMetrics.Cpu, 75);
-        Assert.Equal(75, store.GetGlobal(AlertMetrics.Cpu));
-        Assert.Equal(75, store.GetEffective(7, AlertMetrics.Cpu));
-
-        store.SetOverride(7, AlertMetrics.Cpu, 50);
-        Assert.Equal(50, store.GetEffective(7, AlertMetrics.Cpu));
-        Assert.Equal(75, store.GetEffective(8, AlertMetrics.Cpu), precision: 6);
-
-        Assert.True(store.DeleteOverride(7, AlertMetrics.Cpu));
-        Assert.False(store.DeleteOverride(7, AlertMetrics.Cpu));
-        Assert.Equal(75, store.GetEffective(7, AlertMetrics.Cpu));
-    }
-
-    [Fact]
-    public void Thresholds_ListOverrides_Returns_All_With_Device_Scope()
-    {
-        var store = new AlertThresholdStore(_db.Factory);
-        store.SetOverride(3, AlertMetrics.Cpu, 60);
-        store.SetOverride(3, AlertMetrics.Disk, 80);
-        store.SetOverride(5, AlertMetrics.Mem, 70);
-
-        var overrides = store.ListOverrides();
-        Assert.Equal(3, overrides.Count);
-        Assert.Contains(overrides, o => o.DeviceId == 3 && o.Metric == AlertMetrics.Cpu && o.ThresholdValue == 60);
-        Assert.Contains(overrides, o => o.DeviceId == 5 && o.Metric == AlertMetrics.Mem && o.ThresholdValue == 70);
     }
 
     [Fact]

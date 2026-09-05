@@ -15,6 +15,8 @@ const props = defineProps<{
   yMax?: number
   /** 纵轴数值格式化（如字节速率换算单位） */
   formatValue?: (value: number) => string
+  /** 卡片副标题（如内存卡片的 used/total 实际数值、温度卡片的传感器名） */
+  subtitle?: string
 }>()
 
 const WIDTH = 640
@@ -108,6 +110,7 @@ const latestText = computed(() =>
     <div class="chart-head">
       <h2 class="chart-title">{{ title }}</h2>
       <span class="chart-unit">{{ unit }}</span>
+      <span v-if="subtitle" class="chart-subtitle">{{ subtitle }}</span>
     </div>
     <p v-if="!hasData" class="chart-empty">暂无数据</p>
     <svg v-else :viewBox="`0 0 ${WIDTH} ${HEIGHT}`" class="chart-svg" role="img" :aria-label="title">
@@ -173,6 +176,12 @@ const latestText = computed(() =>
 }
 
 .chart-unit {
+  color: var(--color-text-light);
+  font-size: 0.75rem;
+}
+
+.chart-subtitle {
+  margin-left: auto;
   color: var(--color-text-light);
   font-size: 0.75rem;
 }

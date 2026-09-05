@@ -3,40 +3,40 @@ using Microsoft.Data.Sqlite;
 
 namespace DevicePanel.Web.Metrics;
 
-/// <summary>明细数据点：一次 30s 采样的指标快照。</summary>
-public sealed record MetricsPoint(
-    DateTimeOffset TimeUtc,
-    double Cpu,
-    double Mem,
-    double Disk,
-    double NetRx,
-    double NetTx);
+/// <summary>明细数据点：一次采样的单指标值。number 存 ValueNum；enum/string 存 ValueText；bool 两者都存（ValueNum 0/1）。</summary>
+public sealed record MetricSample(DateTimeOffset TimeUtc, double? ValueNum, string? ValueText);
 
-/// <summary>聚合桶：Avg 为桶内样本平均值，Max 为桶内峰值（面板展示均值，保留峰值供告警/排查）。</summary>
-public sealed record MetricsBucket(
-    DateTimeOffset TimeUtc,
-    long SampleCount,
-    double CpuAvg, double CpuMax,
-    double MemAvg, double MemMax,
-    double DiskAvg, double DiskMax,
-    double NetRxAvg, double NetRxMax,
-    double NetTxAvg, double NetTxMax);
+/// <summary>聚合桶（仅 number 指标）：Avg 为桶内样本平均值，Max 为桶内峰值。</summary>
+public sealed record MetricBucket(DateTimeOffset TimeUtc, long SampleCount, double Avg, double? Max);
 
 public sealed record MetricsCleanupResult(long DetailDeleted, long HourlyDeleted, long DailyDeleted);
 
 /// <summary>
-/// 指标存储：明细（30s 采样）写入即增量更新小时/天级聚合桶（sum/count 求平均、max 取峰值），
+/// 指标存储（约束 A：语义中立 KV 模型）：按 (target, metric_key) 存任意已注册类型的指标序列。
+/// 明细（30s 采样）写入即增量更新小时/天级聚合桶（number 指标，sum/count 求平均、max 取峰值），
 /// 查询时按粒度取明细或聚合，两侧口径一致（聚合平均值 = 桶内明细样本均值）。
 /// </summary>
 public interface IMetricsStore
 {
-    void Insert(long deviceId, DateTimeOffset collectedAtUtc, MetricsPoint point);
+    void Insert(long targetId, string metricKey, MetricSample sample);
 
-    public IReadOnlyList<MetricsPoint> QueryRaw(long deviceId, DateTimeOffset fromUtc, DateTimeOffset toUtc);
+    IReadOnlyList<MetricSample> QueryRaw(long targetId, string metricKey, DateTimeOffset fromUtc, DateTimeOffset toUtc);
 
-    IReadOnlyList<MetricsBucket> QueryHourly(long deviceId, DateTimeOffset fromUtc, DateTimeOffset toUtc);
+    IReadOnlyList<MetricBucket> QueryHourly(long targetId, string metricKey, DateTimeOffset fromUtc, DateTimeOffset toUtc);
 
-    IReadOnlyList<MetricsBucket> QueryDaily(long deviceId, DateTimeOffset fromUtc, DateTimeOffset toUtc);
+    IReadOnlyList<MetricBucket> QueryDaily(long targetId, string metricKey, DateTimeOffset fromUtc, DateTimeOffset toUtc);
+
+    /// <summary>该 (target, metric) 的最新样本；从未上报返回 null。</summary>
+    MetricSample? GetLatest(long targetId, string metricKey);
+
+    /// <summary>目标已上报过的全部指标 key。</summary>
+    IReadOnlyList<string> ListReportedKeys(long targetId);
+
+    /// <summary>上报过指定指标的全部目标 id（全局无数据规则的扫描展开用）。</summary>
+    IReadOnlyList<long> ListTargetsReporting(string metricKey);
+
+    /// <summary>该指标是否有任何样本（注册表删除保护用）。</summary>
+    bool HasAnySample(string metricKey);
 
     MetricsCleanupResult DeleteOlderThan(DateTimeOffset cutoffUtc);
 }
@@ -50,10 +50,8 @@ public sealed class MetricsStore : IMetricsStore
         _connectionFactory = connectionFactory;
     }
 
-    public void Insert(long deviceId, DateTimeOffset collectedAtUtc, MetricsPoint point)
+    public void Insert(long targetId, string metricKey, MetricSample sample)
     {
-        var hourBucket = FormatBucket(TruncateToHour(collectedAtUtc));
-        var dayBucket = FormatBucket(TruncateToDay(collectedAtUtc));
         using var connection = _connectionFactory.CreateOpenConnection();
         using var transaction = connection.BeginTransaction();
 
@@ -61,38 +59,98 @@ public sealed class MetricsStore : IMetricsStore
         {
             detail.Transaction = transaction;
             detail.CommandText = """
-                INSERT INTO metric_samples(device_id, collected_at_utc, cpu_percent, mem_percent, disk_percent, net_rx_bps, net_tx_bps)
-                VALUES ($deviceId, $collectedAt, $cpu, $mem, $disk, $netRx, $netTx)
+                INSERT INTO metric_samples(target_id, metric_key, time_utc, value_num, value_text)
+                VALUES ($targetId, $metricKey, $timeUtc, $valueNum, $valueText)
                 """;
-            AddPointParameters(detail, deviceId, FormatUtc(collectedAtUtc), point);
+            AddSampleParameters(detail, targetId, metricKey, FormatUtc(sample.TimeUtc), sample);
             detail.ExecuteNonQuery();
         }
 
-        UpsertAggregate(connection, transaction, "metric_samples_hourly", deviceId, hourBucket, point);
-        UpsertAggregate(connection, transaction, "metric_samples_daily", deviceId, dayBucket, point);
+        if (sample.ValueNum is { } number)
+        {
+            UpsertAggregate(connection, transaction, "metric_samples_hourly", targetId, metricKey, FormatBucket(TruncateToHour(sample.TimeUtc)), number);
+            UpsertAggregate(connection, transaction, "metric_samples_daily", targetId, metricKey, FormatBucket(TruncateToDay(sample.TimeUtc)), number);
+        }
 
         transaction.Commit();
     }
 
-    public IReadOnlyList<MetricsPoint> QueryRaw(long deviceId, DateTimeOffset fromUtc, DateTimeOffset toUtc)
+    public IReadOnlyList<MetricSample> QueryRaw(long targetId, string metricKey, DateTimeOffset fromUtc, DateTimeOffset toUtc)
     {
         using var connection = _connectionFactory.CreateOpenConnection();
         using var command = connection.CreateCommand();
         command.CommandText = """
-            SELECT collected_at_utc, cpu_percent, mem_percent, disk_percent, net_rx_bps, net_tx_bps
+            SELECT time_utc, value_num, value_text
             FROM metric_samples
-            WHERE device_id = $deviceId AND collected_at_utc >= $from AND collected_at_utc <= $to
-            ORDER BY collected_at_utc
+            WHERE target_id = $targetId AND metric_key = $metricKey AND time_utc >= $from AND time_utc <= $to
+            ORDER BY time_utc, id
             """;
-        AddRangeParameters(command, deviceId, FormatUtc(fromUtc), FormatUtc(toUtc));
-        return ReadPoints(command);
+        AddRangeParameters(command, targetId, metricKey, FormatUtc(fromUtc), FormatUtc(toUtc));
+        return ReadSamples(command);
     }
 
-    public IReadOnlyList<MetricsBucket> QueryHourly(long deviceId, DateTimeOffset fromUtc, DateTimeOffset toUtc)
-        => QueryAggregate("metric_samples_hourly", deviceId, TruncateToHour(fromUtc), TruncateToHour(toUtc));
+    public IReadOnlyList<MetricBucket> QueryHourly(long targetId, string metricKey, DateTimeOffset fromUtc, DateTimeOffset toUtc)
+        => QueryAggregate("metric_samples_hourly", targetId, metricKey, TruncateToHour(fromUtc), TruncateToHour(toUtc));
 
-    public IReadOnlyList<MetricsBucket> QueryDaily(long deviceId, DateTimeOffset fromUtc, DateTimeOffset toUtc)
-        => QueryAggregate("metric_samples_daily", deviceId, TruncateToDay(fromUtc), TruncateToDay(toUtc));
+    public IReadOnlyList<MetricBucket> QueryDaily(long targetId, string metricKey, DateTimeOffset fromUtc, DateTimeOffset toUtc)
+        => QueryAggregate("metric_samples_daily", targetId, metricKey, TruncateToDay(fromUtc), TruncateToDay(toUtc));
+
+    public MetricSample? GetLatest(long targetId, string metricKey)
+    {
+        using var connection = _connectionFactory.CreateOpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT time_utc, value_num, value_text
+            FROM metric_samples
+            WHERE target_id = $targetId AND metric_key = $metricKey
+            ORDER BY time_utc DESC, id DESC
+            LIMIT 1
+            """;
+        AddLatestParameters(command, targetId, metricKey);
+        using var reader = command.ExecuteReader();
+        return reader.Read() ? ReadSample(reader) : null;
+    }
+
+    public IReadOnlyList<string> ListReportedKeys(long targetId)
+    {
+        var keys = new List<string>();
+        using var connection = _connectionFactory.CreateOpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = "SELECT DISTINCT metric_key FROM metric_samples WHERE target_id = $targetId ORDER BY metric_key";
+        command.Parameters.AddWithValue("$targetId", targetId);
+        using var reader = command.ExecuteReader();
+        while (reader.Read())
+        {
+            keys.Add(reader.GetString(0));
+        }
+
+        return keys;
+    }
+
+    public IReadOnlyList<long> ListTargetsReporting(string metricKey)
+    {
+        var targets = new List<long>();
+        using var connection = _connectionFactory.CreateOpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = "SELECT DISTINCT target_id FROM metric_samples WHERE metric_key = $metricKey ORDER BY target_id";
+        command.Parameters.AddWithValue("$metricKey", metricKey);
+        using var reader = command.ExecuteReader();
+        while (reader.Read())
+        {
+            targets.Add(reader.GetInt64(0));
+        }
+
+        return targets;
+    }
+
+    public bool HasAnySample(string metricKey)
+    {
+        using var connection = _connectionFactory.CreateOpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = "SELECT EXISTS(SELECT 1 FROM metric_samples WHERE metric_key = $metricKey)";
+        command.Parameters.AddWithValue("$metricKey", metricKey);
+        return Convert.ToInt64(command.ExecuteScalar()) != 0;
+    }
 
     public MetricsCleanupResult DeleteOlderThan(DateTimeOffset cutoffUtc)
     {
@@ -100,113 +158,98 @@ public sealed class MetricsStore : IMetricsStore
         using var connection = _connectionFactory.CreateOpenConnection();
         using var transaction = connection.BeginTransaction();
         var result = new MetricsCleanupResult(
-            DetailDeleted: ExecuteDelete(connection, transaction, "DELETE FROM metric_samples WHERE collected_at_utc < $cutoff", cutoff),
+            DetailDeleted: ExecuteDelete(connection, transaction, "DELETE FROM metric_samples WHERE time_utc < $cutoff", cutoff),
             HourlyDeleted: ExecuteDelete(connection, transaction, "DELETE FROM metric_samples_hourly WHERE bucket_start_utc < $cutoff", cutoff),
             DailyDeleted: ExecuteDelete(connection, transaction, "DELETE FROM metric_samples_daily WHERE bucket_start_utc < $cutoff", cutoff));
         transaction.Commit();
         return result;
     }
 
-    private IReadOnlyList<MetricsBucket> QueryAggregate(string table, long deviceId, DateTimeOffset fromUtc, DateTimeOffset toUtc)
+    private IReadOnlyList<MetricBucket> QueryAggregate(string table, long targetId, string metricKey, DateTimeOffset fromUtc, DateTimeOffset toUtc)
     {
         using var connection = _connectionFactory.CreateOpenConnection();
         using var command = connection.CreateCommand();
         command.CommandText = $"""
-            SELECT bucket_start_utc, sample_count,
-                   cpu_sum / sample_count, cpu_max,
-                   mem_sum / sample_count, mem_max,
-                   disk_sum / sample_count, disk_max,
-                   net_rx_sum / sample_count, net_rx_max,
-                   net_tx_sum / sample_count, net_tx_max
+            SELECT bucket_start_utc, sample_count, value_sum / sample_count, value_max
             FROM {table}
-            WHERE device_id = $deviceId AND bucket_start_utc >= $from AND bucket_start_utc <= $to
+            WHERE target_id = $targetId AND metric_key = $metricKey AND bucket_start_utc >= $from AND bucket_start_utc <= $to
             ORDER BY bucket_start_utc
             """;
-        AddRangeParameters(command, deviceId, FormatBucket(fromUtc), FormatBucket(toUtc));
-        var buckets = new List<MetricsBucket>();
+        AddRangeParameters(command, targetId, metricKey, FormatBucket(fromUtc), FormatBucket(toUtc));
+        var buckets = new List<MetricBucket>();
         using var reader = command.ExecuteReader();
         while (reader.Read())
         {
-            buckets.Add(new MetricsBucket(
+            buckets.Add(new MetricBucket(
                 DateTimeOffset.Parse(reader.GetString(0)),
                 reader.GetInt64(1),
-                reader.GetDouble(2), reader.GetDouble(3),
-                reader.GetDouble(4), reader.GetDouble(5),
-                reader.GetDouble(6), reader.GetDouble(7),
-                reader.GetDouble(8), reader.GetDouble(9),
-                reader.GetDouble(10), reader.GetDouble(11)));
+                reader.GetDouble(2),
+                reader.IsDBNull(3) ? (double?)null : reader.GetDouble(3)));
         }
 
         return buckets;
     }
 
     private static void UpsertAggregate(
-        SqliteConnection connection, SqliteTransaction transaction, string table, long deviceId, string bucket, MetricsPoint point)
+        SqliteConnection connection, SqliteTransaction transaction, string table, long targetId, string metricKey, string bucket, double value)
     {
         using var command = connection.CreateCommand();
         command.Transaction = transaction;
         command.CommandText = $"""
-            INSERT INTO {table}(device_id, bucket_start_utc, sample_count,
-                                cpu_sum, cpu_max, mem_sum, mem_max, disk_sum, disk_max,
-                                net_rx_sum, net_rx_max, net_tx_sum, net_tx_max)
-            VALUES ($deviceId, $bucket, 1, $cpu, $cpu, $mem, $mem, $disk, $disk, $netRx, $netRx, $netTx, $netTx)
-            ON CONFLICT(device_id, bucket_start_utc) DO UPDATE SET
+            INSERT INTO {table}(target_id, metric_key, bucket_start_utc, sample_count, value_sum, value_max)
+            VALUES ($targetId, $metricKey, $bucket, 1, $value, $value)
+            ON CONFLICT(target_id, metric_key, bucket_start_utc) DO UPDATE SET
                 sample_count = sample_count + 1,
-                cpu_sum    = cpu_sum    + excluded.cpu_sum,
-                cpu_max    = MAX(cpu_max,    excluded.cpu_max),
-                mem_sum    = mem_sum    + excluded.mem_sum,
-                mem_max    = MAX(mem_max,    excluded.mem_max),
-                disk_sum   = disk_sum   + excluded.disk_sum,
-                disk_max   = MAX(disk_max,   excluded.disk_max),
-                net_rx_sum = net_rx_sum + excluded.net_rx_sum,
-                net_rx_max = MAX(net_rx_max, excluded.net_rx_max),
-                net_tx_sum = net_tx_sum + excluded.net_tx_sum,
-                net_tx_max = MAX(net_tx_max, excluded.net_tx_max)
+                value_sum = value_sum + excluded.value_sum,
+                value_max = MAX(value_max, excluded.value_max)
             """;
-        command.Parameters.AddWithValue("$deviceId", deviceId);
+        command.Parameters.AddWithValue("$targetId", targetId);
+        command.Parameters.AddWithValue("$metricKey", metricKey);
         command.Parameters.AddWithValue("$bucket", bucket);
-        command.Parameters.AddWithValue("$cpu", point.Cpu);
-        command.Parameters.AddWithValue("$mem", point.Mem);
-        command.Parameters.AddWithValue("$disk", point.Disk);
-        command.Parameters.AddWithValue("$netRx", point.NetRx);
-        command.Parameters.AddWithValue("$netTx", point.NetTx);
+        command.Parameters.AddWithValue("$value", value);
         command.ExecuteNonQuery();
     }
 
-    private static IReadOnlyList<MetricsPoint> ReadPoints(SqliteCommand command)
+    private static IReadOnlyList<MetricSample> ReadSamples(SqliteCommand command)
     {
-        var points = new List<MetricsPoint>();
+        var samples = new List<MetricSample>();
         using var reader = command.ExecuteReader();
         while (reader.Read())
         {
-            points.Add(new MetricsPoint(
-                DateTimeOffset.Parse(reader.GetString(0)),
-                reader.GetDouble(1),
-                reader.GetDouble(2),
-                reader.GetDouble(3),
-                reader.GetDouble(4),
-                reader.GetDouble(5)));
+            samples.Add(ReadSample(reader));
         }
 
-        return points;
+        return samples;
     }
 
-    private static void AddPointParameters(SqliteCommand command, long deviceId, string collectedAt, MetricsPoint point)
+    private static MetricSample ReadSample(SqliteDataReader reader)
     {
-        command.Parameters.AddWithValue("$deviceId", deviceId);
-        command.Parameters.AddWithValue("$collectedAt", collectedAt);
-        command.Parameters.AddWithValue("$cpu", point.Cpu);
-        command.Parameters.AddWithValue("$mem", point.Mem);
-        command.Parameters.AddWithValue("$disk", point.Disk);
-        command.Parameters.AddWithValue("$netRx", point.NetRx);
-        command.Parameters.AddWithValue("$netTx", point.NetTx);
+        var timeUtc = DateTimeOffset.Parse(reader.GetString(0));
+        var valueNum = reader.IsDBNull(1) ? (double?)null : reader.GetDouble(1);
+        var valueText = reader.IsDBNull(2) ? null : reader.GetString(2);
+        return new MetricSample(timeUtc, valueNum, valueText);
     }
 
-    private static void AddRangeParameters(SqliteCommand command, long deviceId, string from, string to)
+    private static void AddSampleParameters(SqliteCommand command, long targetId, string metricKey, string timeUtc, MetricSample sample)
     {
-        command.Parameters.AddWithValue("$deviceId", deviceId);
-        command.Parameters.AddWithValue("$from", from);
-        command.Parameters.AddWithValue("$to", to);
+        command.Parameters.AddWithValue("$targetId", targetId);
+        command.Parameters.AddWithValue("$metricKey", metricKey);
+        command.Parameters.AddWithValue("$timeUtc", timeUtc);
+        command.Parameters.AddWithValue("$valueNum", (object?)sample.ValueNum ?? DBNull.Value);
+        command.Parameters.AddWithValue("$valueText", (object?)sample.ValueText ?? DBNull.Value);
+    }
+
+    private static void AddRangeParameters(SqliteCommand command, long targetId, string metricKey, string? from, string? to)
+    {
+        AddLatestParameters(command, targetId, metricKey);
+        command.Parameters.AddWithValue("$from", (object?)from ?? DBNull.Value);
+        command.Parameters.AddWithValue("$to", (object?)to ?? DBNull.Value);
+    }
+
+    private static void AddLatestParameters(SqliteCommand command, long targetId, string metricKey)
+    {
+        command.Parameters.AddWithValue("$targetId", targetId);
+        command.Parameters.AddWithValue("$metricKey", metricKey);
     }
 
     private static long ExecuteDelete(SqliteConnection connection, SqliteTransaction transaction, string sql, string cutoff)

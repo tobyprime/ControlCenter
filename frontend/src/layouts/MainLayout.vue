@@ -40,12 +40,12 @@ async function onLogout() {
       <aside class="sidebar">
         <nav class="nav">
           <RouterLink class="nav-item" to="/">首页</RouterLink>
-          <RouterLink class="nav-item" to="/devices" :class="{ active: route.name === 'devices' }">设备管理</RouterLink>
+          <RouterLink class="nav-item" to="/targets" :class="{ active: route.name === 'targets' || route.name === 'target-detail' }">目标管理</RouterLink>
           <RouterLink class="nav-item" to="/metrics" :class="{ active: route.name === 'metrics' }">指标曲线</RouterLink>
           <RouterLink class="nav-item" to="/terminal" :class="{ active: route.name === 'terminal' }">Web 终端</RouterLink>
           <RouterLink class="nav-item" to="/terminal/records" :class="{ active: route.name === 'terminal-records' }">终端留痕</RouterLink>
           <RouterLink class="nav-item" to="/logs" :class="{ active: route.name === 'logs' }">日志查看</RouterLink>
-          <RouterLink class="nav-item" to="/alerts" :class="{ active: route.name === 'alerts' }">告警配置</RouterLink>
+          <RouterLink class="nav-item" to="/alerts" :class="{ active: route.name === 'alerts' }">告警规则</RouterLink>
         </nav>
       </aside>
 

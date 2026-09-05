@@ -1,18 +1,21 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
-import { listDevices, type Device } from '@/api/devices'
+import { computed, onMounted, ref } from 'vue'
+import { listTargets, type Target } from '@/api/targets'
+import { listMetricKeys, type MetricKeyInfo } from '@/api/metrics'
 import {
-  deleteDeviceThreshold,
+  createAlertRule,
+  deleteAlertRule,
+  listAlertRules,
+  listRuleTypes,
+  updateAlertRule,
+  type AlertRule,
+  type AlertRuleTypeInfo,
+} from '@/api/alertRules'
+import {
   fetchAlertQueue,
   fetchAlertSettings,
-  fetchAlertThresholds,
-  metricLabel,
-  METRIC_OPTIONS,
   saveAlertSettings,
-  saveDeviceThreshold,
-  saveGlobalThreshold,
   type AlertQueue,
-  type AlertThresholds,
   type NapcatSettings,
 } from '@/api/alerts'
 
@@ -25,27 +28,62 @@ const savingNapcat = ref(false)
 const napcatMessage = ref('')
 const napcatError = ref('')
 
-const globalThresholds = ref<Record<string, number>>({})
-const overrides = ref<AlertThresholds['overrides']>([])
-const savingGlobal = ref(false)
-const globalMessage = ref('')
-const thresholdError = ref('')
-const overrideDeviceId = ref<number | null>(null)
-const overrideMetric = ref('cpu')
-const overrideValue = ref<number | null>(null)
-const overrideError = ref('')
+const targets = ref<Target[]>([])
+const metricKeys = ref<MetricKeyInfo[]>([])
+const ruleTypes = ref<AlertRuleTypeInfo[]>([])
+const rules = ref<AlertRule[]>([])
+const rulesError = ref('')
 
-const devices = ref<Device[]>([])
+const rulesLoading = ref(true)
 const queue = ref<AlertQueue | null>(null)
 const queueError = ref('')
 const loadingQueue = ref(false)
 
-function requireNumber(value: number | null): number | null {
-  if (value === null || Number.isNaN(value)) {
-    return null
-  }
-  return value
+// 规则创建表单
+const showRuleForm = ref(false)
+const formScope = ref<'global' | 'target'>('global')
+const formTargetId = ref<number | null>(null)
+const formMetricKey = ref('')
+const formRuleType = ref('')
+const formThreshold = ref('90')
+const formMinutes = ref('10')
+const formExpected = ref('')
+const formSustain = ref('60')
+const formRepeat = ref('0')
+const formSubmitting = ref(false)
+const formError = ref('')
+
+function ruleTypeLabel(typeId: string): string {
+  return ruleTypes.value.find((t) => t.typeId === typeId)?.displayName ?? typeId
 }
+
+function ruleTypeOf(typeId: string): AlertRuleTypeInfo | undefined {
+  return ruleTypes.value.find((t) => t.typeId === typeId)
+}
+
+function metricLabelOf(key: string): string {
+  return metricKeys.value.find((info) => info.key === key)?.displayName ?? key
+}
+
+const formValueType = computed(() => metricKeys.value.find((info) => info.key === formMetricKey.value)?.valueType ?? 'number')
+
+const formUsableTypes = computed(() =>
+  ruleTypes.value.filter((t) => t.supportedValueTypes.includes(formValueType.value)),
+)
+
+const availableMetricKeys = computed(() => {
+  const scope = formScope.value
+  const tid = formTargetId.value
+  return metricKeys.value.filter((info) => {
+    const existing = rules.value.some(
+      (rule) =>
+        rule.metricKey === info.key &&
+        rule.ruleType === formRuleType.value &&
+        (scope === 'global' ? rule.targetId === null : rule.targetId === tid),
+    )
+    return !existing
+  })
+})
 
 async function loadSettings(): Promise<void> {
   napcat.value = (await fetchAlertSettings()).napcat
@@ -55,10 +93,8 @@ async function loadSettings(): Promise<void> {
   napcatToken.value = ''
 }
 
-async function loadThresholds(): Promise<void> {
-  const payload = await fetchAlertThresholds()
-  globalThresholds.value = payload.global
-  overrides.value = payload.overrides
+async function loadRules(): Promise<void> {
+  rules.value = await listAlertRules()
 }
 
 async function loadQueue(): Promise<void> {
@@ -96,60 +132,153 @@ async function onSaveNapcat(): Promise<void> {
   }
 }
 
-async function onSaveGlobal(metric: string): Promise<void> {
-  const value = requireNumber(globalThresholds.value[metric] ?? null)
-  if (value === null) {
-    return
+function openRuleForm(): void {
+  formScope.value = 'global'
+  formTargetId.value = targets.value[0]?.id ?? null
+  formMetricKey.value = metricKeys.value[0]?.key ?? ''
+  formRuleType.value = ruleTypes.value[0]?.typeId ?? ''
+  formError.value = ''
+  showRuleForm.value = true
+}
+
+function onFormScopeChange(): void {
+  // 切换作用域/指标时若与现有规则冲突，换一个可用指标
+  if (!availableMetricKeys.value.some((info) => info.key === formMetricKey.value)) {
+    formMetricKey.value = availableMetricKeys.value[0]?.key ?? ''
   }
-  savingGlobal.value = true
-  globalMessage.value = ''
-  thresholdError.value = ''
+  onFormMetricChange()
+}
+
+function onFormMetricChange(): void {
+  const usable = formUsableTypes.value
+  if (!usable.some((t) => t.typeId === formRuleType.value)) {
+    formRuleType.value = usable[0]?.typeId ?? ''
+  }
+}
+
+function buildParameters(): Record<string, unknown> {
+  if (formRuleType.value === 'threshold_above' || formRuleType.value === 'threshold_below') {
+    return { threshold: Number(formThreshold.value) }
+  }
+  if (formRuleType.value === 'no_data') {
+    return { minutes: Number(formMinutes.value) }
+  }
+  if (formRuleType.value === 'state_mismatch') {
+    return { expected: formExpected.value.trim() }
+  }
+  return {}
+}
+
+async function submitRule(): Promise<void> {
+  if (formSubmitting.value) return
+  formSubmitting.value = true
+  formError.value = ''
   try {
-    await saveGlobalThreshold(metric, value)
-    await loadThresholds()
-    globalMessage.value = `已保存：${metricLabel(metric)} 全局阈值 ${value}%`
+    await createAlertRule({
+      targetId: formScope.value === 'global' ? null : formTargetId.value,
+      metricKey: formMetricKey.value,
+      ruleType: formRuleType.value as AlertRule['ruleType'],
+      parameters: buildParameters(),
+      sustainSeconds: Number(formSustain.value),
+      repeatMinutes: Number(formRepeat.value),
+      enabled: true,
+    })
+    showRuleForm.value = false
+    await loadRules()
   } catch (e) {
-    thresholdError.value = e instanceof Error ? e.message : '保存失败'
+    formError.value = e instanceof Error ? e.message : '创建规则失败'
   } finally {
-    savingGlobal.value = false
+    formSubmitting.value = false
   }
 }
 
-async function onAddOverride(): Promise<void> {
-  const value = requireNumber(overrideValue.value)
-  if (overrideDeviceId.value === null || value === null) {
-    overrideError.value = '请选择设备并填写阈值'
+async function onToggleRule(rule: AlertRule): Promise<void> {
+  try {
+    await updateAlertRule(rule.id, {
+      parameters: rule.parameters,
+      sustainSeconds: rule.sustainSeconds,
+      repeatMinutes: rule.repeatMinutes,
+      enabled: !rule.enabled,
+    })
+    await loadRules()
+  } catch (e) {
+    rulesError.value = e instanceof Error ? e.message : '更新规则失败'
+  }
+}
+
+async function onEditRule(rule: AlertRule): Promise<void> {
+  const raw = rule.parameters['threshold'] ?? rule.parameters['minutes'] ?? rule.parameters['expected']
+  const input = window.prompt(
+    `修改「${rule.metricDisplayName}」${ruleTypeLabel(rule.ruleType)}规则参数（当前 ${String(raw)}）：`,
+    String(raw ?? ''),
+  )
+  if (input === null) return
+  const parameters: Record<string, unknown> = { ...rule.parameters }
+  if (parameters['threshold'] !== undefined) {
+    const value = Number(input)
+    if (Number.isNaN(value)) {
+      window.alert('请输入数值')
+      return
+    }
+    parameters['threshold'] = value
+  } else if (parameters['minutes'] !== undefined) {
+    const value = Number(input)
+    if (Number.isNaN(value) || value < 1) {
+      window.alert('请输入不小于 1 的分钟数')
+      return
+    }
+    parameters['minutes'] = value
+  } else if (parameters['expected'] !== undefined) {
+    if (!input.trim()) {
+      window.alert('期望值不能为空')
+      return
+    }
+    parameters['expected'] = input.trim()
+  }
+  try {
+    await updateAlertRule(rule.id, {
+      parameters,
+      sustainSeconds: rule.sustainSeconds,
+      repeatMinutes: rule.repeatMinutes,
+      enabled: rule.enabled,
+    })
+    await loadRules()
+  } catch (e) {
+    rulesError.value = e instanceof Error ? e.message : '修改规则失败'
+  }
+}
+
+async function onDeleteRule(rule: AlertRule): Promise<void> {
+  const scope = rule.targetId === null ? '全局规则' : `目标「${rule.targetName}」的规则`
+  if (!window.confirm(`确定删除${scope}：${rule.metricDisplayName} · ${ruleTypeLabel(rule.ruleType)}？`)) {
     return
   }
-  overrideError.value = ''
   try {
-    await saveDeviceThreshold(overrideDeviceId.value, overrideMetric.value, value)
-    overrideValue.value = null
-    await loadThresholds()
+    await deleteAlertRule(rule.id)
+    await loadRules()
   } catch (e) {
-    overrideError.value = e instanceof Error ? e.message : '保存失败'
+    rulesError.value = e instanceof Error ? e.message : '删除规则失败'
   }
 }
 
-async function onDeleteOverride(deviceId: number, metric: string): Promise<void> {
-  try {
-    await deleteDeviceThreshold(deviceId, metric)
-    await loadThresholds()
-  } catch (e) {
-    overrideError.value = e instanceof Error ? e.message : '删除失败'
-  }
-}
-
-function deviceName(deviceId: number): string {
-  return devices.value.find((device) => device.id === deviceId)?.name ?? `设备 ${deviceId}`
+function parameterText(rule: AlertRule): string {
+  if (rule.parameters['threshold'] !== undefined) return `阈值 ${rule.parameters['threshold']}`
+  if (rule.parameters['minutes'] !== undefined) return `${rule.parameters['minutes']} 分钟`
+  if (rule.parameters['expected'] !== undefined) return `期望 ${rule.parameters['expected']}`
+  return JSON.stringify(rule.parameters)
 }
 
 onMounted(async () => {
   try {
-    await Promise.all([loadSettings(), loadThresholds(), loadQueue()])
-    devices.value = await listDevices()
+    await Promise.all([loadSettings(), loadQueue(), listRuleTypes().then((types) => (ruleTypes.value = types))])
+    const [targetList, keys, ruleList] = await Promise.all([listTargets(), listMetricKeys(), listAlertRules()])
+    targets.value = targetList
+    metricKeys.value = keys
+    rules.value = ruleList
   } catch (e) {
-    thresholdError.value = e instanceof Error ? e.message : '告警配置加载失败'
+    rulesError.value = e instanceof Error ? e.message : '告警规则加载失败'
+  } finally {
+    rulesLoading.value = false
   }
 })
 </script>
@@ -157,11 +286,121 @@ onMounted(async () => {
 <template>
   <section class="alerts">
     <div class="alerts-header">
-      <h1 class="alerts-title">告警配置</h1>
+      <h1 class="alerts-title">告警规则</h1>
       <p class="alerts-description">
-        设备离线与指标越限告警经 napcat（OneBot v11 HTTP）分发到 QQ；napcat 不可用时告警进入本地待发队列，恢复后自动补发、无丢失。
+        告警按 (目标, 指标) 配置为可插拔的规则实例：内置阈值上越限、阈值下越限、无数据、状态不符四种类型，参数可配、可关闭；
+        目标级规则优先于全局规则。告警经 napcat（OneBot v11 HTTP）分发到 QQ，napcat 不可用时进入本地待发队列，恢复后自动补发、无丢失。
       </p>
     </div>
+
+    <section class="card">
+      <h2 class="card-title">
+        规则列表
+        <button type="button" class="primary-button" @click="openRuleForm">新建规则</button>
+      </h2>
+      <span v-if="rulesError" class="error-note">{{ rulesError }}</span>
+      <div v-if="rulesLoading" class="card-note">加载中…</div>
+      <table v-else class="override-table">
+        <thead>
+          <tr>
+            <th>范围</th>
+            <th>指标</th>
+            <th>规则类型</th>
+            <th>参数</th>
+            <th>持续窗口</th>
+            <th>重发间隔</th>
+            <th>状态</th>
+            <th>操作</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="rule in rules" :key="rule.id">
+            <td>{{ rule.targetId === null ? '全局' : rule.targetName }}</td>
+            <td>{{ rule.metricDisplayName }}</td>
+            <td>{{ ruleTypeLabel(rule.ruleType) }}</td>
+            <td>
+              {{ parameterText(rule) }}
+              <button type="button" class="link-button" @click="onEditRule(rule)">修改</button>
+            </td>
+            <td>{{ rule.sustainSeconds }} 秒</td>
+            <td>{{ rule.repeatMinutes === 0 ? '恢复前一次' : `${rule.repeatMinutes} 分钟` }}</td>
+            <td>
+              <span class="status-badge" :class="rule.enabled ? 'online' : 'offline'">
+                <span class="status-dot"></span>
+                {{ rule.enabled ? '启用' : '已关闭' }}
+              </span>
+            </td>
+            <td class="row-actions">
+              <button type="button" class="link-button" @click="onToggleRule(rule)">
+                {{ rule.enabled ? '关闭' : '启用' }}
+              </button>
+              <button type="button" class="link-button danger" @click="onDeleteRule(rule)">删除</button>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+
+      <div v-if="showRuleForm" class="dialog-mask" @click.self="showRuleForm = false">
+        <div class="dialog">
+          <h2 class="dialog-title">新建告警规则</h2>
+          <label class="field">
+            <span class="field-label">作用范围</span>
+            <select v-model="formScope" class="control-select" @change="onFormScopeChange">
+              <option value="global">全局（对所有目标生效）</option>
+              <option value="target">单个目标</option>
+            </select>
+          </label>
+          <label v-if="formScope === 'target'" class="field">
+            <span class="field-label">目标</span>
+            <select v-model.number="formTargetId" class="control-select" @change="onFormScopeChange">
+              <option v-for="target in targets" :key="target.id" :value="target.id">{{ target.name }}</option>
+            </select>
+          </label>
+          <label class="field">
+            <span class="field-label">指标</span>
+            <select v-model="formMetricKey" class="control-select" @change="onFormMetricChange">
+              <option v-for="info in availableMetricKeys" :key="info.key" :value="info.key">
+                {{ info.displayName }}（{{ info.key }}）
+              </option>
+            </select>
+          </label>
+          <label class="field">
+            <span class="field-label">规则类型</span>
+            <select v-model="formRuleType" class="control-select">
+              <option v-for="t in formUsableTypes" :key="t.typeId" :value="t.typeId">{{ t.displayName }}</option>
+            </select>
+          </label>
+          <p v-if="ruleTypeOf(formRuleType)" class="field-hint">{{ ruleTypeOf(formRuleType)!.description }}</p>
+          <label v-if="formRuleType === 'threshold_above' || formRuleType === 'threshold_below'" class="field">
+            <span class="field-label">阈值</span>
+            <input v-model="formThreshold" type="number" step="any" class="control-input" />
+          </label>
+          <label v-if="formRuleType === 'no_data'" class="field">
+            <span class="field-label">无数据判定时长（分钟）</span>
+            <input v-model="formMinutes" type="number" min="1" max="1440" class="control-input" />
+          </label>
+          <label v-if="formRuleType === 'state_mismatch'" class="field">
+            <span class="field-label">期望状态值（bool 写 true/false）</span>
+            <input v-model="formExpected" type="text" class="control-input" placeholder="如 true / online" />
+          </label>
+          <label class="field">
+            <span class="field-label">持续窗口（秒，0 = 判定即告警）</span>
+            <input v-model="formSustain" type="number" min="0" max="86400" class="control-input" />
+          </label>
+          <label class="field">
+            <span class="field-label">重发间隔（分钟，0 = 恢复前只发一次）</span>
+            <input v-model="formRepeat" type="number" min="0" max="1440" class="control-input" />
+          </label>
+          <p v-if="formError" class="error-note">{{ formError }}</p>
+          <div class="dialog-actions">
+            <button type="button" class="ghost-button" @click="showRuleForm = false">取消</button>
+            <button type="button" class="primary-button" :disabled="formSubmitting || formUsableTypes.length === 0" @click="submitRule">
+              {{ formSubmitting ? '创建中…' : '创建规则' }}
+            </button>
+          </div>
+        </div>
+      </div>
+    </section>
 
     <section class="card">
       <h2 class="card-title">消息渠道（QQ · napcat）</h2>
@@ -193,89 +432,6 @@ onMounted(async () => {
         <span v-if="napcatMessage" class="ok-note">{{ napcatMessage }}</span>
         <span v-if="napcatError" class="error-note">{{ napcatError }}</span>
       </div>
-    </section>
-
-    <section class="card">
-      <h2 class="card-title">全局默认阈值（%）</h2>
-      <div class="form-grid">
-        <label v-for="option in METRIC_OPTIONS" :key="option.value" class="control-field">
-          <span class="control-label">{{ option.label }}</span>
-          <input
-            v-model.number="globalThresholds[option.value]"
-            type="number"
-            min="1"
-            max="100"
-            step="0.5"
-            class="control-input control-number"
-          />
-        </label>
-      </div>
-      <div class="card-actions">
-        <div class="inline-buttons">
-          <button
-            v-for="option in METRIC_OPTIONS"
-            :key="option.value"
-            type="button"
-            class="primary-button"
-            :disabled="savingGlobal"
-            @click="onSaveGlobal(option.value)"
-          >
-            保存{{ option.label }}
-          </button>
-        </div>
-        <span v-if="globalMessage" class="ok-note">{{ globalMessage }}</span>
-        <span v-if="thresholdError" class="error-note">{{ thresholdError }}</span>
-      </div>
-      <p class="card-note">持续越限超过 60 秒才告警；同一越限事件恢复前只发送一次（防刷屏）。</p>
-    </section>
-
-    <section class="card">
-      <h2 class="card-title">按设备覆盖阈值</h2>
-      <div class="form-grid">
-        <label class="control-field">
-          <span class="control-label">设备</span>
-          <select v-model.number="overrideDeviceId" class="control-select">
-            <option :value="null" disabled>选择设备</option>
-            <option v-for="device in devices" :key="device.id" :value="device.id">{{ device.name }}</option>
-          </select>
-        </label>
-        <label class="control-field">
-          <span class="control-label">指标</span>
-          <select v-model="overrideMetric" class="control-select">
-            <option v-for="option in METRIC_OPTIONS" :key="option.value" :value="option.value">{{ option.label }}</option>
-          </select>
-        </label>
-        <label class="control-field">
-          <span class="control-label">阈值（%）</span>
-          <input v-model.number="overrideValue" type="number" min="1" max="100" step="0.5" class="control-input control-number" />
-        </label>
-        <div class="control-field">
-          <span class="control-label">&nbsp;</span>
-          <button type="button" class="primary-button" @click="onAddOverride">添加 / 更新覆盖</button>
-        </div>
-      </div>
-      <span v-if="overrideError" class="error-note">{{ overrideError }}</span>
-      <table v-if="overrides.length > 0" class="override-table">
-        <thead>
-          <tr>
-            <th>设备</th>
-            <th>指标</th>
-            <th>覆盖阈值</th>
-            <th>操作</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr v-for="entry in overrides" :key="`${entry.deviceId}-${entry.metric}`">
-            <td>{{ entry.deviceName }}</td>
-            <td>{{ metricLabel(entry.metric) }}</td>
-            <td>{{ entry.value }}%</td>
-            <td>
-              <button type="button" class="link-button" @click="onDeleteOverride(entry.deviceId, entry.metric)">删除</button>
-            </td>
-          </tr>
-        </tbody>
-      </table>
-      <p v-else class="card-note">暂无覆盖：所有设备按全局默认阈值告警。</p>
     </section>
 
     <section class="card">
@@ -344,6 +500,12 @@ onMounted(async () => {
   gap: 10px;
 }
 
+.card-note {
+  margin: 8px 0 0;
+  font-size: 0.78rem;
+  color: var(--color-text-light);
+}
+
 .form-grid {
   display: flex;
   flex-wrap: wrap;
@@ -373,10 +535,6 @@ onMounted(async () => {
   color: var(--color-text);
 }
 
-.control-number {
-  min-width: 120px;
-}
-
 .primary-button {
   padding: 8px 16px;
   border: 1px solid var(--color-primary);
@@ -392,10 +550,14 @@ onMounted(async () => {
   cursor: not-allowed;
 }
 
-.inline-buttons {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
+.ghost-button {
+  padding: 8px 14px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--color-text);
+  font-size: 0.85rem;
+  cursor: pointer;
 }
 
 .card-actions {
@@ -403,12 +565,6 @@ onMounted(async () => {
   flex-wrap: wrap;
   align-items: center;
   gap: 12px;
-}
-
-.card-note {
-  margin: 8px 0 0;
-  font-size: 0.78rem;
-  color: var(--color-text-light);
 }
 
 .ok-note {
@@ -419,6 +575,7 @@ onMounted(async () => {
 .error-note {
   font-size: 0.8rem;
   color: var(--color-danger);
+  display: inline-block;
 }
 
 .override-table {
@@ -438,6 +595,45 @@ onMounted(async () => {
   color: var(--color-text-light);
   font-weight: 500;
   font-size: 0.78rem;
+}
+
+.row-actions {
+  display: flex;
+  gap: 12px;
+}
+
+.status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  white-space: nowrap;
+}
+
+.status-badge .status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.status-badge.online {
+  background: #ecfdf5;
+  color: #047857;
+}
+
+.status-badge.online .status-dot {
+  background: #10b981;
+}
+
+.status-badge.offline {
+  background: #f3f4f6;
+  color: #6b7280;
+}
+
+.status-badge.offline .status-dot {
+  background: #9ca3af;
 }
 
 .queue-count {
@@ -471,6 +667,69 @@ onMounted(async () => {
 .link-button:disabled {
   opacity: 0.55;
   cursor: not-allowed;
+}
+
+.link-button.danger {
+  color: var(--color-danger);
+}
+
+.dialog-mask {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  z-index: 50;
+}
+
+.dialog {
+  width: 100%;
+  max-width: 480px;
+  background: #fff;
+  border-radius: 12px;
+  padding: 20px;
+  box-shadow: 0 20px 40px rgba(15, 23, 42, 0.2);
+  max-height: 90vh;
+  overflow-y: auto;
+}
+
+.dialog-title {
+  margin: 0 0 14px;
+  font-size: 1.05rem;
+}
+
+.field {
+  display: block;
+  margin-bottom: 12px;
+}
+
+.field-hint {
+  margin: -6px 0 12px;
+  color: var(--color-text-light);
+  font-size: 0.75rem;
+}
+
+.field-label {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 0.8rem;
+  color: var(--color-text-light);
+}
+
+.dialog .control-select,
+.dialog .control-input {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+.dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 16px;
 }
 
 @media (max-width: 768px) {
