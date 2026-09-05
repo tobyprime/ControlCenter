@@ -9,9 +9,9 @@ public static class DashboardDefaultLayout
     public const string CardIdOnlineDevices = "overview-online-devices";
     public const string CardIdActiveAlerts = "overview-active-alerts";
 
-    public const string CardTypeTotalDevices = "overview-total-devices";
-    public const string CardTypeOnlineDevices = "overview-online-devices";
-    public const string CardTypeActiveAlerts = "overview-active-alerts";
+    public const string CardTypeTotalDevices = DashboardCardCatalog.TypeTotalDevices;
+    public const string CardTypeOnlineDevices = DashboardCardCatalog.TypeOnlineDevices;
+    public const string CardTypeActiveAlerts = DashboardCardCatalog.TypeActiveAlerts;
 
     public static DashboardLayout Create()
     {
