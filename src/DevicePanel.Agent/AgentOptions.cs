@@ -11,12 +11,16 @@ public sealed class AgentOptions
     /// <summary>心跳周期（秒），需与面板侧 DevicePanel:Agent:HeartbeatIntervalSeconds 一致。</summary>
     public int HeartbeatIntervalSeconds { get; set; } = 30;
 
+    /// <summary>控制器声明文件路径（三期模块4）：缺省为程序目录下 controllers.json，文件缺失视为无控制器声明。</summary>
+    public string? ControllersFile { get; set; }
+
     public static AgentOptions Parse(IReadOnlyList<string> args, Func<string, string?> env)
     {
         var options = new AgentOptions
         {
             Url = env("PANEL_URL") ?? string.Empty,
             Token = env("PANEL_TOKEN") ?? string.Empty,
+            ControllersFile = env("PANEL_CONTROLLERS"),
         };
         if (int.TryParse(env("PANEL_INTERVAL_SECONDS"), out var interval) && interval > 0)
         {
@@ -35,6 +39,9 @@ public sealed class AgentOptions
                     break;
                 case "--interval" when i + 1 < args.Count && int.TryParse(args[++i], out var value) && value > 0:
                     options.HeartbeatIntervalSeconds = value;
+                    break;
+                case "--controllers" when i + 1 < args.Count:
+                    options.ControllersFile = args[++i];
                     break;
             }
         }

@@ -26,7 +26,7 @@ public class TargetDataMigrationTests
 
         // —— 升级（006 起）——
         ApplyMigrations(connection);
-        Assert.Equal(14L, Count(connection, "SELECT COUNT(*) FROM schema_migrations"));
+        Assert.Equal(16L, Count(connection, "SELECT COUNT(*) FROM schema_migrations"));
 
         // 设备 → device 采集器（014 后 type 下沉为内置标签，台账更名为 collectors，token 保留）
         Assert.Equal(("旧设备A", "type:device"), QueryTuple(connection, """

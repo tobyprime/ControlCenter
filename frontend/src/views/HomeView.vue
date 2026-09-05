@@ -26,6 +26,8 @@ import DashboardValueCard from '@/components/DashboardValueCard.vue'
 import DashboardStatusCard from '@/components/DashboardStatusCard.vue'
 import DashboardChartCard from '@/components/DashboardChartCard.vue'
 import DashboardCardConfigForm from '@/components/DashboardCardConfigForm.vue'
+import DashboardControlCard from '@/components/DashboardControlCard.vue'
+import DashboardControlCardConfigForm from '@/components/DashboardControlCardConfigForm.vue'
 
 const username = ref('')
 fetchSession().then((session) => {
@@ -382,7 +384,7 @@ onBeforeUnmount(() => {
         v-for="(card, index) in editing ? draft : visibleCards"
         :key="card.id"
         class="overview-card"
-        :class="{ 'card-hidden': editing && !card.visible, 'card-dragging': dragIndex === index, 'card-chart': card.type === 'metric-chart' }"
+        :class="{ 'card-hidden': editing && !card.visible, 'card-dragging': dragIndex === index, 'card-chart': card.type === 'metric-chart', 'card-control': card.type === 'control-card' }"
         :data-card-type="card.type"
         :draggable="editing"
         @dragstart="onDragStart(index)"
@@ -400,8 +402,17 @@ onBeforeUnmount(() => {
           <button type="button" class="danger-button" @click="removeCard(index)">删除</button>
         </div>
 
+        <!-- 控制卡（三期模块4）：编辑态组合控制器，查看态直接操作并即时回执 -->
+        <template v-if="card.type === 'control-card'">
+          <template v-if="editing">
+            <span class="overview-label">{{ cardLabel(card.type) }}</span>
+            <DashboardControlCardConfigForm :card="card" :targets="targets" />
+          </template>
+          <DashboardControlCard v-else :card="card" />
+        </template>
+
         <!-- 一期概览卡 -->
-        <template v-if="!isMetricCardType(card.type)">
+        <template v-else-if="!isMetricCardType(card.type)">
           <span class="overview-label">{{ cardLabel(card.type) }}</span>
           <span class="overview-value">{{ overviewValue(card.type) }}</span>
           <span class="overview-hint">{{ cardHint(card.type) }}</span>
@@ -559,6 +570,11 @@ onBeforeUnmount(() => {
 
 /* 曲线卡占满整行，保证序列可读 */
 .card-chart {
+  grid-column: 1 / -1;
+}
+
+/* 控制卡占满整行：组合多台设备的控制器，操作与回执需要横向空间 */
+.card-control {
   grid-column: 1 / -1;
 }
 

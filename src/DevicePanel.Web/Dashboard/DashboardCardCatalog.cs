@@ -13,6 +13,7 @@ public static class DashboardCardCatalog
     public const string TypeMetricValue = "metric-value";
     public const string TypeMetricStatus = "metric-status";
     public const string TypeMetricChart = "metric-chart";
+    public const string TypeControl = "control-card";
 
     /// <summary>指标卡类型：config 必须携带 { targetId, key, windowHours? }（windowHours 可选，缺省语义在前端）。</summary>
     public static bool IsMetricType(string type) =>
@@ -20,5 +21,6 @@ public static class DashboardCardCatalog
 
     public static bool IsKnownType(string type) =>
         type is TypeTotalDevices or TypeOnlineDevices or TypeActiveAlerts
-            or TypeMetricValue or TypeMetricStatus or TypeMetricChart;
+            or TypeMetricValue or TypeMetricStatus or TypeMetricChart
+            or TypeControl;
 }

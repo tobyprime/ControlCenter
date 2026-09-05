@@ -3,6 +3,7 @@ using DevicePanel.Web.Auth;
 using DevicePanel.Web.Dashboard;
 using DevicePanel.Web.Endpoints;
 using DevicePanel.Web.Agents;
+using DevicePanel.Web.Control;
 using DevicePanel.Web.Infrastructure;
 using DevicePanel.Web.Interactions;
 using DevicePanel.Web.Logs;
@@ -139,6 +140,20 @@ builder.Services.AddSingleton<IAgentMessageHandler, LogsServicesResponseHandler>
 builder.Services.AddSingleton<IAgentMessageHandler, LogsTailResponseHandler>();
 builder.Services.AddSingleton<IAgentMessageHandler, LogsErrorHandler>();
 
+// 控制器统一抽象（三期模块4）：类型注册表（新增类型 = 注册 IControlType）+ 下发（ctrl.* 请求-响应/seq 关联）+ 全量留痕
+var controlOptions = new ControlOptions();
+builder.Configuration.GetSection(ControlOptions.SectionName).Bind(controlOptions);
+builder.Services.AddSingleton(controlOptions);
+builder.Services.AddSingleton<IControlType, ButtonControlType>();
+builder.Services.AddSingleton<IControlType, ToggleControlType>();
+builder.Services.AddSingleton<IControlType, InputControlType>();
+builder.Services.AddSingleton<IControlType, SliderControlType>();
+builder.Services.AddSingleton<ControlTypeCatalog>();
+builder.Services.AddSingleton<IControlLogStore, ControlLogStore>();
+builder.Services.AddSingleton<ControlInvokeService>();
+builder.Services.AddSingleton<IAgentMessageHandler, ControlInvokeResponseHandler>();
+builder.Services.AddSingleton<IAgentMessageHandler, ControlErrorHandler>();
+
 // 交互模式（约束 C）：注册表收集全部 IInteractionMode，核心按目标声明渲染入口，不绑定单一形态
 builder.Services.AddSingleton<IInteractionMode, ShellInteractionMode>();
 builder.Services.AddSingleton<InteractionModeRegistry>();
@@ -183,6 +198,7 @@ app.MapAlertEndpoints();
 app.MapDashboardEndpoints();
 app.MapTerminalEndpoints();
 app.MapLogEndpoints();
+app.MapControlEndpoints();
 app.MapInteractionEndpoints();
 app.MapAgentWsEndpoints();
 

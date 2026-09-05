@@ -5,7 +5,8 @@ using Microsoft.Data.Sqlite;
 
 namespace DevicePanel.Web.Agents;
 
-/// <summary>Agent 实体（三期模块2）：连接身份与能力声明的唯一宿主。CollectorId 非空表示与采集器处于关联。</summary>
+/// <summary>Agent 实体（三期模块2）：连接身份与能力声明的唯一宿主。CollectorId 非空表示与采集器处于关联。
+/// Controllers 为随能力上报持久化的控制器实体（三期模块4，未上报 = 空清单）。</summary>
 public sealed record AgentInfo(
     long Id,
     string Name,
@@ -14,7 +15,8 @@ public sealed record AgentInfo(
     DateTimeOffset CreatedAtUtc,
     DateTimeOffset UpdatedAtUtc,
     DateTimeOffset? LastSeenAtUtc,
-    long? CollectorId = null)
+    long? CollectorId = null,
+    IReadOnlyList<ControllerDeclaration>? Controllers = null)
 {
     /// <summary>在线 = 最近心跳距当前时间不超过连续 2 个心跳周期（AgentOptions.OfflineAfter），与 target 在线口径一致。</summary>
     public bool IsOnline(TimeProvider clock, AgentOptions options) =>
@@ -43,8 +45,8 @@ public interface IAgentRegistry
 
     IReadOnlyList<AgentInfo> List(string? label = null);
 
-    /// <summary>持久化能力声明（去重保序）；不视为管理编辑，不刷新 updated_at。返回 false 表示 agent 不存在。</summary>
-    bool SetCapabilities(long agentId, IReadOnlyList<string> capabilities);
+    /// <summary>持久化能力声明（去重保序）与控制器实体（三期模块4，随能力重报整体覆盖）；不视为管理编辑，不刷新 updated_at。返回 false 表示 agent 不存在。</summary>
+    bool SetCapabilities(long agentId, IReadOnlyList<string> capabilities, IReadOnlyList<ControllerDeclaration>? controllers = null);
 
     void Touch(long agentId, DateTimeOffset seenAtUtc);
 
@@ -204,13 +206,15 @@ public sealed class AgentRegistry : IAgentRegistry
         return agents;
     }
 
-    public bool SetCapabilities(long agentId, IReadOnlyList<string> capabilities)
+    public bool SetCapabilities(long agentId, IReadOnlyList<string> capabilities, IReadOnlyList<ControllerDeclaration>? controllers = null)
     {
         using var connection = _connectionFactory.CreateOpenConnection();
         using var command = connection.CreateCommand();
-        // 能力声明由 agent 上报产生，不是管理编辑：不刷新 updated_at
-        command.CommandText = "UPDATE agents SET capabilities_json = $capabilities WHERE id = $id";
+        // 能力声明由 agent 上报产生，不是管理编辑：不刷新 updated_at；控制器声明随重报整体覆盖
+        command.CommandText = "UPDATE agents SET capabilities_json = $capabilities, controllers_json = $controllers WHERE id = $id";
         command.Parameters.AddWithValue("$capabilities", JsonSerializer.Serialize(NormalizeLabels(capabilities)));
+        command.Parameters.AddWithValue("$controllers",
+            ControllerDeclarationList.Serialize(controllers ?? []));
         command.Parameters.AddWithValue("$id", agentId);
         return command.ExecuteNonQuery() > 0;
     }
@@ -255,7 +259,8 @@ public sealed class AgentRegistry : IAgentRegistry
     /// <summary>关联采集器的 id 以子查询带出（关联列在 collectors 侧），无关联时为 NULL。</summary>
     private const string SelectColumns = """
         agents.id, agents.name, agents.labels_json, agents.capabilities_json, agents.created_at_utc, agents.updated_at_utc, agents.last_seen_at_utc,
-        (SELECT t.id FROM collectors t WHERE t.agent_id = agents.id) AS collector_id
+        (SELECT t.id FROM collectors t WHERE t.agent_id = agents.id) AS collector_id,
+        agents.controllers_json
         """;
 
     private static AgentInfo MapAgent(SqliteDataReader reader)
@@ -270,7 +275,8 @@ public sealed class AgentRegistry : IAgentRegistry
         var lastSeenColumn = reader.IsDBNull(6) ? null : reader.GetString(6);
         var lastSeen = lastSeenColumn is null ? (DateTimeOffset?)null : DateTimeOffset.Parse(lastSeenColumn);
         var collectorId = reader.IsDBNull(7) ? null : (long?)reader.GetInt64(7);
-        return new AgentInfo(id, name, labels, capabilities, createdAt, updatedAt, lastSeen, collectorId);
+        var controllers = ControllerDeclarationList.Parse(reader.IsDBNull(8) ? null : reader.GetString(8));
+        return new AgentInfo(id, name, labels, capabilities, createdAt, updatedAt, lastSeen, collectorId, controllers);
     }
 
     private static List<string> ParseJsonArray(string json)

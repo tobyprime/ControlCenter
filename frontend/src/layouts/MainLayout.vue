@@ -61,6 +61,7 @@ async function onLogout() {
           <RouterLink class="nav-item" to="/metrics" :class="{ active: route.name === 'metrics' }" @click="drawerOpen = false">指标曲线</RouterLink>
           <RouterLink class="nav-item" to="/terminal" :class="{ active: route.name === 'terminal' }" @click="drawerOpen = false">Web 终端</RouterLink>
           <RouterLink class="nav-item" to="/terminal/records" :class="{ active: route.name === 'terminal-records' }" @click="drawerOpen = false">终端留痕</RouterLink>
+          <RouterLink class="nav-item" to="/control-logs" :class="{ active: route.name === 'control-logs' }" @click="drawerOpen = false">控制留痕</RouterLink>
           <RouterLink class="nav-item" to="/alerts" :class="{ active: route.name === 'alerts' }" @click="drawerOpen = false">告警规则</RouterLink>
         </nav>
       </aside>
