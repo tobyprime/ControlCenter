@@ -24,6 +24,9 @@ src/DevicePanel.Web/Logs   日志查看（TOB-340）
   ├─ LogEndpoints          服务清单 /api/devices/{id}/logs/services + 尾部拉取 /logs/tail
   ├─ LogQueryService       REST → logs.* 下行请求，按（通道, seq）关联响应（通道绑定/超时）
   └─ LogMessageHandlers    logs.services.response/logs.tail.response/logs.error 处理器
+src/DevicePanel.Web/Targets   目标实体与 WS 接入：TargetRegistry 目标 CRUD、AgentWsEndpoints /agent/ws、连接注册表与心跳
+src/DevicePanel.Web/Agents    Agent 实体（TOB-375）：AgentRegistry 一 agent 一 token/标签/能力持久化、AgentCapabilitiesMessageHandler
+src/DevicePanel.Web/Endpoints REST 入口：TargetEndpoints 目标管理、AgentEndpoints Agent 管理（签发/重置 token、标签、删除）
 src/DevicePanel.Agent      轻量 agent：出站 WSS 回连、auth、心跳；消息循环按 type 可扩展
 src/DevicePanel.Agent/Terminal  终端通道（TOB-339）
   ├─ TerminalChannel       term.* 下行处理：会话登记、输入写入、输出泵
@@ -51,6 +54,7 @@ src/DevicePanel.Agent/Logs 日志通道（TOB-340）
 | `auth.error` | 面板 → agent | 认证失败，payload `{message}`，随后以 4001 关闭 |
 | `heartbeat` | agent → 面板 | 心跳（默认 30s 一个周期），payload `{uptimeSec}` |
 | `metrics.report` | agent → 面板 | 指标快照（与心跳同节拍发送，默认 30s），payload `{cpu, mem, disk, netRx, netTx}`；cpu/mem/disk 为百分比（0-100，disk 为根文件系统），netRx/netTx 为字节/秒 |
+| `agent.capabilities` | agent → 面板 | 能力声明（TOB-375），payload 为字符串数组（如 `["metrics","terminal","logs"]`，常量见 `AgentCapabilityNames`）；认证成功后立即上报，未上报 = 未声明（旧版 agent 兼容） |
 
 预留前缀（后续 issue 只留扩展点，不做业务）：
 
@@ -120,6 +124,16 @@ src/DevicePanel.Agent/Logs 日志通道（TOB-340）
 - 面板 API：`GET /api/devices/{id}/logs/services`；`GET /api/devices/{id}/logs/tail?service&kind&lines`（默认 200，上限 1000）。
   设备离线 409、agent 错误 502、等待超时 504（`DevicePanel:Logs:RequestTimeoutSeconds` 默认 30）。
 
+### 能力声明 agent.capabilities（TOB-375 已实现）
+
+agent 在收到 auth.ok 之后、进入消息循环之前，主动上报一次本连接实际可提供的通道（字符串数组，
+常量见 `AgentCapabilityNames`：metrics/terminal/logs）。面板 `AgentCapabilitiesMessageHandler` 持久化到
+`agents.capabilities_json`，Agent 管理页展示（metrics→指标上报、terminal→Web 终端、logs→日志拉取）。
+
+- 未上报的连接不写该字段（保持 NULL）——旧版 agent 没有这条消息也照常接入（向后兼容）。
+- 每次连接（含重连）上报覆盖旧值，始终反映当前在线会话的实际能力；不更新 `updated_at_utc`（标签编辑语义专用）。
+- 具体能力的类型扩充（如指标项、终端参数）由三期模块 3/4 在各自 issue 内扩展，本通道只承载能力名。
+
 ## WebSocket 关闭码
 
 | 码 | 常量 | 场景 |
@@ -132,10 +146,27 @@ src/DevicePanel.Agent/Logs 日志通道（TOB-340）
 
 agent 侧重连策略：网络类断开按指数退避（1s 起、30s 封顶）自动重连；token 类（4001/4002/4003）不重试，退出提示更换 token。
 
+## Agent 实体与注册（TOB-375）
+
+`agents` 表是连接身份与能力声明的唯一宿主：一 agent 一 token、自定义标签（自由文本、不限量）、能力声明（上节）。
+存量 device target 由迁移 `013_agents.sql` 自动建出同名 agent（token hash 平移，零重装、PANEL_TOKEN 不变），
+双写期 targets 与 agents 并存且一一关联：
+
+- 表结构：`agents(id, name, token_hash UNIQUE, labels_json, capabilities_json, last_seen_at_utc, …)`；
+  `targets` 新增 `agent_id`（FK → agents.id，NULL = 台账直建未关联）；`targets.agent_token_hash` 保留为已关联 agent 的**直写镜像列**
+  （满足历史 NOT NULL UNIQUE 约束），认证只读 `agents.token_hash`。
+- 连接键沿用 target 语义，现有 target 功能全部照常：已关联 agent 的连接键 = 其 targetId（指标/终端/日志/在线判定零改动）；
+  Agent 管理页直建、未关联 target 的 agent 连接键 = **负 agent id**（不与任何 target 混淆）。
+- 重置 token 同步刷新镜像列并按连接键以 4003 断开在线连接；删除关联 target 同步删 agent（级联）；未关联 agent 可单独删除（4002 断连）。
+- 管理 API（会话认证）：`GET /api/agents?label=`（标签服务端筛选，json_each 展开 labels_json）、`POST /api/agents`（签发 token，明文只出现一次）、
+  `PUT /api/agents/{id}/labels`、`POST /api/agents/{id}/token`、`DELETE /api/agents/{id}`（已关联目标返回 400，引导到目标管理页）。
+- 管理页：前端 `/agents`「Agent 管理」——创建并签发 token（仅显示一次）、编辑标签、按标签筛选、重置 Token、删除、在线状态与能力展示。
+- service 型 target 无 token 语义，不建 agent；device 型 target 创建时同步建 agent 并落 `targets.agent_id`。
+
 ## 认证与生命周期
 
-- token 由面板在创建设备/重置 token 时签发（`dpk_` 前缀），**明文只出现一次**，库中仅存 SHA-256。
-- 重置 token / 删除设备：面板立即以 4003/4002 关闭该设备在线连接，旧 token 重新连接即被拒。
+- token 由面板签发（`dpk_` 前缀），**明文只出现一次**，库中仅存 SHA-256：双写期入口为目标创建（同步建 agent）与 Agent 管理页，认证只读 `agents.token_hash`（`targets.agent_token_hash` 仅为镜像，见上节）。
+- 重置 token / 删除设备（或未关联 agent）：面板立即以 4003/4002 关闭该连接，旧 token 重新连接即被拒。
 - 在线判定：`last_seen_at_utc` 距当前不超过连续 2 个心跳周期（`DevicePanel:Agent:HeartbeatIntervalSeconds` 默认 30s → 离线阈值 60s）；`HeartbeatMonitor` 每 15s 清理超时连接（4004）。
 - `/agent/ws` 独立于 Web 会话认证（token 信封认证），面板登录拦截中间件对该路径放行。
 

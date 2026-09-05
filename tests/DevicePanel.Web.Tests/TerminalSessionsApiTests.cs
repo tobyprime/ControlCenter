@@ -37,7 +37,7 @@ public class TerminalSessionsApiTests : IDisposable
 
         using var scope = _factory.Services.CreateScope();
         var registry = scope.ServiceProvider.GetRequiredService<DevicePanel.Web.Targets.ITargetRegistry>();
-        _deviceId = registry.Create(DevicePanel.Web.Targets.TargetTypes.Device, "留痕设备", ["机房A"]).Target.Id;
+        _deviceId = registry.Create(DevicePanel.Web.Targets.TargetTypes.Device, "留痕设备", ["机房A"]).Id;
     }
 
     public void Dispose() => _factory.Dispose();

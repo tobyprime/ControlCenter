@@ -85,6 +85,8 @@ public sealed class FakeAgentChannel : DevicePanel.Web.Targets.IDeviceChannel
     }
 
     public long DeviceId { get; }
+
+    public long AgentId { get; }
     public bool IsOpen { get; set; }
 
     public List<(string Type, long Seq, JsonElement Payload)> Sent { get; } = new();

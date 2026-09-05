@@ -1,6 +1,7 @@
 using System.Net.WebSockets;
 using System.Text.Json;
 using DevicePanel.Protocol;
+using DevicePanel.Web.Agents;
 
 namespace DevicePanel.Web.Targets;
 
@@ -15,7 +16,8 @@ public static class AgentWsEndpoints
         endpoints.MapGet("/agent/ws", async (
             HttpContext http,
             AgentConnectionRegistry connections,
-            ITargetRegistry devices,
+            IAgentRegistry agents,
+            ITargetRegistry targets,
             AgentMessageDispatcher dispatcher,
             AgentOptions options,
             TimeProvider clock,
@@ -27,7 +29,7 @@ public static class AgentWsEndpoints
             }
 
             var socket = await http.WebSockets.AcceptWebSocketAsync();
-            var session = new AgentWsSession(socket, connections, devices, dispatcher, options, clock, logger);
+            var session = new AgentWsSession(socket, connections, agents, targets, dispatcher, options, clock, logger);
             // 会话生命周期跟随 socket 本身：HTTP 请求令牌在 WS 握手完成后即可能被触发
             // （TestServer/部分代理如此），不能作为通道断开依据；断开由 ReceiveAsync 的关闭帧/异常驱动。
             await session.RunAsync();
@@ -42,6 +44,7 @@ internal sealed class AgentWsSession
 {
     private readonly WebSocket _socket;
     private readonly AgentConnectionRegistry _connections;
+    private readonly IAgentRegistry _agents;
     private readonly ITargetRegistry _targets;
     private readonly AgentMessageDispatcher _dispatcher;
     private readonly AgentOptions _options;
@@ -51,6 +54,7 @@ internal sealed class AgentWsSession
     public AgentWsSession(
         WebSocket socket,
         AgentConnectionRegistry connections,
+        IAgentRegistry agents,
         ITargetRegistry targets,
         AgentMessageDispatcher dispatcher,
         AgentOptions options,
@@ -59,6 +63,7 @@ internal sealed class AgentWsSession
     {
         _socket = socket;
         _connections = connections;
+        _agents = agents;
         _targets = targets;
         _dispatcher = dispatcher;
         _options = options;
@@ -78,22 +83,24 @@ internal sealed class AgentWsSession
                 return;
             }
 
-            deviceId = authenticated.Value.DeviceId;
+            // 连接键沿用 target id（关联 agent，指标/终端/日志/告警链路不变）；未关联 agent 用负 agent id
+            deviceId = authenticated.Value.ConnectionKey;
             connection.DeviceId = deviceId;
-            // 注册后复核设备仍存在：认证期间设备可能已被删除（删除窗口竞态）
-            if (!_connections.TryRegister(deviceId, connection, () => _targets.Get(deviceId) is not null))
+            connection.AgentId = authenticated.Value.AgentId;
+            // 注册后复核 agent 仍存在：认证期间 agent 可能已被删除（删除窗口竞态）
+            if (!_connections.TryRegister(deviceId, connection, () => _agents.Get(authenticated.Value.AgentId) is not null))
             {
-                _logger.LogInformation("设备 {DeviceId} 在认证过程中被删除，连接已关闭", deviceId);
+                _logger.LogInformation("Agent {AgentId} 在认证过程中被删除，连接已关闭", authenticated.Value.AgentId);
                 return;
             }
 
-            MarkSeen(deviceId, connection);
+            MarkSeen(deviceId, authenticated.Value.AgentId, connection);
             await SendAsync(connection, AgentMessageTypes.AuthOk, authenticated.Value.Seq, new
             {
                 deviceId,
-                name = _targets.Get(deviceId)?.Name ?? string.Empty,
+                name = authenticated.Value.Name,
             }, CancellationToken.None).ConfigureAwait(false);
-            _logger.LogInformation("设备 {DeviceId} 已接入", deviceId);
+            _logger.LogInformation("Agent {AgentId} 已接入（device: {DeviceId}）", authenticated.Value.AgentId, deviceId);
 
             while (connection.IsOpen)
             {
@@ -136,8 +143,8 @@ internal sealed class AgentWsSession
         }
     }
 
-    /// <summary>执行 auth 握手。返回 null 表示握手失败（已回错误信封并关闭）；成功返回设备 ID 与请求 seq。</summary>
-    private async Task<(long DeviceId, long Seq)?> AuthenticateAsync(AgentConnection connection)
+    /// <summary>执行 auth 握手。返回 null 表示握手失败（已回错误信封并关闭）；成功返回 agent 身份、连接键与请求 seq。</summary>
+    private async Task<(long AgentId, long ConnectionKey, string Name, long Seq)?> AuthenticateAsync(AgentConnection connection)
     {
         // auth 读取超时用真实时间：即使宿主注入 FakeTimeProvider（测试），超时行为也保持真实
         var timeoutAt = TimeProvider.System.GetUtcNow().AddSeconds(_options.AuthTimeoutSeconds);
@@ -173,8 +180,9 @@ internal sealed class AgentWsSession
         var token = first is not null && first.Type == AgentMessageTypes.Auth && first.Payload.TryGetProperty("token", out var tokenElement)
             ? tokenElement.GetString()
             : null;
-        var deviceId = _targets.FindTargetIdByToken(token ?? "");
-        if (first is null || deviceId is null)
+        // token 唯一宿主是 agent（一 agent 一 token）；裸 target token 直连路径已不存在
+        var agentId = _agents.FindAgentIdByToken(token ?? "");
+        if (first is null || agentId is null)
         {
             _logger.LogWarning("agent 接入认证失败：token 无效或缺失");
             await SendAsync(connection, AgentMessageTypes.AuthError, first?.Seq ?? 0, new
@@ -185,13 +193,26 @@ internal sealed class AgentWsSession
             return null;
         }
 
-        return (deviceId.Value, first.Seq);
+        var agent = _agents.Get(agentId.Value);
+        if (agent is null)
+        {
+            await CloseAsync(connection, WebSocketCloseCodes.AuthFailed, "认证失败：token 无效").ConfigureAwait(false);
+            return null;
+        }
+
+        var targetId = _agents.FindTargetIdByAgentId(agentId.Value);
+        return (agentId.Value, targetId ?? -agentId.Value, agent.Name, first.Seq);
     }
 
-    private void MarkSeen(long deviceId, IDeviceChannel channel)
+    private void MarkSeen(long deviceId, long agentId, IDeviceChannel channel)
     {
         var nowUtc = _clock.GetUtcNow();
-        _targets.Touch(deviceId, nowUtc);
+        _agents.Touch(agentId, nowUtc);
+        if (deviceId > 0)
+        {
+            _targets.Touch(deviceId, nowUtc);
+        }
+
         _connections.Touch(deviceId, nowUtc);
     }
 

@@ -60,7 +60,7 @@ public class DeviceInteractionModeCatalogTests : IDisposable
     public void Existing_Device_Declares_Shell_Mode()
     {
         var targets = new TargetRegistry(_db.Factory, _clock);
-        var deviceId = targets.Create(TargetTypes.Device, "网关", []).Target.Id;
+        var deviceId = targets.Create(TargetTypes.Device, "网关", []).Id;
         var catalog = new DeviceInteractionModeCatalog(targets);
 
         Assert.Equal([ShellInteractionMode.ModeKey], catalog.GetDeclaredModeKeys(deviceId));
@@ -71,7 +71,7 @@ public class DeviceInteractionModeCatalogTests : IDisposable
     {
         // 服务目标无 agent 回连通道：不声明任何交互模式（集成审查 round 1 问题 1）
         var targets = new TargetRegistry(_db.Factory, _clock);
-        var serviceId = targets.Create(TargetTypes.Service, "探针服务", []).Target.Id;
+        var serviceId = targets.Create(TargetTypes.Service, "探针服务", []).Id;
         var catalog = new DeviceInteractionModeCatalog(targets);
 
         Assert.Empty(catalog.GetDeclaredModeKeys(serviceId));

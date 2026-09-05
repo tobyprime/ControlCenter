@@ -122,6 +122,8 @@ public class AgentMessageDispatcherTests
     private sealed class FakeDeviceChannel : IDeviceChannel
     {
         public long DeviceId => 1;
+
+        public long AgentId => 0;
         public bool IsOpen => true;
         public Task SendAsync(AgentEnvelope envelope, CancellationToken cancellationToken) => Task.CompletedTask;
         public Task CloseAsync(int closeStatus, string? reason, CancellationToken cancellationToken) => Task.CompletedTask;
@@ -133,6 +135,8 @@ public class AgentConnectionRegistryTests
     private sealed class FakeDeviceChannel : IDeviceChannel
     {
         public long DeviceId { get; set; } = 1;
+
+        public long AgentId { get; set; }
         public bool IsOpen => true;
         public List<int> CloseCalls { get; } = new();
 

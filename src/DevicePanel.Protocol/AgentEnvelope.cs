@@ -13,6 +13,9 @@ public static class AgentMessageTypes
     public const string AuthError = "auth.error";
     public const string Heartbeat = "heartbeat";
 
+    /// <summary>能力声明：agent 认证成功后主动上报，payload 为字符串数组（如 ["metrics","terminal"]）；未上报 = 未声明（旧版兼容）。</summary>
+    public const string AgentCapabilities = "agent.capabilities";
+
     /// <summary>指标上报：agent 周期采集的 CPU/内存/磁盘/网络快照（指标 issue 使用）。</summary>
     public const string MetricsReport = "metrics.report";
 
@@ -63,6 +66,14 @@ public static class AgentMessageTypes
 
     /// <summary>日志拉取前缀（日志 issue 使用：logs.services.request/response、logs.tail.request/response、logs.error）。</summary>
     public const string LogsPrefix = "logs.";
+}
+
+/// <summary>agent.capabilities 内置能力名（三期模块2 起上报；具体能力类型由模块 3/4 扩充）。</summary>
+public static class AgentCapabilityNames
+{
+    public const string Metrics = "metrics";
+    public const string Terminal = "terminal";
+    public const string Logs = "logs";
 }
 
 /// <summary>WebSocket 关闭码：4000-4999 为应用自定义区段，agent 依据关闭码决定是否/如何重连。</summary>

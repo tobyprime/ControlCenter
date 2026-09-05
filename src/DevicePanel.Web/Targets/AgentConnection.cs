@@ -16,8 +16,11 @@ public sealed class AgentConnection : IDeviceChannel
         _socket = socket;
     }
 
-    /// <summary>认证握手完成前为 0，认证成功后由会话回填。</summary>
+    /// <summary>认证握手完成前为 0，认证成功后由会话回填（关联 agent = target id，未关联 = 负 agent id）。</summary>
     public long DeviceId { get; internal set; }
+
+    /// <summary>认证通过的 agent id，握手完成前为 0，认证成功后由会话回填。</summary>
+    public long AgentId { get; internal set; }
 
     public bool IsOpen => _socket.State == WebSocketState.Open;
 

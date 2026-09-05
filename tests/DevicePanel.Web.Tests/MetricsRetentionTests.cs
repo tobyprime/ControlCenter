@@ -14,7 +14,7 @@ public class MetricsRetentionTests : IDisposable
 
     public MetricsRetentionTests()
     {
-        _targetId = new TargetRegistry(_database.Factory, _clock).Create(TargetTypes.Device, "保留期设备", []).Target.Id;
+        _targetId = new TargetRegistry(_database.Factory, _clock).Create(TargetTypes.Device, "保留期设备", []).Id;
     }
 
     public void Dispose() => _database.Dispose();

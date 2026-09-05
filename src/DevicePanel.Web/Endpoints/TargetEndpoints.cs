@@ -1,4 +1,5 @@
 using DevicePanel.Protocol;
+using DevicePanel.Web.Agents;
 using DevicePanel.Web.Metrics;
 using DevicePanel.Web.Probing;
 using DevicePanel.Web.Targets;
@@ -45,6 +46,7 @@ public static class TargetEndpoints
         targets.MapPost("/", (
             [FromBody] CreateTargetRequest request,
             ITargetRegistry registry,
+            IAgentRegistry agents,
             IProbeConfigStore probes,
             IMetricKeyRegistry metricKeys,
             ProbeOptions probeOptions) =>
@@ -69,13 +71,27 @@ public static class TargetEndpoints
                 return Results.BadRequest(new { error = probeError });
             }
 
-            var created = registry.Create(type, name, tags);
-            if (type == TargetTypes.Service)
+            // 三期模块2：device 目标先建 agent（token 宿主），target 携带 agentId 镜像其 hash；service 不生成 agent
+            string agentToken;
+            long? agentId = null;
+            if (type == TargetTypes.Device)
             {
-                probes.Save(created.Target.Id, probeUrl, probeInterval, mappings);
+                var agentCreated = agents.Create(name, []);
+                agentId = agentCreated.Agent.Id;
+                agentToken = agentCreated.Token;
+            }
+            else
+            {
+                agentToken = string.Empty; // service 目标无 agent 通道，无 token 可发
             }
 
-            return Results.Json(ToCreatedResponse(created.Target, created.AgentToken), statusCode: StatusCodes.Status201Created);
+            var target = registry.Create(type, name, tags, agentId);
+            if (type == TargetTypes.Service)
+            {
+                probes.Save(target.Id, probeUrl, probeInterval, mappings);
+            }
+
+            return Results.Json(ToCreatedResponse(target, agentToken), statusCode: StatusCodes.Status201Created);
         });
 
         targets.MapPut("/{id:long}", (
@@ -100,13 +116,20 @@ public static class TargetEndpoints
         targets.MapDelete("/{id:long}", (
             long id,
             ITargetRegistry registry,
+            IAgentRegistry agents,
             AgentConnectionRegistry connections) =>
         {
-            // 先删台账与 token（此后用该 token 的新认证即被拒），再断开已注册的在线连接；
+            // 先取关联 agent，再删台账与 agent（此后用该 token 的新认证即被拒），最后断开已注册的在线连接；
             // 「认证后、注册前」落入窗口的连接由注册后复核（AgentConnectionRegistry.TryRegister）兜底关闭
+            var agentId = agents.FindAgentIdByTargetId(id);
             if (!registry.Delete(id))
             {
                 return Results.NotFound(new { error = "目标不存在" });
+            }
+
+            if (agentId is not null)
+            {
+                agents.Delete(agentId.Value);
             }
 
             connections.TryDisconnect(id, WebSocketCloseCodes.DeviceDeleted, "目标已删除");
@@ -116,12 +139,31 @@ public static class TargetEndpoints
         targets.MapPost("/{id:long}/token", (
             long id,
             ITargetRegistry registry,
+            IAgentRegistry agents,
             AgentConnectionRegistry connections) =>
         {
-            var token = registry.ResetToken(id);
-            if (token is null)
+            var target = registry.Get(id);
+            if (target is null)
             {
                 return Results.NotFound(new { error = "目标不存在" });
+            }
+
+            // token 归 agent 实体所有（三期模块2）：device 目标路由到 agent 重置；service 目标无 token
+            if (target.Type != TargetTypes.Device)
+            {
+                return Results.BadRequest(new { error = "service 目标没有 agent token" });
+            }
+
+            var agentId = agents.FindAgentIdByTargetId(id);
+            if (agentId is null)
+            {
+                return Results.NotFound(new { error = "目标没有关联的 agent" });
+            }
+
+            var token = agents.ResetToken(agentId.Value);
+            if (token is null)
+            {
+                return Results.NotFound(new { error = "目标没有关联的 agent" });
             }
 
             // 旧 token 立即失效：断开用旧 token 建立的在线连接，重连即被拒

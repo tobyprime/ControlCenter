@@ -31,7 +31,7 @@ public class AlertRuleEngineTests : IDisposable
         _metricKeys = new MetricKeyRegistry(_db.Factory, _clock);
         _outbox = new AlertOutboxStore(_db.Factory);
         _engine = CreateEngine();
-        _targetId = _targets.Create(TargetTypes.Device, _targetName, ["机房A"]).Target.Id;
+        _targetId = _targets.Create(TargetTypes.Device, _targetName, ["机房A"]).Id;
 
         // 清空迁移播种的内置规则：引擎行为测试从干净状态开始，各用例自建规则
         foreach (var seeded in _rules.List())
@@ -195,7 +195,7 @@ public class AlertRuleEngineTests : IDisposable
     [Fact]
     public void Target_Level_Rule_Shadows_Global_For_That_Target_Only()
     {
-        var otherId = _targets.Create(TargetTypes.Device, "普通设备", ["机房B"]).Target.Id;
+        var otherId = _targets.Create(TargetTypes.Device, "普通设备", ["机房B"]).Id;
         CreateRule(null, MetricKeys.Cpu, ThresholdAboveRuleType.TypeIdValue, """{"threshold":90}""");
         CreateRule(_targetId, MetricKeys.Cpu, ThresholdAboveRuleType.TypeIdValue, """{"threshold":50}""");
 

@@ -303,7 +303,7 @@ public class MetricsApiTests : IDisposable
     }
 
     private long CreateServiceTargetViaRegistry(string name) =>
-        _factory.Services.GetRequiredService<ITargetRegistry>().Create(TargetTypes.Service, name, Array.Empty<string>()).Target.Id;
+        _factory.Services.GetRequiredService<ITargetRegistry>().Create(TargetTypes.Service, name, Array.Empty<string>()).Id;
 
     private async Task<JsonElement> AvailableKeysAsync(HttpClient client, long targetId)
     {

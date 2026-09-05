@@ -6,7 +6,11 @@ namespace DevicePanel.Web.Targets;
 /// <summary>面板侧设备通道抽象：一帧 = 一个信封。指标/终端/日志等后续通道复用同一收发原语。</summary>
 public interface IDeviceChannel
 {
+    /// <summary>连接键：关联 agent 为 target id（存量链路不变），未关联 agent 为负的 agent id。</summary>
     long DeviceId { get; }
+
+    /// <summary>认证通过的 agent id；握手完成前为 0。</summary>
+    long AgentId { get; }
 
     bool IsOpen { get; }
 
