@@ -17,6 +17,8 @@ export const BUILTIN_CARD_DEFS: DashboardCardDef[] = [
   { type: 'metric-value', label: '数值卡', hint: '指标最新值与单位', multiple: true },
   { type: 'metric-status', label: '状态卡', hint: '指标当前状态', multiple: true },
   { type: 'metric-chart', label: '曲线卡', hint: '指标按时间窗的序列', multiple: true },
+  // 三期模块4 控制卡：按设备组合控制器，操作即时回执（类型契约见 dashboard/controlCardConfig.ts）
+  { type: 'control-card', label: '控制卡', hint: '按设备组合控制器，操作即时回执', multiple: true },
 ]
 
 export function cardDef(type: string): DashboardCardDef | undefined {

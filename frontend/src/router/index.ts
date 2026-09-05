@@ -78,6 +78,12 @@ const router = createRouter({
           meta: { title: '终端留痕' },
         },
         {
+          path: 'control-logs',
+          name: 'control-logs',
+          component: () => import('@/views/ControlLogsView.vue'),
+          meta: { title: '控制留痕' },
+        },
+        {
           path: 'alerts',
           name: 'alerts',
           component: () => import('@/views/AlertsView.vue'),
