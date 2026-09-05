@@ -8,7 +8,8 @@ namespace DevicePanel.Web.Endpoints;
 /// <summary>主页布局读写 API（TOB-366，前端 TOB-367 依赖本契约）：
 /// GET /api/dashboard/layout 返回当前布局，未配置时返回服务端默认布局；
 /// PUT 整份替换保存，载荷 { cards: [{ id, type, sort, visible, config }] }。
-/// config 为 JSON 透传对象（后端只存不校验语义），缺省/null 归一化为 {}；
+/// type 按服务端卡片目录校验，指标卡 config 校验来源结构（未知键仍透传，语义归前端），
+/// 其余 config 为 JSON 透传对象，缺省/null 归一化为 {}；
 /// 卡片按 sort 升序返回；非法载荷返回 400 + { error }。</summary>
 public static class DashboardEndpoints
 {
@@ -125,6 +126,12 @@ public static class DashboardEndpoints
             return false;
         }
 
+        if (!DashboardCardCatalog.IsKnownType(type))
+        {
+            error = $"{subject} type 未知：{type}";
+            return false;
+        }
+
         if (!element.TryGetProperty("sort", out var sortElement)
             || sortElement.ValueKind != JsonValueKind.Number
             || !sortElement.TryGetInt32(out var sort)
@@ -151,7 +158,62 @@ public static class DashboardEndpoints
         var config = configElement.ValueKind == JsonValueKind.Object
             ? configElement.Clone()
             : EmptyObject();
+
+        if (DashboardCardCatalog.IsMetricType(type)
+            && !TryValidateMetricConfig(config, subject, out error))
+        {
+            return false;
+        }
+
         card = new DashboardCard(id, type, sort, visibleElement.GetBoolean(), config);
+        return true;
+    }
+
+    /// <summary>
+    /// 指标卡来源结构校验（与前端 parseMetricCardConfig 的结构契约对齐）：
+    /// targetId 正整数、key 非空、windowHours 可选但出现时必须为正有限数；未知键仍透传（语义归前端）。
+    /// </summary>
+    private static bool TryValidateMetricConfig(JsonElement config, string subject, [NotNullWhen(false)] out string? error)
+    {
+        error = null;
+        if (config.ValueKind != JsonValueKind.Object)
+        {
+            error = $"{subject} 为指标卡，必须携带 config（targetId、key）";
+            return false;
+        }
+
+        if (!config.TryGetProperty("targetId", out var targetIdElement)
+            || targetIdElement.ValueKind != JsonValueKind.Number
+            || !targetIdElement.TryGetInt64(out var targetId)
+            || targetId <= 0)
+        {
+            error = $"{subject} config.targetId 必须是正整数";
+            return false;
+        }
+
+        if (!config.TryGetProperty("key", out var keyElement)
+            || keyElement.ValueKind != JsonValueKind.String
+            || string.IsNullOrWhiteSpace(keyElement.GetString()))
+        {
+            error = $"{subject} config.key 必须是非空字符串";
+            return false;
+        }
+
+        if (keyElement.GetString() is { Length: > MaxCardFieldLength })
+        {
+            error = $"{subject} config.key 长度不能超过 {MaxCardFieldLength} 个字符";
+            return false;
+        }
+
+        if (config.TryGetProperty("windowHours", out var windowElement)
+            && (windowElement.ValueKind != JsonValueKind.Number
+                || !double.IsFinite(windowElement.GetDouble())
+                || windowElement.GetDouble() <= 0))
+        {
+            error = $"{subject} config.windowHours 必须是正数";
+            return false;
+        }
+
         return true;
     }
 

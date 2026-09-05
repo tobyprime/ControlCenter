@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { fetchSession } from '@/router'
 import { listTargets, type Target } from '@/api/targets'
+import { fetchActiveAlertCount } from '@/api/alerts'
 import { fetchDashboardLayout, saveDashboardLayout, type DashboardCard } from '@/api/dashboard'
 import {
   listMetricKeys,
@@ -43,6 +44,11 @@ async function refreshOverview() {
     overview.value.online = String(list.filter((target) => target.online).length)
   } catch {
     // 首页概览加载失败不打断页面，保留占位；targets 未就绪，指标卡不判「目标不存在」
+  }
+  try {
+    overview.value.alerts = String((await fetchActiveAlertCount()).count)
+  } catch {
+    // 告警计数失败仅保留占位，不影响设备概览与指标卡刷新
   }
 }
 
@@ -299,7 +305,7 @@ onBeforeUnmount(() => {
     <div class="home-header">
       <div>
         <h1 class="home-title">欢迎，{{ username || '管理员' }}</h1>
-        <p class="home-description">当前为一期骨架版本，终端、日志与告警功能将陆续上线。</p>
+        <p class="home-description">设备与目标、日志查看、终端交互、告警通知均已上线；主页概览支持自定义卡片布局与指标卡。</p>
       </div>
       <button v-if="!editing" type="button" class="primary-button" @click="enterEdit">
         进入编辑

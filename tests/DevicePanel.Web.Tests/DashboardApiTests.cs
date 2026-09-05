@@ -45,8 +45,8 @@ public class DashboardApiTests : IDisposable
         const string put = """
             {
                 "cards": [
-                    { "id": "card-metric", "type": "metric-line", "sort": 1, "visible": false,
-                      "config": { "source": "agent", "windowMinutes": 30, "threshold": 1.50, "tags": ["cpu", "内存"], "note": null } },
+                    { "id": "card-metric", "type": "metric-value", "sort": 1, "visible": false,
+                      "config": { "targetId": 7, "key": "cpu", "windowHours": 6, "tags": ["cpu", "内存"], "note": null } },
                     { "id": "card-total", "type": "overview-total-devices", "sort": 0, "visible": true, "config": {} }
                 ]
             }
@@ -66,11 +66,11 @@ public class DashboardApiTests : IDisposable
         Assert.Equal("card-total", cards[0].GetProperty("id").GetString());
         Assert.Equal("card-metric", cards[1].GetProperty("id").GetString());
 
-        // config 原样往返：值不被篡改（透传字段，后端不解释语义）
+        // config 原样往返：结构化字段与额外透传键的值均不被篡改（未知键语义仍归前端解释）
         var config = cards[1].GetProperty("config");
-        Assert.Equal("agent", config.GetProperty("source").GetString());
-        Assert.Equal(30, config.GetProperty("windowMinutes").GetInt32());
-        Assert.Equal(1.50, config.GetProperty("threshold").GetDouble());
+        Assert.Equal(7, config.GetProperty("targetId").GetInt64());
+        Assert.Equal("cpu", config.GetProperty("key").GetString());
+        Assert.Equal(6, config.GetProperty("windowHours").GetDouble());
         Assert.Equal("内存", config.GetProperty("tags")[1].GetString());
         Assert.Equal(JsonValueKind.Null, config.GetProperty("note").ValueKind);
         Assert.False(cards[1].GetProperty("visible").GetBoolean());
@@ -80,12 +80,12 @@ public class DashboardApiTests : IDisposable
     public async Task Layout_Put_Replaces_Previously_Saved_Layout()
     {
         var client = await AuthenticatedAsync();
-        await PutLayoutAsync(client, """{ "cards": [ { "id": "a", "type": "t-a", "sort": 0, "visible": true, "config": {} } ] }""");
+        await PutLayoutAsync(client, """{ "cards": [ { "id": "a", "type": "overview-total-devices", "sort": 0, "visible": true, "config": {} } ] }""");
 
         await PutLayoutAsync(client, """
             { "cards": [
-                { "id": "b", "type": "t-b", "sort": 0, "visible": true, "config": {} },
-                { "id": "c", "type": "t-c", "sort": 1, "visible": false, "config": {} }
+                { "id": "b", "type": "overview-online-devices", "sort": 0, "visible": true, "config": {} },
+                { "id": "c", "type": "overview-active-alerts", "sort": 1, "visible": false, "config": {} }
             ] }
             """);
 
@@ -103,7 +103,7 @@ public class DashboardApiTests : IDisposable
 
         var putResponse = await PutLayoutAsync(
             client,
-            """{ "cards": [ { "id": "a", "type": "t-a", "sort": 0, "visible": true, "config": null } ] }""");
+            """{ "cards": [ { "id": "a", "type": "overview-total-devices", "sort": 0, "visible": true, "config": null } ] }""");
         Assert.Equal(HttpStatusCode.NoContent, putResponse.StatusCode);
 
         var payload = await ReadJsonAsync(await client.GetAsync("/api/dashboard/layout"));
@@ -117,13 +117,31 @@ public class DashboardApiTests : IDisposable
 
         var putResponse = await PutLayoutAsync(
             client,
-            """{ "cards": [ { "id": "a", "type": "t-a", "sort": 0, "visible": true } ] }""");
+            """{ "cards": [ { "id": "a", "type": "overview-online-devices", "sort": 0, "visible": true } ] }""");
         Assert.Equal(HttpStatusCode.NoContent, putResponse.StatusCode);
 
         var payload = await ReadJsonAsync(await client.GetAsync("/api/dashboard/layout"));
         var config = payload.GetProperty("cards")[0].GetProperty("config");
         Assert.Equal(JsonValueKind.Object, config.ValueKind);
         Assert.Equal("{}", config.GetRawText());
+    }
+
+    [Fact]
+    public async Task Layout_Put_Accepts_Metric_Card_With_Structured_Config()
+    {
+        var client = await AuthenticatedAsync();
+
+        // 指标卡 config 必须携带来源结构（targetId + key）；windowHours 可选，缺省不强造
+        var putResponse = await PutLayoutAsync(
+            client,
+            """{ "cards": [ { "id": "m", "type": "metric-status", "sort": 0, "visible": true, "config": { "targetId": 3, "key": "online" } } ] }""");
+        Assert.Equal(HttpStatusCode.NoContent, putResponse.StatusCode);
+
+        var payload = await ReadJsonAsync(await client.GetAsync("/api/dashboard/layout"));
+        var config = payload.GetProperty("cards")[0].GetProperty("config");
+        Assert.Equal(3, config.GetProperty("targetId").GetInt64());
+        Assert.Equal("online", config.GetProperty("key").GetString());
+        Assert.False(config.TryGetProperty("windowHours", out _));
     }
 
     [Fact]
@@ -137,7 +155,7 @@ public class DashboardApiTests : IDisposable
         // 恰好 128 字符：允许
         var atLimit = await PutLayoutAsync(
             client,
-            $$"""{ "cards": [ { "id": "{{idAtLimit}}", "type": "t", "sort": 0, "visible": true, "config": {} } ] }""");
+            $$"""{ "cards": [ { "id": "{{idAtLimit}}", "type": "overview-total-devices", "sort": 0, "visible": true, "config": {} } ] }""");
         Assert.Equal(HttpStatusCode.NoContent, atLimit.StatusCode);
         var payload = await ReadJsonAsync(await client.GetAsync("/api/dashboard/layout"));
         Assert.Equal(idAtLimit, payload.GetProperty("cards")[0].GetProperty("id").GetString());
@@ -151,7 +169,7 @@ public class DashboardApiTests : IDisposable
         // id 超 128 字符：400
         var idTooLong = await PutLayoutAsync(
             client,
-            $$"""{ "cards": [ { "id": "{{idOverLimit}}", "type": "t", "sort": 0, "visible": true, "config": {} } ] }""");
+            $$"""{ "cards": [ { "id": "{{idOverLimit}}", "type": "overview-online-devices", "sort": 0, "visible": true, "config": {} } ] }""");
         Assert.Equal(HttpStatusCode.BadRequest, idTooLong.StatusCode);
     }
 
@@ -161,21 +179,31 @@ public class DashboardApiTests : IDisposable
     [InlineData("{}")]
     [InlineData("""{ "cards": {} }""")]
     [InlineData("""{ "cards": [] }""")]
-    [InlineData("""{ "cards": [ { "type": "t", "sort": 0, "visible": true } ] }""")]
-    [InlineData("""{ "cards": [ { "id": "", "type": "t", "sort": 0, "visible": true } ] }""")]
-    [InlineData("""{ "cards": [ { "id": 1, "type": "t", "sort": 0, "visible": true } ] }""")]
+    [InlineData("""{ "cards": [ { "type": "overview-total-devices", "sort": 0, "visible": true } ] }""")]
+    [InlineData("""{ "cards": [ { "id": "", "type": "overview-total-devices", "sort": 0, "visible": true } ] }""")]
+    [InlineData("""{ "cards": [ { "id": 1, "type": "overview-total-devices", "sort": 0, "visible": true } ] }""")]
     [InlineData("""{ "cards": [ { "id": "a", "sort": 0, "visible": true } ] }""")]
     [InlineData("""{ "cards": [ { "id": "a", "type": "", "sort": 0, "visible": true } ] }""")]
     [InlineData("""{ "cards": [ { "id": "a", "visible": true } ] }""")]
-    [InlineData("""{ "cards": [ { "id": "a", "type": "t", "sort": -1, "visible": true } ] }""")]
-    [InlineData("""{ "cards": [ { "id": "a", "type": "t", "sort": 1.5, "visible": true } ] }""")]
-    [InlineData("""{ "cards": [ { "id": "a", "type": "t", "sort": "0", "visible": true } ] }""")]
-    [InlineData("""{ "cards": [ { "id": "a", "type": "t", "sort": 0 } ] }""")]
-    [InlineData("""{ "cards": [ { "id": "a", "type": "t", "sort": 0, "visible": "yes" } ] }""")]
-    [InlineData("""{ "cards": [ { "id": "a", "type": "t", "sort": 0, "visible": true, "config": "x" } ] }""")]
-    [InlineData("""{ "cards": [ { "id": "a", "type": "t", "sort": 0, "visible": true, "config": [1] } ] }""")]
-    [InlineData("""{ "cards": [ { "id": "a", "type": "t", "sort": 0, "visible": true }, { "id": "a", "type": "u", "sort": 1, "visible": true } ] }""")]
+    [InlineData("""{ "cards": [ { "id": "a", "type": "overview-total-devices", "sort": -1, "visible": true } ] }""")]
+    [InlineData("""{ "cards": [ { "id": "a", "type": "overview-total-devices", "sort": 1.5, "visible": true } ] }""")]
+    [InlineData("""{ "cards": [ { "id": "a", "type": "overview-total-devices", "sort": "0", "visible": true } ] }""")]
+    [InlineData("""{ "cards": [ { "id": "a", "type": "overview-total-devices", "sort": 0 } ] }""")]
+    [InlineData("""{ "cards": [ { "id": "a", "type": "overview-total-devices", "sort": 0, "visible": "yes" } ] }""")]
+    [InlineData("""{ "cards": [ { "id": "a", "type": "overview-total-devices", "sort": 0, "visible": true, "config": "x" } ] }""")]
+    [InlineData("""{ "cards": [ { "id": "a", "type": "overview-total-devices", "sort": 0, "visible": true, "config": [1] } ] }""")]
+    [InlineData("""{ "cards": [ { "id": "a", "type": "overview-total-devices", "sort": 0, "visible": true }, { "id": "a", "type": "overview-online-devices", "sort": 1, "visible": true } ] }""")]
     [InlineData("""{ "cards": [ 1 ] }""")]
+    // 未知卡片类型（目录外）拒绝：防脏类型入库后前端静默丢卡
+    [InlineData("""{ "cards": [ { "id": "a", "type": "no-such-card", "sort": 0, "visible": true } ] }""")]
+    // 指标卡 config 必须携带来源结构：缺 config / 缺 key / 空 key / 非法 targetId / 非法 windowHours
+    [InlineData("""{ "cards": [ { "id": "m", "type": "metric-value", "sort": 0, "visible": true } ] }""")]
+    [InlineData("""{ "cards": [ { "id": "m", "type": "metric-value", "sort": 0, "visible": true, "config": { "targetId": 1 } } ] }""")]
+    [InlineData("""{ "cards": [ { "id": "m", "type": "metric-value", "sort": 0, "visible": true, "config": { "targetId": 1, "key": "  " } } ] }""")]
+    [InlineData("""{ "cards": [ { "id": "m", "type": "metric-value", "sort": 0, "visible": true, "config": { "targetId": 0, "key": "cpu" } } ] }""")]
+    [InlineData("""{ "cards": [ { "id": "m", "type": "metric-value", "sort": 0, "visible": true, "config": { "targetId": "1", "key": "cpu" } } ] }""")]
+    [InlineData("""{ "cards": [ { "id": "m", "type": "metric-value", "sort": 0, "visible": true, "config": { "targetId": 1, "key": "cpu", "windowHours": 0 } } ] }""")]
+    [InlineData("""{ "cards": [ { "id": "m", "type": "metric-value", "sort": 0, "visible": true, "config": { "targetId": 1, "key": "cpu", "windowHours": "24" } } ] }""")]
     public async Task Layout_Put_Rejects_Invalid_Payload_With_BadRequest(string body)
     {
         var client = await AuthenticatedAsync();

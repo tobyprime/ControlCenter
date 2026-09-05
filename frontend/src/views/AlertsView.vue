@@ -206,35 +206,64 @@ async function onToggleRule(rule: AlertRule): Promise<void> {
   }
 }
 
-async function onEditRule(rule: AlertRule): Promise<void> {
-  const raw = rule.parameters['threshold'] ?? rule.parameters['minutes'] ?? rule.parameters['expected']
-  const input = window.prompt(
-    `修改「${rule.metricDisplayName}」${ruleTypeLabel(rule.ruleType)}规则参数（当前 ${String(raw)}）：`,
-    String(raw ?? ''),
-  )
-  if (input === null) return
+// 规则参数修改表单（替代 window.prompt）：校验错误显示在弹窗内，不再用 alert 打断
+const showEditForm = ref(false)
+const editRule = ref<AlertRule | null>(null)
+const editValue = ref('')
+const editSubmitting = ref(false)
+const editError = ref('')
+
+const editParamKey = computed(() => {
+  const params = editRule.value?.parameters ?? {}
+  if (params['threshold'] !== undefined) return 'threshold'
+  if (params['minutes'] !== undefined) return 'minutes'
+  if (params['expected'] !== undefined) return 'expected'
+  return ''
+})
+
+const editFieldLabel = computed(() => {
+  if (editParamKey.value === 'threshold') return '阈值'
+  if (editParamKey.value === 'minutes') return '无数据判定时长（分钟）'
+  if (editParamKey.value === 'expected') return '期望状态值（bool 写 true/false）'
+  return '参数值'
+})
+
+function openEditForm(rule: AlertRule): void {
+  editRule.value = rule
+  editValue.value = String(rule.parameters['threshold'] ?? rule.parameters['minutes'] ?? rule.parameters['expected'] ?? '')
+  editError.value = ''
+  showEditForm.value = true
+}
+
+async function submitEditRule(): Promise<void> {
+  const rule = editRule.value
+  if (!rule || editSubmitting.value) return
   const parameters: Record<string, unknown> = { ...rule.parameters }
-  if (parameters['threshold'] !== undefined) {
-    const value = Number(input)
+  if (editParamKey.value === 'threshold') {
+    const value = Number(editValue.value)
     if (Number.isNaN(value)) {
-      window.alert('请输入数值')
+      editError.value = '请输入数值'
       return
     }
     parameters['threshold'] = value
-  } else if (parameters['minutes'] !== undefined) {
-    const value = Number(input)
+  } else if (editParamKey.value === 'minutes') {
+    const value = Number(editValue.value)
     if (Number.isNaN(value) || value < 1) {
-      window.alert('请输入不小于 1 的分钟数')
+      editError.value = '请输入不小于 1 的分钟数'
       return
     }
     parameters['minutes'] = value
-  } else if (parameters['expected'] !== undefined) {
-    if (!input.trim()) {
-      window.alert('期望值不能为空')
+  } else if (editParamKey.value === 'expected') {
+    if (!editValue.value.trim()) {
+      editError.value = '期望值不能为空'
       return
     }
-    parameters['expected'] = input.trim()
+    parameters['expected'] = editValue.value.trim()
+  } else {
+    return
   }
+  editSubmitting.value = true
+  editError.value = ''
   try {
     await updateAlertRule(rule.id, {
       parameters,
@@ -242,9 +271,12 @@ async function onEditRule(rule: AlertRule): Promise<void> {
       repeatMinutes: rule.repeatMinutes,
       enabled: rule.enabled,
     })
+    showEditForm.value = false
     await loadRules()
   } catch (e) {
-    rulesError.value = e instanceof Error ? e.message : '修改规则失败'
+    editError.value = e instanceof Error ? e.message : '修改规则失败'
+  } finally {
+    editSubmitting.value = false
   }
 }
 
@@ -320,7 +352,7 @@ onMounted(async () => {
             <td>{{ ruleTypeLabel(rule.ruleType) }}</td>
             <td>
               {{ parameterText(rule) }}
-              <button type="button" class="link-button" @click="onEditRule(rule)">修改</button>
+              <button type="button" class="link-button" @click="openEditForm(rule)">修改</button>
             </td>
             <td>{{ rule.sustainSeconds }} 秒</td>
             <td>{{ rule.repeatMinutes === 0 ? '恢复前一次' : `${rule.repeatMinutes} 分钟` }}</td>
@@ -396,6 +428,42 @@ onMounted(async () => {
             <button type="button" class="ghost-button" @click="showRuleForm = false">取消</button>
             <button type="button" class="primary-button" :disabled="formSubmitting || formUsableTypes.length === 0" @click="submitRule">
               {{ formSubmitting ? '创建中…' : '创建规则' }}
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div v-if="showEditForm" class="dialog-mask" @click.self="showEditForm = false">
+        <div class="dialog">
+          <h2 class="dialog-title">修改规则参数</h2>
+          <p v-if="editRule" class="field-hint">
+            {{ editRule.targetId === null ? '全局规则' : `目标「${editRule.targetName}」` }} ·
+            {{ editRule.metricDisplayName }} · {{ ruleTypeLabel(editRule.ruleType) }}
+          </p>
+          <label class="field">
+            <span class="field-label">{{ editFieldLabel }}</span>
+            <input
+              v-if="editParamKey === 'expected'"
+              v-model="editValue"
+              type="text"
+              class="control-input"
+              placeholder="如 true / online"
+            />
+            <input
+              v-else-if="editParamKey === 'minutes'"
+              v-model="editValue"
+              type="number"
+              min="1"
+              max="1440"
+              class="control-input"
+            />
+            <input v-else v-model="editValue" type="number" step="any" class="control-input" />
+          </label>
+          <p v-if="editError" class="error-note">{{ editError }}</p>
+          <div class="dialog-actions">
+            <button type="button" class="ghost-button" @click="showEditForm = false">取消</button>
+            <button type="button" class="primary-button" :disabled="editSubmitting" @click="submitEditRule">
+              {{ editSubmitting ? '保存中…' : '保存' }}
             </button>
           </div>
         </div>

@@ -109,6 +109,10 @@ public static class AlertEndpoints
             });
         });
 
+        // 首页「活跃告警」概览卡数据源：已触发且未恢复的事件数（防抖等待中不算）
+        alerts.MapGet("/active-count", (IAlertStateStore states) =>
+            Results.Ok(new { count = states.CountActive() }));
+
         var rules = endpoints.MapGroup("/api/alert-rules");
 
         // 规则类型目录（可插拔扩展点的 UI 发现入口）

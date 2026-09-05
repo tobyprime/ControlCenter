@@ -63,9 +63,12 @@ test('告警规则页：迁移播种的全局规则可见、可新建/关闭/删
   await memRow.getByRole('button', { name: '启用', exact: true }).click()
   await expect(memRow).toContainText('启用')
 
-  // 修改参数：阈值 5 → 8
-  page.once('dialog', (dialog) => dialog.accept('8'))
+  // 修改参数：阈值 5 → 8（修改已换弹窗表单，校验错误内联展示，不再走 window.prompt）
   await memRow.getByRole('button', { name: '修改' }).click()
+  const editDialog = page.locator('.dialog', { hasText: '修改规则参数' })
+  await editDialog.locator('input[type="number"]').fill('8')
+  await editDialog.getByRole('button', { name: '保存' }).click()
+  await expect(editDialog).toBeHidden()
   await expect(memRow).toContainText('阈值 8')
 
   // 删除规则
