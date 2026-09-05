@@ -19,7 +19,7 @@ async function expectNoHorizontalOverflow(page: Page, label: string) {
 }
 
 async function createDeviceViaApi(page: Page, name: string): Promise<{ id: number; agentToken: string }> {
-  const response = await page.request.post('/api/targets', {
+  const response = await page.request.post('/api/collectors', {
     data: { name, tags: ['E2E'] },
   })
   expect(response.ok()).toBeTruthy()
@@ -124,37 +124,36 @@ test.describe('Web 终端（TOB-339）', () => {
     await expectNoHorizontalOverflow(page, '终端留痕 1280px')
   })
 
-  test('服务目标不提供终端入口：下拉不列 service 目标，modes 声明为空（集成审查问题 1）', async ({ page }) => {
+  test('无 agent 通道的采集器不提供终端入口：下拉不列 pull 采集器，modes 声明为空（集成审查问题 1）', async ({ page }) => {
     await login(page)
 
-    // device + service 目标各建一台：服务目标无 agent 通道，不应出现可连接终端入口
+    // push + pull 采集器各建一台：pull 采集器由面板轮询、无 agent 通道，不应出现可连接终端入口
     const deviceName = `终端可见设备 ${Date.now()}`
-    const serviceName = `探针服务目标 ${Date.now()}`
+    const pullName = `轮询服务采集器 ${Date.now()}`
     const device = await createDeviceViaApi(page, deviceName)
-    const serviceResponse = await page.request.post('/api/targets', {
+    const pullResponse = await page.request.post('/api/collectors', {
       data: {
-        type: 'service',
-        name: serviceName,
+        name: pullName,
         tags: ['E2E'],
-        probe: { url: 'http://127.0.0.1:9/health', mappings: [] },
+        pull: { url: 'http://127.0.0.1:9/health', intervalSeconds: 60, mappings: [] },
       },
     })
-    expect(serviceResponse.ok()).toBeTruthy()
-    const service = (await serviceResponse.json()) as { id: number }
+    expect(pullResponse.ok()).toBeTruthy()
+    const pull = (await pullResponse.json()) as { id: number }
 
-    // API 契约：device 声明 shell，service 声明为空（端点返回 mode 对象数组）
+    // API 契约：push 采集器声明 shell，pull 采集器声明为空（端点返回 mode 对象数组）
     const modeKeys = (modes: { key: string }[]) => modes.map((mode) => mode.key)
-    const serviceModes = await (await page.request.get(`/api/devices/${service.id}/interaction-modes`)).json()
-    expect(modeKeys(serviceModes)).toEqual([])
+    const pullModes = await (await page.request.get(`/api/devices/${pull.id}/interaction-modes`)).json()
+    expect(modeKeys(pullModes)).toEqual([])
     const deviceModes = await (await page.request.get(`/api/devices/${device.id}/interaction-modes`)).json()
     expect(modeKeys(deviceModes)).toEqual(['shell'])
 
-    // 终端页下拉：服务目标不作为可连接选项出现
+    // 终端页下拉：pull 采集器不作为可连接选项出现
     await page.getByRole('link', { name: 'Web 终端' }).click()
     await expect(page.getByRole('heading', { name: 'Web 终端' })).toBeVisible()
 
     const options = page.locator('select.device-select option')
-    await expect(options.filter({ hasText: serviceName })).toHaveCount(0)
+    await expect(options.filter({ hasText: pullName })).toHaveCount(0)
     await expect(options.filter({ hasText: deviceName })).toHaveCount(1)
   })
 
