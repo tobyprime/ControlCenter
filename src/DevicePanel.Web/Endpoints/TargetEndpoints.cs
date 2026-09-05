@@ -85,7 +85,22 @@ public static class TargetEndpoints
                 agentToken = string.Empty; // service 目标无 agent 通道，无 token 可发
             }
 
-            var target = registry.Create(type, name, tags, agentId);
+            TargetInfo target;
+            try
+            {
+                target = registry.Create(type, name, tags, agentId);
+            }
+            catch
+            {
+                // 补偿：targets 落库失败时回收刚签发的 agent，避免遗留带有效 token 的孤儿行
+                if (agentId is not null)
+                {
+                    agents.Delete(agentId.Value);
+                }
+
+                throw;
+            }
+
             if (type == TargetTypes.Service)
             {
                 probes.Save(target.Id, probeUrl, probeInterval, mappings);

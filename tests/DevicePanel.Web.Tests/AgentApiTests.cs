@@ -3,6 +3,7 @@ using System.Net.Http.Json;
 using System.Net.WebSockets;
 using System.Text.Json;
 using DevicePanel.Protocol;
+using DevicePanel.Web.Infrastructure;
 using DevicePanel.Web.Targets;
 using Microsoft.Extensions.DependencyInjection;
 using Xunit;
@@ -35,7 +36,7 @@ public class AgentApiTests : IDisposable
 
         var created = await CreateAgentAsync(client, "边缘 agent", new[] { "机房A" });
         Assert.True(created.GetProperty("id").GetInt64() > 0);
-        Assert.StartsWith(TargetRegistry.TokenTypePrefix, created.GetProperty("agentToken").GetString());
+        Assert.StartsWith(AgentToken.Prefix, created.GetProperty("agentToken").GetString());
         Assert.Equal(new[] { "机房A" }, created.GetProperty("labels").EnumerateArray().Select(l => l.GetString()).ToArray());
         Assert.Equal(JsonValueKind.Null, created.GetProperty("capabilities").ValueKind); // 未声明能力
 
@@ -143,6 +144,58 @@ public class AgentApiTests : IDisposable
 
         Assert.Equal(HttpStatusCode.BadRequest, delete.StatusCode);
         Assert.Single(await ListAgentsAsync(client));
+    }
+
+    /// <summary>注入 targets 落库失败（审查问题3）：device 目标创建失败路径不允许遗留带有效 token 的孤儿 agent。</summary>
+    public sealed class ExplodingCreateFactory : TestAppFactory
+    {
+        public ExplodingCreateFactory()
+        {
+            Settings["DevicePanel:Auth:InitialPassword"] = "test-password-1";
+            // 生产注册为 singleton（被 singleton worker 消费），测试替换必须保持同生命周期
+            TestServices = services => services.AddSingleton<ITargetRegistry>(sp => new ExplodingCreateTargetRegistry(
+                new TargetRegistry(sp.GetRequiredService<SqliteConnectionFactory>(), sp.GetRequiredService<TimeProvider>())));
+        }
+
+        private sealed class ExplodingCreateTargetRegistry : ITargetRegistry
+        {
+            private readonly TargetRegistry _inner;
+
+            public ExplodingCreateTargetRegistry(TargetRegistry inner) => _inner = inner;
+
+            public TargetInfo Create(string type, string name, IReadOnlyList<string> tags, long? agentId = null) =>
+                throw new InvalidOperationException("注入故障：targets 落库失败");
+
+            public TargetInfo? Update(long id, string name, IReadOnlyList<string> tags) => _inner.Update(id, name, tags);
+
+            public bool Delete(long id) => _inner.Delete(id);
+
+            public TargetInfo? Get(long id) => _inner.Get(id);
+
+            public IReadOnlyList<TargetInfo> List() => _inner.List();
+
+            public void Touch(long targetId, DateTimeOffset seenAtUtc) => _inner.Touch(targetId, seenAtUtc);
+        }
+    }
+
+    [Fact]
+    public async Task Device_Target_Create_Failure_Leaves_No_Orphan_Agent()
+    {
+        using var factory = new ExplodingCreateFactory();
+        var client = factory.CreateClient();
+        var login = await client.PostAsJsonAsync("/api/auth/login", new { username = "admin", password = "test-password-1" });
+        login.EnsureSuccessStatusCode();
+
+        try
+        {
+            await client.PostAsJsonAsync("/api/targets", new { type = "device", name = "故障设备", tags = Array.Empty<string>() });
+        }
+        catch (Exception)
+        {
+            // 注入故障以 500/异常冒出均可：断言与失败形态无关，只看 agents 台账无孤儿
+        }
+
+        Assert.Empty(await ListAgentsAsync(client));
     }
 
     [Fact]

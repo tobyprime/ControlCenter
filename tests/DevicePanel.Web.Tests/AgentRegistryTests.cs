@@ -1,5 +1,7 @@
 using DevicePanel.Web.Agents;
+using DevicePanel.Web.Infrastructure;
 using DevicePanel.Web.Targets;
+using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Time.Testing;
 using Xunit;
 
@@ -28,7 +30,7 @@ public class AgentRegistryTests : IDisposable
         Assert.True(created.Agent.Id > 0);
         Assert.Equal("边缘 agent", created.Agent.Name);
         Assert.Equal(new[] { "机房A" }, created.Agent.Labels);
-        Assert.StartsWith(TargetRegistry.TokenTypePrefix, created.Token);
+        Assert.StartsWith(AgentToken.Prefix, created.Token);
         Assert.Null(created.Agent.Capabilities); // 未声明（旧版 agent 兼容语义）
         Assert.Null(created.Agent.LastSeenAtUtc);
 
@@ -61,7 +63,7 @@ public class AgentRegistryTests : IDisposable
         var newToken = registry.ResetToken(created.Agent.Id);
 
         Assert.NotNull(newToken);
-        Assert.StartsWith(TargetRegistry.TokenTypePrefix, newToken);
+        Assert.StartsWith(AgentToken.Prefix, newToken);
         Assert.Null(registry.FindAgentIdByToken(created.Token));
         Assert.Equal(created.Agent.Id, registry.FindAgentIdByToken(newToken!));
     }
@@ -197,6 +199,40 @@ public class AgentRegistryTests : IDisposable
         Assert.Equal(created.Agent.Id, agents.FindAgentIdByTargetId(target.Id));
         Assert.Null(agents.FindTargetIdByAgentId(999));
         Assert.Null(agents.FindAgentIdByTargetId(999));
+    }
+
+    [Fact]
+    public void ResetToken_Keeps_Agent_Hash_When_Mirror_Write_Fails()
+    {
+        // 审查问题2：agent hash 与镜像 hash 两条写库必须同生共死——镜像写失败（触发器注入故障）时
+        // agent 侧不允许已推进到新 hash（否则库中留下「新 agent hash + 旧镜像 hash」的不一致态）
+        var agents = CreateRegistry();
+        var targets = CreateTargetRegistry();
+        var created = agents.Create("设备", Array.Empty<string>());
+        targets.Create(TargetTypes.Device, "设备", Array.Empty<string>(), created.Agent.Id);
+        var oldHash = StoredAgentHash(created.Agent.Id);
+
+        using (var connection = _db.CreateOpenConnection())
+        using (var command = connection.CreateCommand())
+        {
+            command.CommandText = """
+                CREATE TRIGGER fail_mirror_update BEFORE UPDATE OF agent_token_hash ON targets
+                BEGIN SELECT RAISE(ABORT, '注入故障：镜像写入失败'); END
+                """;
+            command.ExecuteNonQuery();
+        }
+
+        Assert.Throws<SqliteException>(() => agents.ResetToken(created.Agent.Id));
+        Assert.Equal(oldHash, StoredAgentHash(created.Agent.Id));
+    }
+
+    private string StoredAgentHash(long agentId)
+    {
+        using var connection = _db.CreateOpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = "SELECT token_hash FROM agents WHERE id = $id";
+        command.Parameters.AddWithValue("$id", agentId);
+        return Convert.ToString(command.ExecuteScalar())!;
     }
 
     public void Dispose() => _db.Dispose();

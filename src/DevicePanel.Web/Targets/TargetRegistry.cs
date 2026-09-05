@@ -1,4 +1,3 @@
-using System.Security.Cryptography;
 using System.Text.Json;
 using DevicePanel.Web.Infrastructure;
 using Microsoft.Data.Sqlite;
@@ -51,8 +50,6 @@ public interface ITargetRegistry
 
 public sealed class TargetRegistry : ITargetRegistry
 {
-    public const string TokenTypePrefix = "dpk_";
-
     private readonly SqliteConnectionFactory _connectionFactory;
     private readonly TimeProvider _timeProvider;
 
@@ -80,7 +77,7 @@ public sealed class TargetRegistry : ITargetRegistry
             command.Parameters.AddWithValue("$name", name);
             command.Parameters.AddWithValue("$tags", SerializeTags(tags));
             command.Parameters.AddWithValue("$agentId", agentId ?? (object)DBNull.Value);
-            command.Parameters.AddWithValue("$placeholderHash", HashToken(GeneratePlaceholderToken()));
+            command.Parameters.AddWithValue("$placeholderHash", AgentToken.Hash(AgentToken.Generate()));
             command.Parameters.AddWithValue("$createdAt", FormatUtc(nowUtc));
             command.Parameters.AddWithValue("$updatedAt", FormatUtc(nowUtc));
             command.ExecuteNonQuery();
@@ -189,14 +186,6 @@ public sealed class TargetRegistry : ITargetRegistry
         {
             return [];
         }
-    }
-
-    private static string GeneratePlaceholderToken() => TokenTypePrefix + Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
-
-    private static string HashToken(string token)
-    {
-        var bytes = SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(token));
-        return Convert.ToHexString(bytes);
     }
 
     private static string FormatUtc(DateTimeOffset value) => value.ToString("O");

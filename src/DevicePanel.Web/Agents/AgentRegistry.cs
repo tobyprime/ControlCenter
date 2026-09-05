@@ -1,4 +1,3 @@
-using System.Security.Cryptography;
 using System.Text.Json;
 using DevicePanel.Web.Infrastructure;
 using DevicePanel.Web.Targets;
@@ -70,7 +69,7 @@ public sealed class AgentRegistry : IAgentRegistry
     public AgentCreated Create(string name, IReadOnlyList<string> labels)
     {
         var nowUtc = _timeProvider.GetUtcNow();
-        var token = GenerateToken();
+        var token = AgentToken.Generate();
         using var connection = _connectionFactory.CreateOpenConnection();
         long id;
         using (var command = connection.CreateCommand())
@@ -81,7 +80,7 @@ public sealed class AgentRegistry : IAgentRegistry
                 """;
             command.Parameters.AddWithValue("$name", name);
             command.Parameters.AddWithValue("$labels", JsonSerializer.Serialize(NormalizeLabels(labels)));
-            command.Parameters.AddWithValue("$tokenHash", HashToken(token));
+            command.Parameters.AddWithValue("$tokenHash", AgentToken.Hash(token));
             command.Parameters.AddWithValue("$createdAt", FormatUtc(nowUtc));
             command.Parameters.AddWithValue("$updatedAt", FormatUtc(nowUtc));
             command.ExecuteNonQuery();
@@ -105,37 +104,44 @@ public sealed class AgentRegistry : IAgentRegistry
         using var connection = _connectionFactory.CreateOpenConnection();
         using var command = connection.CreateCommand();
         command.CommandText = "SELECT id FROM agents WHERE token_hash = $tokenHash";
-        command.Parameters.AddWithValue("$tokenHash", HashToken(token));
+        command.Parameters.AddWithValue("$tokenHash", AgentToken.Hash(token));
         return command.ExecuteScalar() as long?;
     }
 
     public string? ResetToken(long agentId)
     {
         var nowUtc = _timeProvider.GetUtcNow();
-        var token = GenerateToken();
+        var token = AgentToken.Generate();
         using var connection = _connectionFactory.CreateOpenConnection();
+        // agent hash 与镜像 hash 同生共死：任一条失败整体回滚，不留下「agent 已换新 hash、镜像还是旧 hash」的中间态
+        using var transaction = connection.BeginTransaction();
         using (var command = connection.CreateCommand())
         {
+            command.Transaction = transaction;
             command.CommandText = """
                 UPDATE agents SET token_hash = $tokenHash, updated_at_utc = $updatedAt
                 WHERE id = $id;
                 """;
-            command.Parameters.AddWithValue("$tokenHash", HashToken(token));
+            command.Parameters.AddWithValue("$tokenHash", AgentToken.Hash(token));
             command.Parameters.AddWithValue("$updatedAt", FormatUtc(nowUtc));
             command.Parameters.AddWithValue("$id", agentId);
             if (command.ExecuteNonQuery() == 0)
             {
-                return null;
+                return null; // agent 不存在：dispose 事务回滚，库中无任何变化
             }
         }
 
         // 双写镜像：target 侧 hash 同步平移（历史 NOT NULL UNIQUE 约束保留），认证链路不读该列
-        using var mirror = connection.CreateCommand();
-        mirror.CommandText = "UPDATE targets SET agent_token_hash = $tokenHash WHERE agent_id = $id";
-        mirror.Parameters.AddWithValue("$tokenHash", HashToken(token));
-        mirror.Parameters.AddWithValue("$id", agentId);
-        mirror.ExecuteNonQuery();
+        using (var mirror = connection.CreateCommand())
+        {
+            mirror.Transaction = transaction;
+            mirror.CommandText = "UPDATE targets SET agent_token_hash = $tokenHash WHERE agent_id = $id";
+            mirror.Parameters.AddWithValue("$tokenHash", AgentToken.Hash(token));
+            mirror.Parameters.AddWithValue("$id", agentId);
+            mirror.ExecuteNonQuery();
+        }
 
+        transaction.Commit();
         return token;
     }
 
@@ -282,14 +288,6 @@ public sealed class AgentRegistry : IAgentRegistry
     /// <summary>自由文本标签：仅去除首尾空白、丢弃空串并去重，不限数量与长度。</summary>
     private static List<string> NormalizeLabels(IReadOnlyList<string> labels) =>
         labels.Select(l => l.Trim()).Where(l => l.Length > 0).Distinct().ToList();
-
-    private static string GenerateToken() => TargetRegistry.TokenTypePrefix + Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
-
-    private static string HashToken(string token)
-    {
-        var bytes = SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(token));
-        return Convert.ToHexString(bytes);
-    }
 
     private static string FormatUtc(DateTimeOffset value) => value.ToString("O");
 }
