@@ -9,12 +9,12 @@ public interface IInteractionModeCatalog
     IReadOnlyList<string> GetDeclaredModeKeys(long targetId);
 }
 
-/// <summary>设备目标声明实现：现有设备（agent 回连目标）均声明 shell。</summary>
-/// <remarks>TOB-361 Target 统一后由目标类型驱动：device 目标声明 shell，service 目标未声明即不显示终端入口。</remarks>
+/// <summary>按目标类型驱动的声明实现：device 目标（agent 回连）声明 shell。</summary>
+/// <remarks>TOB-361 Target 统一后由目标类型驱动：device 目标声明 shell，service 目标无 agent 通道、不声明任何交互模式（集成审查 round 1 问题 1）。</remarks>
 public sealed class DeviceInteractionModeCatalog(ITargetRegistry targets) : IInteractionModeCatalog
 {
     public IReadOnlyList<string> GetDeclaredModeKeys(long targetId)
     {
-        return targets.Get(targetId) is null ? [] : [ShellInteractionMode.ModeKey];
+        return targets.Get(targetId)?.Type == TargetTypes.Device ? [ShellInteractionMode.ModeKey] : [];
     }
 }
