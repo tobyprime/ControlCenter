@@ -26,8 +26,6 @@ public interface IAlertRuleEngine
 
 public sealed class AlertRuleEngine : IAlertRuleEngine
 {
-    private sealed record ViolationState(DateTimeOffset FirstSeenUtc, DateTimeOffset? LastAlertedUtc);
-
     /// <summary>恢复通知的统一标题（与各规则类型的告警标题并列，napcat 渠道按"标题 + 内容"拼装）。</summary>
     public const string RecoveryAlertTitle = "告警恢复通知";
 
@@ -139,15 +137,15 @@ public sealed class AlertRuleEngine : IAlertRuleEngine
 
         // 首见时间取"数据恰好缺失满窗口"的时刻：缺失满窗口 + 防抖窗口后告警，语义精确
         var stateKey = StateKey(rule.Id);
-        var state = AlertStateStore.Read<ViolationState>(_states.Get(stateKey))
-                    ?? new ViolationState(latest!.TimeUtc + TimeSpan.FromMinutes(ReadMinutes(rule.ParametersJson)), null);
+        var state = AlertStateStore.Read<AlertViolationState>(_states.Get(stateKey))
+                    ?? new AlertViolationState(latest!.TimeUtc + TimeSpan.FromMinutes(ReadMinutes(rule.ParametersJson)), null);
         FireWhenSustained(rule, type, targetId, latest, nowUtc, state);
     }
 
-    private void FireWhenSustained(AlertRule rule, IAlertRuleType type, long targetId, MetricSample? sample, DateTimeOffset nowUtc, ViolationState? existing = null)
+    private void FireWhenSustained(AlertRule rule, IAlertRuleType type, long targetId, MetricSample? sample, DateTimeOffset nowUtc, AlertViolationState? existing = null)
     {
         var stateKey = StateKey(rule.Id);
-        var state = existing ?? AlertStateStore.Read<ViolationState>(_states.Get(stateKey)) ?? new ViolationState(nowUtc, null);
+        var state = existing ?? AlertStateStore.Read<AlertViolationState>(_states.Get(stateKey)) ?? new AlertViolationState(nowUtc, null);
 
         if (state.LastAlertedUtc is { } lastAlerted)
         {
@@ -182,7 +180,7 @@ public sealed class AlertRuleEngine : IAlertRuleEngine
     private void ResolveAsRecovered(AlertRule rule, long targetId, DateTimeOffset nowUtc)
     {
         var stateKey = StateKey(rule.Id);
-        var state = AlertStateStore.Read<ViolationState>(_states.Get(stateKey));
+        var state = AlertStateStore.Read<AlertViolationState>(_states.Get(stateKey));
         if (state is null)
         {
             return;
@@ -225,5 +223,5 @@ public sealed class AlertRuleEngine : IAlertRuleEngine
 
     private static string StateKey(long ruleId) => $"rule:{ruleId}";
 
-    private static string Serialize(ViolationState state) => System.Text.Json.JsonSerializer.Serialize(state);
+    private static string Serialize(AlertViolationState state) => System.Text.Json.JsonSerializer.Serialize(state);
 }

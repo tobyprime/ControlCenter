@@ -246,6 +246,31 @@ public class AlertApiTests : IDisposable
         Assert.Equal(NapcatNotifier.ChannelNameValue, items[0].GetProperty("channel").GetString());
     }
 
+    [Fact]
+    public async Task Active_Count_Endpoint_Counts_Fired_Unresolved_Events()
+    {
+        var client = await AuthenticatedAsync();
+        var states = _factory.Services.GetRequiredService<IAlertStateStore>();
+
+        var empty = await client.GetAsync("/api/alerts/active-count");
+        empty.EnsureSuccessStatusCode();
+        Assert.Equal(0, (await empty.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("count").GetInt64());
+
+        // 三个在册事件：仅"已触发且未恢复"（LastAlertedUtc 有值）计入活跃；防抖等待中不算
+        states.Set("rule:1", """{"FirstSeenUtc":"2026-09-05T00:00:00Z","LastAlertedUtc":null}""", DateTimeOffset.UtcNow);
+        states.Set("rule:2", """{"FirstSeenUtc":"2026-09-05T00:00:00Z","LastAlertedUtc":"2026-09-05T00:01:00Z"}""", DateTimeOffset.UtcNow);
+        states.Set("rule:3", """{"FirstSeenUtc":"2026-09-05T00:00:00Z","LastAlertedUtc":"2026-09-05T00:01:00Z"}""", DateTimeOffset.UtcNow);
+
+        var active = await client.GetAsync("/api/alerts/active-count");
+        active.EnsureSuccessStatusCode();
+        Assert.Equal(2, (await active.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("count").GetInt64());
+
+        states.Delete("rule:2"); // 恢复即删状态行，计数随之下降
+        var after = await client.GetAsync("/api/alerts/active-count");
+        after.EnsureSuccessStatusCode();
+        Assert.Equal(1, (await after.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("count").GetInt64());
+    }
+
     private async Task<long> CreateTargetAsync(HttpClient client, string name)
     {
         var created = await client.PostAsJsonAsync("/api/targets", new { name, tags = new[] { "告警" } });

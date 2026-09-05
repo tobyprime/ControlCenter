@@ -4,6 +4,9 @@ using Microsoft.Data.Sqlite;
 
 namespace DevicePanel.Web.Alerting;
 
+/// <summary>越限事件状态（state_json 的结构契约，引擎与存储共用）：LastAlertedUtc 有值 = 已触发且未恢复的活跃事件。</summary>
+public sealed record AlertViolationState(DateTimeOffset FirstSeenUtc, DateTimeOffset? LastAlertedUtc);
+
 /// <summary>
 /// 告警规则状态存储（alert_state）：防刷屏与重启去重的持久化依据——
 /// 离线已告警、越限事件的首见/最近告警时间都落库，面板重启不会重复告警同一事件。
@@ -15,6 +18,9 @@ public interface IAlertStateStore
     void Set(string ruleKey, string stateJson, DateTimeOffset nowUtc);
 
     void Delete(string ruleKey);
+
+    /// <summary>当前活跃告警事件数：状态行存在且已实际触发（LastAlertedUtc 有值）即计入，防抖等待中的不算。</summary>
+    int CountActive();
 }
 
 public sealed class AlertStateStore : IAlertStateStore
@@ -58,6 +64,25 @@ public sealed class AlertStateStore : IAlertStateStore
         command.CommandText = "DELETE FROM alert_state WHERE rule_key = $ruleKey";
         command.Parameters.AddWithValue("$ruleKey", ruleKey);
         command.ExecuteNonQuery();
+    }
+
+    public int CountActive()
+    {
+        using var connection = _connectionFactory.CreateOpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = "SELECT state_json FROM alert_state";
+        using var reader = command.ExecuteReader();
+        var count = 0;
+        while (reader.Read())
+        {
+            // 单条状态损坏只跳过该行，不让计数整体失败（与读路径对脏数据的容忍一致）
+            if (Read<AlertViolationState>(reader.GetString(0))?.LastAlertedUtc is not null)
+            {
+                count++;
+            }
+        }
+
+        return count;
     }
 
     internal static T? Read<T>(string? json) where T : class =>
