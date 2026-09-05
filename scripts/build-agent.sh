@@ -17,7 +17,9 @@
 #   - musl 静态 zlib（libz.a）：zlib 源码 `CC=<musl-gcc> ./configure --static && make`，
 #     放入链接器搜索路径（x64: /usr/lib/x86_64-linux-musl/；arm64: 交叉工具链 sysroot lib/）
 #   - arm64：aarch64 musl 交叉工具链（如 https://musl.cc/aarch64-linux-musl-cross.tgz），
-#     bin 目录加入 PATH（提供 aarch64-linux-musl-gcc / -objcopy）
+#     bin 目录加入 PATH（提供 aarch64-linux-musl-gcc / -objcopy）；脚本会自动生成
+#     gcc shim（artifacts/toolchain-shim/）剥离 ilcompiler 注入的 clang 专属
+#     --target=<arch>-alpine-linux-musl 旗标（见下方 ARM64_SHIM_DIR 一段的说明）
 #   - cmake（crypto shim 以 cmake+make 构建）；cmake>=4 时脚本自动为 ilcompiler 包内的
 #     CMakeLists 补 cmake_minimum_required 声明（幂等，仅改本机 NuGet 缓存）
 # 说明：在 Alpine 容器内原生构建可省去交叉工具链与 musl 库准备（apk add zlib-static 即可）。
@@ -40,6 +42,28 @@ done
 export CMAKE_PREFIX_PATH="$OPENSSL_PREFIX"
 COMMON=(-c Release -p:PublishAot=true -p:StaticExecutable=true -p:StaticOpenSslLinking=true)
 
+# arm64 交叉构建适配：ilcompiler 对「RID 架构 ≠ 宿主架构」的 linux-musl 目标按三元组
+# 推导 TargetTriple=aarch64-alpine-linux-musl，并以 clang 专属旗标 --target=$(TargetTriple)
+# 传给 CppCompilerAndLinker（Microsoft.NETCore.Native.Unix.targets，8.x～10.x 同源逻辑）；
+# gcc 系工具链不识别该旗标而报错，且 TargetTriple 在 target 内赋值，无法用 -p: 覆盖。
+# 因此自动生成一次性 gcc shim：剥离 --target=* 后转发真实交叉 gcc（命名沿用 ilcompiler
+# 期望的三元组名）。amd64 在 x64 宿主上不跨架构、不注入该旗标，shim 对其无影响。
+ARM64_SHIM_DIR="$PWD/artifacts/toolchain-shim"
+mkdir -p "$ARM64_SHIM_DIR"
+cat > "$ARM64_SHIM_DIR/aarch64-alpine-linux-musl-gcc" <<'SHIM'
+#!/usr/bin/env bash
+args=()
+for arg in "$@"; do
+  case "$arg" in
+    --target=*) ;; # ilcompiler 注入的 clang 专属三元组旗标，gcc 不识别，剥离
+    *) args+=("$arg") ;;
+  esac
+done
+exec aarch64-linux-musl-gcc "${args[@]}"
+SHIM
+chmod +x "$ARM64_SHIM_DIR/aarch64-alpine-linux-musl-gcc"
+PATH="$ARM64_SHIM_DIR:$PATH"
+
 build_one() { # $1=RID  $2=输出目录名  $3...=附加 publish 参数
   local rid="$1" out="$2"
   shift 2
@@ -54,13 +78,14 @@ case "$TARGET" in
     build_one linux-musl-x64 linux-amd64 -p:CppCompilerAndLinker=musl-gcc
     ;;
   arm64)
+    # 编译/链接经 shim（剥离 ilcompiler 注入的 --target 旗标）转发真实交叉 gcc
     build_one linux-musl-arm64 linux-arm64 \
-      -p:CppCompilerAndLinker=aarch64-linux-musl-gcc -p:ObjCopyName=aarch64-linux-musl-objcopy
+      -p:CppCompilerAndLinker=aarch64-alpine-linux-musl-gcc -p:ObjCopyName=aarch64-linux-musl-objcopy
     ;;
   all)
     build_one linux-musl-x64 linux-amd64 -p:CppCompilerAndLinker=musl-gcc
     build_one linux-musl-arm64 linux-arm64 \
-      -p:CppCompilerAndLinker=aarch64-linux-musl-gcc -p:ObjCopyName=aarch64-linux-musl-objcopy
+      -p:CppCompilerAndLinker=aarch64-alpine-linux-musl-gcc -p:ObjCopyName=aarch64-linux-musl-objcopy
     ;;
   *)
     echo "用法：$0 [amd64|arm64|all]" >&2
