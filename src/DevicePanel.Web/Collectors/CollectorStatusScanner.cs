@@ -2,33 +2,34 @@ using DevicePanel.Web.Alerting;
 using DevicePanel.Web.Metrics;
 using Microsoft.Extensions.Logging;
 
-namespace DevicePanel.Web.Targets;
+namespace DevicePanel.Web.Collectors;
 
 /// <summary>
-/// 目标在线状态采样器：device 类目标超过 OfflineAfter（连续 2 个心跳周期）未心跳即写入 online=false 样本
-/// （每次离线转换只写一次，不重复刷样本）；online=true 样本由心跳处理器写入。
+/// push 采集器在线状态采样器（三期模块3 泛化）：关联 agent 的采集器超过 OfflineAfter（连续 2 个心跳周期）未心跳
+/// 即写入 online=false 样本（每次离线转换只写一次，不重复刷样本）；online=true 样本由心跳处理器写入。
+/// pull 采集器不扫（状态由面板侧轮询产出 status 样本）。
 /// 在线状态由此成为类型化指标序列，离线告警 = "状态不符 online != true" 规则实例（约束 B，不再硬编码）。
 /// </summary>
-public sealed class TargetStatusScanner : BackgroundService
+public sealed class CollectorStatusScanner : BackgroundService
 {
-    private readonly ITargetRegistry _targets;
+    private readonly ICollectorRegistry _collectors;
     private readonly IMetricsStore _metrics;
     private readonly IAlertRuleEngine _alerts;
     private readonly AgentOptions _agentOptions;
     private readonly AlertOptions _options;
     private readonly TimeProvider _clock;
-    private readonly ILogger<TargetStatusScanner> _logger;
+    private readonly ILogger<CollectorStatusScanner> _logger;
 
-    public TargetStatusScanner(
-        ITargetRegistry targets,
+    public CollectorStatusScanner(
+        ICollectorRegistry collectors,
         IMetricsStore metrics,
         IAlertRuleEngine alerts,
         AgentOptions agentOptions,
         AlertOptions options,
         TimeProvider clock,
-        ILogger<TargetStatusScanner> logger)
+        ILogger<CollectorStatusScanner> logger)
     {
-        _targets = targets;
+        _collectors = collectors;
         _metrics = metrics;
         _alerts = alerts;
         _agentOptions = agentOptions;
@@ -57,30 +58,30 @@ public sealed class TargetStatusScanner : BackgroundService
     public void ScanOnce()
     {
         var nowUtc = _clock.GetUtcNow();
-        foreach (var target in _targets.List())
+        foreach (var collector in _collectors.List())
         {
-            if (target.Type != TargetTypes.Device || target.LastSeenAtUtc is null)
-            {
-                // 服务目标不走 agent 心跳（状态来源后续模块接入）；从未接入的目标没有"掉线"可言
-                continue;
-            }
-
-            if (target.IsOnline(_clock, _agentOptions))
+            // 只扫 push 采集器（关联 agent 走心跳）；pull 采集器状态由面板侧轮询产出（status 样本），没有"心跳掉线"可言
+            if (collector.AgentId is null || collector.LastSeenAtUtc is null)
             {
                 continue;
             }
 
-            var latest = _metrics.GetLatest(target.Id, MetricKeys.Online);
-            if (latest is { } sample && sample.TimeUtc > target.LastSeenAtUtc && sample.ValueText == "false")
+            if (collector.IsOnline(_clock, _agentOptions))
+            {
+                continue;
+            }
+
+            var latest = _metrics.GetLatest(collector.Id, MetricKeys.Online);
+            if (latest is { } sample && sample.TimeUtc > collector.LastSeenAtUtc && sample.ValueText == "false")
             {
                 // 已标记离线：等待心跳恢复（true 由心跳处理器写入）
                 continue;
             }
 
             var offlineSample = new MetricSample(nowUtc, 0, "false");
-            _metrics.Insert(target.Id, MetricKeys.Online, offlineSample);
-            _alerts.OnSample(target.Id, MetricKeys.Online, offlineSample, nowUtc);
-            _logger.LogInformation("目标 {TargetId} 判定离线，已写入 online=false 样本", target.Id);
+            _metrics.Insert(collector.Id, MetricKeys.Online, offlineSample);
+            _alerts.OnSample(collector.Id, MetricKeys.Online, offlineSample, nowUtc);
+            _logger.LogInformation("采集器 {CollectorId} 判定离线，已写入 online=false 样本", collector.Id);
         }
     }
 }

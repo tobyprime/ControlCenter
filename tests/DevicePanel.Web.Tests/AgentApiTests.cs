@@ -4,7 +4,7 @@ using System.Net.WebSockets;
 using System.Text.Json;
 using DevicePanel.Protocol;
 using DevicePanel.Web.Infrastructure;
-using DevicePanel.Web.Targets;
+using DevicePanel.Web.Collectors;
 using Microsoft.Extensions.DependencyInjection;
 using Xunit;
 
@@ -44,7 +44,7 @@ public class AgentApiTests : IDisposable
         var entry = Assert.Single(listed);
         Assert.False(entry.TryGetProperty("agentToken", out _)); // token 只在创建/重置响应出现
         Assert.False(entry.GetProperty("online").GetBoolean());
-        Assert.Equal(JsonValueKind.Null, entry.GetProperty("targetId").ValueKind);
+        Assert.Equal(JsonValueKind.Null, entry.GetProperty("collectorId").ValueKind);
     }
 
     [Fact]
@@ -131,14 +131,14 @@ public class AgentApiTests : IDisposable
     }
 
     [Fact]
-    public async Task Delete_Linked_Agent_Is_Refused_To_Keep_Target_Intact()
+    public async Task Delete_Linked_Agent_Is_Refused_To_Keep_Collector_Intact()
     {
         var client = await AuthenticatedClientAsync();
-        await CreateDeviceTargetAsync(client, "有关联的设备");
+        await CreateDeviceCollectorAsync(client, "有关联的设备");
 
         var listed = await ListAgentsAsync(client);
         var linked = Assert.Single(listed);
-        Assert.NotEqual(JsonValueKind.Null, linked.GetProperty("targetId").ValueKind);
+        Assert.NotEqual(JsonValueKind.Null, linked.GetProperty("collectorId").ValueKind);
 
         var delete = await client.DeleteAsync($"/api/agents/{linked.GetProperty("id").GetInt64()}");
 
@@ -153,33 +153,33 @@ public class AgentApiTests : IDisposable
         {
             Settings["DevicePanel:Auth:InitialPassword"] = "test-password-1";
             // 生产注册为 singleton（被 singleton worker 消费），测试替换必须保持同生命周期
-            TestServices = services => services.AddSingleton<ITargetRegistry>(sp => new ExplodingCreateTargetRegistry(
-                new TargetRegistry(sp.GetRequiredService<SqliteConnectionFactory>(), sp.GetRequiredService<TimeProvider>())));
+            TestServices = services => services.AddSingleton<ICollectorRegistry>(sp => new ExplodingCreateCollectorRegistry(
+                new CollectorRegistry(sp.GetRequiredService<SqliteConnectionFactory>(), sp.GetRequiredService<TimeProvider>())));
         }
 
-        private sealed class ExplodingCreateTargetRegistry : ITargetRegistry
+        private sealed class ExplodingCreateCollectorRegistry : ICollectorRegistry
         {
-            private readonly TargetRegistry _inner;
+            private readonly CollectorRegistry _inner;
 
-            public ExplodingCreateTargetRegistry(TargetRegistry inner) => _inner = inner;
+            public ExplodingCreateCollectorRegistry(CollectorRegistry inner) => _inner = inner;
 
-            public TargetInfo Create(string type, string name, IReadOnlyList<string> tags, long? agentId = null) =>
+            public CollectorInfo Create(string name, IReadOnlyList<string> tags, long? agentId = null) =>
                 throw new InvalidOperationException("注入故障：targets 落库失败");
 
-            public TargetInfo? Update(long id, string name, IReadOnlyList<string> tags) => _inner.Update(id, name, tags);
+            public CollectorInfo? Update(long id, string name, IReadOnlyList<string> tags) => _inner.Update(id, name, tags);
 
             public bool Delete(long id) => _inner.Delete(id);
 
-            public TargetInfo? Get(long id) => _inner.Get(id);
+            public CollectorInfo? Get(long id) => _inner.Get(id);
 
-            public IReadOnlyList<TargetInfo> List() => _inner.List();
+            public IReadOnlyList<CollectorInfo> List() => _inner.List();
 
-            public void Touch(long targetId, DateTimeOffset seenAtUtc) => _inner.Touch(targetId, seenAtUtc);
+            public void Touch(long collectorId, DateTimeOffset seenAtUtc) => _inner.Touch(collectorId, seenAtUtc);
         }
     }
 
     [Fact]
-    public async Task Device_Target_Create_Failure_Leaves_No_Orphan_Agent()
+    public async Task Collector_Create_Failure_Leaves_No_Orphan_Agent()
     {
         using var factory = new ExplodingCreateFactory();
         var client = factory.CreateClient();
@@ -188,7 +188,7 @@ public class AgentApiTests : IDisposable
 
         try
         {
-            await client.PostAsJsonAsync("/api/targets", new { type = "device", name = "故障设备", tags = Array.Empty<string>() });
+            await client.PostAsJsonAsync("/api/collectors", new { name = "故障设备", tags = Array.Empty<string>() });
         }
         catch (Exception)
         {
@@ -199,14 +199,14 @@ public class AgentApiTests : IDisposable
     }
 
     [Fact]
-    public async Task Created_Device_Target_Linked_Agent_Appears_In_Agent_List()
+    public async Task Created_Collector_Linked_Agent_Appears_In_Agent_List()
     {
         var client = await AuthenticatedClientAsync();
-        var target = await CreateDeviceTargetAsync(client, "迁移前设备");
+        var target = await CreateDeviceCollectorAsync(client, "迁移前设备");
 
         var linked = Assert.Single(await ListAgentsAsync(client));
         Assert.Equal("迁移前设备", linked.GetProperty("name").GetString());
-        Assert.Equal(target.GetProperty("id").GetInt64(), linked.GetProperty("targetId").GetInt64());
+        Assert.Equal(target.GetProperty("id").GetInt64(), linked.GetProperty("collectorId").GetInt64());
     }
 
     [Fact]
@@ -285,9 +285,9 @@ public class AgentApiTests : IDisposable
         return await response.Content.ReadFromJsonAsync<JsonElement>();
     }
 
-    private static async Task<JsonElement> CreateDeviceTargetAsync(HttpClient client, string name)
+    private static async Task<JsonElement> CreateDeviceCollectorAsync(HttpClient client, string name)
     {
-        var response = await client.PostAsJsonAsync("/api/targets", new { name, tags = Array.Empty<string>() });
+        var response = await client.PostAsJsonAsync("/api/collectors", new { name, tags = Array.Empty<string>() });
         response.EnsureSuccessStatusCode();
         return await response.Content.ReadFromJsonAsync<JsonElement>();
     }

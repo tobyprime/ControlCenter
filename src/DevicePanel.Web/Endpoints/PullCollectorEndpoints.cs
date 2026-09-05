@@ -1,38 +1,38 @@
+using DevicePanel.Web.Collectors;
 using DevicePanel.Web.Metrics;
 using DevicePanel.Web.Probing;
-using DevicePanel.Web.Targets;
 using Microsoft.AspNetCore.Mvc;
 
 namespace DevicePanel.Web.Endpoints;
 
-public sealed record ProbeMappingRequest(string? MetricKey, string? JsonPath, string? ValueType, string? DisplayName, string? Unit);
+public sealed record PullMappingRequest(string? MetricKey, string? JsonPath, string? ValueType, string? DisplayName, string? Unit);
 
-public sealed record ProbeUpsertRequest(string? Url, int? IntervalSeconds, IReadOnlyList<ProbeMappingRequest>? Mappings);
+public sealed record PullUpsertRequest(string? Url, int? IntervalSeconds, IReadOnlyList<PullMappingRequest>? Mappings);
 
-public sealed record ProbeMappingResponse(string MetricKey, string JsonPath, string ValueType, string DisplayName, string Unit);
+public sealed record PullMappingResponse(string MetricKey, string JsonPath, string ValueType, string DisplayName, string Unit);
 
-public sealed record ProbeConfigResponse(
+public sealed record PullConfigResponse(
     string Url,
     int IntervalSeconds,
-    IReadOnlyList<ProbeMappingResponse> Mappings,
+    IReadOnlyList<PullMappingResponse> Mappings,
     DateTimeOffset CreatedAtUtc,
     DateTimeOffset UpdatedAtUtc);
 
 /// <summary>
-/// 探针配置请求归一化 + 校验（创建 service 目标与 PUT /probe 共用）。
+/// pull 采集器配置请求归一化 + 校验（创建 pull 采集器与 PUT /pull 共用）。
 /// 映射的未知 metric key 经注册管道自动注册（约束 A）；已注册 key 类型不一致即拒绝，防止同一指标双语义。
 /// </summary>
-public static class ProbeRequests
+public static class PullCollectorRequests
 {
     public const int MaxMappings = 20;
 
     public static bool TryNormalize(
-        ProbeUpsertRequest? request,
+        PullUpsertRequest? request,
         ProbeOptions options,
         IMetricKeyRegistry metricKeys,
         out string url,
         out int intervalSeconds,
-        out List<ProbeMetricMapping> mappings,
+        out List<PullMetricMapping> mappings,
         out string error)
     {
         url = string.Empty;
@@ -41,7 +41,7 @@ public static class ProbeRequests
 
         if (request is null)
         {
-            error = "service 目标必须配置探针";
+            error = "pull 采集器必须配置轮询";
             return false;
         }
 
@@ -49,14 +49,14 @@ public static class ProbeRequests
         if (!Uri.TryCreate(url, UriKind.Absolute, out var parsed)
             || (parsed.Scheme != Uri.UriSchemeHttp && parsed.Scheme != Uri.UriSchemeHttps))
         {
-            error = "探针 URL 必须是 http(s) 绝对地址";
+            error = "轮询 URL 必须是 http(s) 绝对地址";
             return false;
         }
 
         intervalSeconds = request.IntervalSeconds ?? options.DefaultIntervalSeconds;
         if (intervalSeconds < options.MinIntervalSeconds || intervalSeconds > options.MaxIntervalSeconds)
         {
-            error = $"探针间隔需在 {options.MinIntervalSeconds}~{options.MaxIntervalSeconds} 秒之间";
+            error = $"轮询间隔需在 {options.MinIntervalSeconds}~{options.MaxIntervalSeconds} 秒之间";
             return false;
         }
 
@@ -96,7 +96,7 @@ public static class ProbeRequests
             if (!MetricValueTypeExtensions.TryFromStorage((raw.ValueType ?? string.Empty).Trim(), out var valueType)
                 || valueType is MetricValueType.Bool)
             {
-                // bool 状态类指标（status 等）由探针内置产出，映射仅开放 number/enum/string
+                // bool 状态类指标（status 等）由轮询内置产出，映射仅开放 number/enum/string
                 error = $"提取值类型仅支持 number/enum/string：{raw.ValueType}";
                 return false;
             }
@@ -114,64 +114,65 @@ public static class ProbeRequests
                 return false;
             }
 
-            mappings.Add(new ProbeMetricMapping(key, raw.JsonPath!.Trim(), valueType, displayName.Length > 0 ? displayName : key, unit));
+            mappings.Add(new PullMetricMapping(key, raw.JsonPath!.Trim(), valueType, displayName.Length > 0 ? displayName : key, unit));
         }
 
         error = string.Empty;
         return true;
     }
 
-    public static ProbeConfigResponse ToResponse(ProbeConfig config) => new(
+    public static PullConfigResponse ToResponse(PullCollectorConfig config) => new(
         config.Url,
         config.IntervalSeconds,
-        config.Mappings.Select(m => new ProbeMappingResponse(m.MetricKey, m.JsonPath, m.ValueType.ToStorage(), m.DisplayName, m.Unit)).ToList(),
+        config.Mappings.Select(m => new PullMappingResponse(m.MetricKey, m.JsonPath, m.ValueType.ToStorage(), m.DisplayName, m.Unit)).ToList(),
         config.CreatedAtUtc,
         config.UpdatedAtUtc);
 }
 
-public static class ProbeEndpoints
+public static class PullCollectorEndpoints
 {
-    public static IEndpointRouteBuilder MapProbeEndpoints(this IEndpointRouteBuilder endpoints)
+    public static IEndpointRouteBuilder MapPullCollectorEndpoints(this IEndpointRouteBuilder endpoints)
     {
-        var probes = endpoints.MapGroup("/api/targets/{id:long}/probe");
+        var pulls = endpoints.MapGroup("/api/collectors/{id:long}/pull");
 
-        probes.MapGet("/", (long id, ITargetRegistry registry, IProbeConfigStore configs) =>
+        pulls.MapGet("/", (long id, ICollectorRegistry registry, IPullCollectorConfigStore configs) =>
         {
             if (registry.Get(id) is null)
             {
-                return Results.NotFound(new { error = "目标不存在" });
+                return Results.NotFound(new { error = "采集器不存在" });
             }
 
             var config = configs.Get(id);
-            return config is null ? Results.NoContent() : Results.Ok(ProbeRequests.ToResponse(config));
+            return config is null ? Results.NoContent() : Results.Ok(PullCollectorRequests.ToResponse(config));
         });
 
-        probes.MapPut("/", (
+        pulls.MapPut("/", (
             long id,
-            [FromBody] ProbeUpsertRequest request,
-            ITargetRegistry registry,
-            IProbeConfigStore configs,
+            [FromBody] PullUpsertRequest request,
+            ICollectorRegistry registry,
+            IPullCollectorConfigStore configs,
             IMetricKeyRegistry metricKeys,
             ProbeOptions options) =>
         {
-            var target = registry.Get(id);
-            if (target is null)
+            var collector = registry.Get(id);
+            if (collector is null)
             {
-                return Results.NotFound(new { error = "目标不存在" });
+                return Results.NotFound(new { error = "采集器不存在" });
             }
 
-            if (target.Type != TargetTypes.Service)
+            // push 采集器有 agent 通道，不归面板轮询；pull 配置只属于 agent 关联为空的采集器
+            if (collector.AgentId is not null)
             {
-                return Results.BadRequest(new { error = "仅 service 目标支持探针配置" });
+                return Results.BadRequest(new { error = "仅 pull 采集器支持轮询配置" });
             }
 
-            if (!ProbeRequests.TryNormalize(request, options, metricKeys, out var url, out var interval, out var mappings, out var error))
+            if (!PullCollectorRequests.TryNormalize(request, options, metricKeys, out var url, out var interval, out var mappings, out var error))
             {
                 return Results.BadRequest(new { error });
             }
 
             var saved = configs.Save(id, url, interval, mappings);
-            return Results.Ok(ProbeRequests.ToResponse(saved));
+            return Results.Ok(PullCollectorRequests.ToResponse(saved));
         });
 
         return endpoints;

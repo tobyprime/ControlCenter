@@ -1,10 +1,10 @@
 using System.Text.RegularExpressions;
-using DevicePanel.Web.Targets;
+using DevicePanel.Web.Collectors;
 using Microsoft.AspNetCore.Mvc;
 
 namespace DevicePanel.Web.Logs;
 
-/// <summary>日志查看 API：按设备列出可查看服务 / 按需拉取尾部日志（只读，面板不落库）。</summary>
+/// <summary>日志 API（三期模块3 归并为采集器数据类型）：按采集器列出可查看服务 / 按需拉取尾部日志（只读，面板不落库）。</summary>
 public static partial class LogEndpoints
 {
     public const int DefaultLines = 200;
@@ -18,22 +18,22 @@ public static partial class LogEndpoints
 
     public static IEndpointRouteBuilder MapLogEndpoints(this IEndpointRouteBuilder endpoints)
     {
-        var logs = endpoints.MapGroup("/api/devices/{deviceId:long}/logs");
+        var logs = endpoints.MapGroup("/api/collectors/{collectorId:long}/logs");
 
         logs.MapGet("/services", async (
-            long deviceId,
-            ITargetRegistry devices,
+            long collectorId,
+            ICollectorRegistry collectors,
             LogQueryService queries,
             CancellationToken cancellationToken) =>
         {
-            if (devices.Get(deviceId) is null)
+            if (collectors.Get(collectorId) is null)
             {
-                return Results.NotFound(new { error = "设备不存在" });
+                return Results.NotFound(new { error = "采集器不存在" });
             }
 
             try
             {
-                var services = await queries.ListServicesAsync(deviceId, cancellationToken).ConfigureAwait(false);
+                var services = await queries.ListServicesAsync(collectorId, cancellationToken).ConfigureAwait(false);
                 return Results.Ok(new { services });
             }
             catch (Exception ex) when (MapFailure(ex, out var status, out var message))
@@ -43,17 +43,17 @@ public static partial class LogEndpoints
         });
 
         logs.MapGet("/tail", async (
-            long deviceId,
+            long collectorId,
             [FromQuery] string? service,
             [FromQuery] string? kind,
             [FromQuery] int? lines,
-            ITargetRegistry devices,
+            ICollectorRegistry collectors,
             LogQueryService queries,
             CancellationToken cancellationToken) =>
         {
-            if (devices.Get(deviceId) is null)
+            if (collectors.Get(collectorId) is null)
             {
-                return Results.NotFound(new { error = "设备不存在" });
+                return Results.NotFound(new { error = "采集器不存在" });
             }
 
             if (string.IsNullOrWhiteSpace(service))
@@ -74,7 +74,7 @@ public static partial class LogEndpoints
             try
             {
                 var result = await queries
-                    .TailAsync(deviceId, service, kind, Math.Clamp(lines ?? DefaultLines, 1, MaxLines), cancellationToken)
+                    .TailAsync(collectorId, service, kind, Math.Clamp(lines ?? DefaultLines, 1, MaxLines), cancellationToken)
                     .ConfigureAwait(false);
                 return Results.Ok(new { lines = result });
             }
@@ -106,7 +106,7 @@ public static partial class LogEndpoints
                 return true;
             case InvalidOperationException:
                 status = StatusCodes.Status502BadGateway;
-                message = "设备日志响应格式无效";
+                message = "采集器日志响应格式无效";
                 return true;
             default:
                 status = 0;

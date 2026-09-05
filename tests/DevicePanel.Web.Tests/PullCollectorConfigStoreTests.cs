@@ -1,25 +1,25 @@
 using DevicePanel.Web.Metrics;
 using DevicePanel.Web.Probing;
-using DevicePanel.Web.Targets;
+using DevicePanel.Web.Collectors;
 using Microsoft.Extensions.Time.Testing;
 using Xunit;
 
 namespace DevicePanel.Web.Tests;
 
-/// <summary>服务探针配置持久化：一目标一配置（upsert）、随目标删除级联清理。</summary>
-public class ProbeConfigStoreTests : IDisposable
+/// <summary>服务探针配置持久化：一采集器一配置（upsert）、随采集器删除级联清理。</summary>
+public class PullCollectorConfigStoreTests : IDisposable
 {
     private readonly TempSqliteDatabase _db = new();
     private readonly FakeTimeProvider _clock = new(new DateTimeOffset(2026, 9, 5, 8, 0, 0, TimeSpan.Zero));
-    private readonly TargetRegistry _targets;
-    private readonly ProbeConfigStore _store;
-    private readonly long _targetId;
+    private readonly CollectorRegistry _collectors;
+    private readonly PullCollectorConfigStore _store;
+    private readonly long _collectorId;
 
-    public ProbeConfigStoreTests()
+    public PullCollectorConfigStoreTests()
     {
-        _targets = new TargetRegistry(_db.Factory, _clock);
-        _store = new ProbeConfigStore(_db.Factory, _clock);
-        _targetId = _targets.Create(TargetTypes.Service, "MC 服务", ["游戏"]).Id;
+        _collectors = new CollectorRegistry(_db.Factory, _clock);
+        _store = new PullCollectorConfigStore(_db.Factory, _clock);
+        _collectorId = _collectors.Create("MC 服务", ["游戏", CollectorBuiltinTags.Service]).Id;
     }
 
     public void Dispose() => _db.Dispose();
@@ -27,14 +27,14 @@ public class ProbeConfigStoreTests : IDisposable
     [Fact]
     public void Save_Then_Get_Returns_Url_Interval_And_Mappings()
     {
-        _store.Save(_targetId, "https://mc.zenoxs.cn/tiles/settings.json", 60,
+        _store.Save(_collectorId, "https://mc.zenoxs.cn/tiles/settings.json", 60,
         [
-            new ProbeMetricMapping("mc.players", "$.players.length()", MetricValueType.Number, "在线玩家数", "人"),
+            new PullMetricMapping("mc.players", "$.players.length()", MetricValueType.Number, "在线玩家数", "人"),
         ]);
 
-        var config = _store.Get(_targetId);
+        var config = _store.Get(_collectorId);
         Assert.NotNull(config);
-        Assert.Equal(_targetId, config.TargetId);
+        Assert.Equal(_collectorId, config.CollectorId);
         Assert.Equal("https://mc.zenoxs.cn/tiles/settings.json", config.Url);
         Assert.Equal(60, config.IntervalSeconds);
         var mapping = Assert.Single(config.Mappings);
@@ -48,13 +48,13 @@ public class ProbeConfigStoreTests : IDisposable
     [Fact]
     public void Save_Twice_Upserts_Single_Config()
     {
-        _store.Save(_targetId, "https://a.example.com/health", 30, []);
-        _store.Save(_targetId, "https://b.example.com/health", 45,
+        _store.Save(_collectorId, "https://a.example.com/health", 30, []);
+        _store.Save(_collectorId, "https://b.example.com/health", 45,
         [
-            new ProbeMetricMapping("svc.version", "$.version", MetricValueType.String, "版本", ""),
+            new PullMetricMapping("svc.version", "$.version", MetricValueType.String, "版本", ""),
         ]);
 
-        var config = _store.Get(_targetId);
+        var config = _store.Get(_collectorId);
         Assert.NotNull(config);
         Assert.Equal("https://b.example.com/health", config.Url);
         Assert.Equal(45, config.IntervalSeconds);
@@ -64,8 +64,8 @@ public class ProbeConfigStoreTests : IDisposable
     [Fact]
     public void List_Returns_Configs_For_All_Service_Targets()
     {
-        var otherId = _targets.Create(TargetTypes.Service, "另一个服务", []).Id;
-        _store.Save(_targetId, "https://a.example.com", 30, []);
+        var otherId = _collectors.Create("另一个服务", [CollectorBuiltinTags.Service]).Id;
+        _store.Save(_collectorId, "https://a.example.com", 30, []);
         _store.Save(otherId, "https://b.example.com", 60, []);
 
         Assert.Equal(2, _store.List().Count);
@@ -80,10 +80,10 @@ public class ProbeConfigStoreTests : IDisposable
     [Fact]
     public void Target_Delete_Cascades_Config()
     {
-        _store.Save(_targetId, "https://a.example.com", 30, []);
+        _store.Save(_collectorId, "https://a.example.com", 30, []);
 
-        _targets.Delete(_targetId);
+        _collectors.Delete(_collectorId);
 
-        Assert.Null(_store.Get(_targetId));
+        Assert.Null(_store.Get(_collectorId));
     }
 }

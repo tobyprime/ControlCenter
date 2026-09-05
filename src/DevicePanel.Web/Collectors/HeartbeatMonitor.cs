@@ -1,6 +1,6 @@
 using DevicePanel.Protocol;
 
-namespace DevicePanel.Web.Targets;
+namespace DevicePanel.Web.Collectors;
 
 /// <summary>
 /// 心跳监测：周期扫描在线连接，对连续 OfflineAfter（默认 2 个心跳周期）无任何入站消息的连接

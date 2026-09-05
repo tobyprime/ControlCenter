@@ -26,11 +26,15 @@ public class TargetDataMigrationTests
 
         // —— 升级（006 起）——
         ApplyMigrations(connection);
-        Assert.Equal(13L, Count(connection, "SELECT COUNT(*) FROM schema_migrations"));
+        Assert.Equal(14L, Count(connection, "SELECT COUNT(*) FROM schema_migrations"));
 
-        // 设备 → device 目标（type 自动补齐，token 保留）
-        Assert.Equal(("旧设备A", "device"), QueryTuple(connection, "SELECT name, type FROM targets WHERE id = 1"));
-        Assert.Equal(("旧设备B", "device"), QueryTuple(connection, "SELECT name, type FROM targets WHERE id = 2"));
+        // 设备 → device 采集器（014 后 type 下沉为内置标签，台账更名为 collectors，token 保留）
+        Assert.Equal(("旧设备A", "type:device"), QueryTuple(connection, """
+            SELECT name, json_extract(tags_json, '$[#-1]') FROM collectors WHERE id = 1
+            """));
+        Assert.Equal(("旧设备B", "type:device"), QueryTuple(connection, """
+            SELECT name, json_extract(tags_json, '$[#-1]') FROM collectors WHERE id = 2
+            """));
 
         // 历史明细：每个采样点 × 5 指标平移为窄表行，数值不变
         Assert.Equal(4L, Count(connection, "SELECT COUNT(*) FROM metric_samples WHERE metric_key = 'cpu' AND target_id = 1"));

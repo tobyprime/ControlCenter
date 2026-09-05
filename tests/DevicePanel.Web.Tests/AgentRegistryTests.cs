@@ -1,6 +1,6 @@
 using DevicePanel.Web.Agents;
 using DevicePanel.Web.Infrastructure;
-using DevicePanel.Web.Targets;
+using DevicePanel.Web.Collectors;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Time.Testing;
 using Xunit;
@@ -18,7 +18,7 @@ public class AgentRegistryTests : IDisposable
 
     private AgentRegistry CreateRegistry() => new(_db.Factory, _clock);
 
-    private TargetRegistry CreateTargetRegistry() => new(_db.Factory, _clock);
+    private CollectorRegistry CreateCollectorRegistry() => new(_db.Factory, _clock);
 
     [Fact]
     public void Create_Returns_Token_Once_And_Stores_Agent_Without_Plaintext()
@@ -72,19 +72,19 @@ public class AgentRegistryTests : IDisposable
     public void ResetToken_Mirrors_Hash_To_Linked_Target()
     {
         var agents = CreateRegistry();
-        var targets = CreateTargetRegistry();
+        var targets = CreateCollectorRegistry();
         var created = agents.Create("设备", Array.Empty<string>());
-        var target = targets.Create(TargetTypes.Device, "设备", Array.Empty<string>(), created.Agent.Id);
+        var target = targets.Create("设备", Array.Empty<string>(), created.Agent.Id);
 
         var newToken = agents.ResetToken(created.Agent.Id);
 
         Assert.NotNull(newToken);
-        Assert.Equal(created.Agent.Id, agents.FindTargetIdByAgentId(created.Agent.Id));
+        Assert.Equal(created.Agent.Id, agents.FindCollectorIdByAgentId(created.Agent.Id));
         using var connection = _db.CreateOpenConnection();
         using var command = connection.CreateCommand();
         command.CommandText = """
             SELECT (SELECT token_hash FROM agents WHERE id = $agentId) =
-                   (SELECT agent_token_hash FROM targets WHERE id = $targetId)
+                   (SELECT agent_token_hash FROM collectors WHERE id = $targetId)
             """;
         command.Parameters.AddWithValue("$agentId", created.Agent.Id);
         command.Parameters.AddWithValue("$targetId", target.Id);
@@ -191,14 +191,14 @@ public class AgentRegistryTests : IDisposable
     public void Linkage_FindTarget_By_Agent_And_Vice_Versa()
     {
         var agents = CreateRegistry();
-        var targets = CreateTargetRegistry();
+        var targets = CreateCollectorRegistry();
         var created = agents.Create("设备", Array.Empty<string>());
-        var target = targets.Create(TargetTypes.Device, "设备", Array.Empty<string>(), created.Agent.Id);
+        var target = targets.Create("设备", Array.Empty<string>(), created.Agent.Id);
 
-        Assert.Equal(target.Id, agents.FindTargetIdByAgentId(created.Agent.Id));
-        Assert.Equal(created.Agent.Id, agents.FindAgentIdByTargetId(target.Id));
-        Assert.Null(agents.FindTargetIdByAgentId(999));
-        Assert.Null(agents.FindAgentIdByTargetId(999));
+        Assert.Equal(target.Id, agents.FindCollectorIdByAgentId(created.Agent.Id));
+        Assert.Equal(created.Agent.Id, agents.FindAgentIdByCollectorId(target.Id));
+        Assert.Null(agents.FindCollectorIdByAgentId(999));
+        Assert.Null(agents.FindAgentIdByCollectorId(999));
     }
 
     [Fact]
@@ -207,16 +207,16 @@ public class AgentRegistryTests : IDisposable
         // 审查问题2：agent hash 与镜像 hash 两条写库必须同生共死——镜像写失败（触发器注入故障）时
         // agent 侧不允许已推进到新 hash（否则库中留下「新 agent hash + 旧镜像 hash」的不一致态）
         var agents = CreateRegistry();
-        var targets = CreateTargetRegistry();
+        var targets = CreateCollectorRegistry();
         var created = agents.Create("设备", Array.Empty<string>());
-        targets.Create(TargetTypes.Device, "设备", Array.Empty<string>(), created.Agent.Id);
+        targets.Create("设备", Array.Empty<string>(), created.Agent.Id);
         var oldHash = StoredAgentHash(created.Agent.Id);
 
         using (var connection = _db.CreateOpenConnection())
         using (var command = connection.CreateCommand())
         {
             command.CommandText = """
-                CREATE TRIGGER fail_mirror_update BEFORE UPDATE OF agent_token_hash ON targets
+                CREATE TRIGGER fail_mirror_update BEFORE UPDATE OF agent_token_hash ON collectors
                 BEGIN SELECT RAISE(ABORT, '注入故障：镜像写入失败'); END
                 """;
             command.ExecuteNonQuery();

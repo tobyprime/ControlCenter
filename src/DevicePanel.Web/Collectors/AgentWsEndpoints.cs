@@ -3,7 +3,7 @@ using System.Text.Json;
 using DevicePanel.Protocol;
 using DevicePanel.Web.Agents;
 
-namespace DevicePanel.Web.Targets;
+namespace DevicePanel.Web.Collectors;
 
 /// <summary>
 /// /agent/ws 接入会话：auth 握手（token 认证）→ 注册在线连接 → 按信封 type 分发入站消息。
@@ -17,7 +17,7 @@ public static class AgentWsEndpoints
             HttpContext http,
             AgentConnectionRegistry connections,
             IAgentRegistry agents,
-            ITargetRegistry targets,
+            ICollectorRegistry targets,
             AgentMessageDispatcher dispatcher,
             AgentOptions options,
             TimeProvider clock,
@@ -45,7 +45,7 @@ internal sealed class AgentWsSession
     private readonly WebSocket _socket;
     private readonly AgentConnectionRegistry _connections;
     private readonly IAgentRegistry _agents;
-    private readonly ITargetRegistry _targets;
+    private readonly ICollectorRegistry _targets;
     private readonly AgentMessageDispatcher _dispatcher;
     private readonly AgentOptions _options;
     private readonly TimeProvider _clock;
@@ -55,7 +55,7 @@ internal sealed class AgentWsSession
         WebSocket socket,
         AgentConnectionRegistry connections,
         IAgentRegistry agents,
-        ITargetRegistry targets,
+        ICollectorRegistry targets,
         AgentMessageDispatcher dispatcher,
         AgentOptions options,
         TimeProvider clock,
@@ -200,7 +200,7 @@ internal sealed class AgentWsSession
             return null;
         }
 
-        var targetId = _agents.FindTargetIdByAgentId(agentId.Value);
+        var targetId = _agents.FindCollectorIdByAgentId(agentId.Value);
         return (agentId.Value, targetId ?? -agentId.Value, agent.Name, first.Seq);
     }
 

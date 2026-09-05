@@ -1,7 +1,7 @@
 using System.Text.Json;
 using DevicePanel.Protocol;
 
-namespace DevicePanel.Web.Targets;
+namespace DevicePanel.Web.Collectors;
 
 /// <summary>面板侧设备通道抽象：一帧 = 一个信封。指标/终端/日志等后续通道复用同一收发原语。</summary>
 public interface IDeviceChannel

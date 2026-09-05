@@ -1,6 +1,6 @@
 using System.Text.Json;
 using DevicePanel.Protocol;
-using DevicePanel.Web.Targets;
+using DevicePanel.Web.Collectors;
 using Xunit;
 
 namespace DevicePanel.Web.Tests;

@@ -223,7 +223,7 @@ public class MetricsIngestTests : IDisposable
         var client0 = factory.CreateClient();
         var login = await client0.PostAsJsonAsync("/api/auth/login", new { username = "admin", password = "test-password-1" });
         login.EnsureSuccessStatusCode();
-        var created = await client0.PostAsJsonAsync("/api/targets", new { name = "故障注入设备", tags = new[] { "机房F" } });
+        var created = await client0.PostAsJsonAsync("/api/collectors", new { name = "故障注入设备", tags = new[] { "机房F" } });
         created.EnsureSuccessStatusCode();
         var payload = await created.Content.ReadFromJsonAsync<JsonElement>();
         var token = payload.GetProperty("agentToken").GetString()!;
@@ -243,7 +243,7 @@ public class MetricsIngestTests : IDisposable
         factory.Clock.Advance(TimeSpan.FromSeconds(30));
         await SendAsync(socket, new AgentEnvelope { Type = AgentMessageTypes.Heartbeat, Seq = 6 });
         var client = await AuthenticatedClientAsync(factory);
-        var list = await (await client.GetAsync("/api/targets")).Content.ReadFromJsonAsync<JsonElement>();
+        var list = await (await client.GetAsync("/api/collectors")).Content.ReadFromJsonAsync<JsonElement>();
         var target = list.EnumerateArray().Single(t => t.GetProperty("id").GetInt64() == targetId);
         Assert.True(target.GetProperty("online").GetBoolean(), "落库失败不应终止 WS 会话：心跳链路必须存活");
     }
@@ -286,7 +286,7 @@ public class MetricsIngestTests : IDisposable
     private async Task<(string Token, long TargetId)> CreateTargetWithTokenAsync()
     {
         var client = await AuthenticatedClientAsync(_factory);
-        var response = await client.PostAsJsonAsync("/api/targets", new { name = "指标设备", tags = new[] { "机房M" } });
+        var response = await client.PostAsJsonAsync("/api/collectors", new { name = "指标设备", tags = new[] { "机房M" } });
         response.EnsureSuccessStatusCode();
         var payload = await response.Content.ReadFromJsonAsync<JsonElement>();
         return (payload.GetProperty("agentToken").GetString()!, payload.GetProperty("id").GetInt64());
@@ -335,7 +335,7 @@ public class MetricsIngestTests : IDisposable
     private async Task<JsonElement[]> ListTargetsAsync()
     {
         var client = await AuthenticatedClientAsync(_factory);
-        var response = await client.GetAsync("/api/targets");
+        var response = await client.GetAsync("/api/collectors");
         response.EnsureSuccessStatusCode();
         var list = await response.Content.ReadFromJsonAsync<JsonElement>();
         return list.EnumerateArray().ToArray();

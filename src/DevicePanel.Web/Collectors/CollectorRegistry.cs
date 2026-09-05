@@ -2,78 +2,86 @@ using System.Text.Json;
 using DevicePanel.Web.Infrastructure;
 using Microsoft.Data.Sqlite;
 
-namespace DevicePanel.Web.Targets;
+namespace DevicePanel.Web.Collectors;
 
-/// <summary>目标类型：device = agent 回连接入的计算设备；service = 服务级监测目标（HTTP 探针等，后续模块接入）。</summary>
-public static class TargetTypes
+/// <summary>
+/// 内置标签（三期模块3）：device / service 语义不再硬分类，经标签保留——与自定义标签同渠道（可编辑、可筛选）。
+/// 内置标签由服务端在创建/更新时维护（每台采集器恰有一个 type:* 标签），客户端传入的同名标签被忽略。
+/// </summary>
+public static class CollectorBuiltinTags
 {
-    public const string Device = "device";
-    public const string Service = "service";
+    public const string Device = "type:device";
+    public const string Service = "type:service";
 
-    public static bool IsValid(string type) => type is Device or Service;
+    public static bool Contains(IReadOnlyList<string> tags, string builtin) => tags.Contains(builtin);
+
+    /// <summary>去除用户传入的全部 type:* 标签（内置标签语义服务端所有），保留自定义标签。</summary>
+    public static List<string> Strip(IReadOnlyList<string> tags) => tags.Where(t => !t.StartsWith("type:", StringComparison.Ordinal)).ToList();
 }
 
-public sealed record TargetInfo(
+public sealed record CollectorInfo(
     long Id,
-    string Type,
     string Name,
     IReadOnlyList<string> Tags,
+    long? AgentId,
     DateTimeOffset CreatedAtUtc,
     DateTimeOffset UpdatedAtUtc,
     DateTimeOffset? LastSeenAtUtc)
 {
-    /// <summary>在线 = 最近心跳距当前时间不超过连续 2 个心跳周期（AgentOptions.OfflineAfter）；心跳语义仅 device 类目标有。</summary>
+    /// <summary>在线 = 最近心跳距当前时间不超过连续 2 个心跳周期（AgentOptions.OfflineAfter）；仅 push 采集器有心跳语义。</summary>
     public bool IsOnline(TimeProvider clock, AgentOptions options) =>
         LastSeenAtUtc is { } lastSeen && clock.GetUtcNow() - lastSeen <= options.OfflineAfter;
+
+    /// <summary>采集器模式由关联推导而非存储：关联 agent = push（agent 回连上报）；有 pull 配置 = pull（面板侧轮询）。</summary>
+    public bool IsPush => AgentId is not null;
 }
 
 /// <summary>
-/// 目标台账（设备与服务统一实体，二期模块0）：CRUD。
-/// 三期模块2起 token 归 agent 实体所有：device 目标创建时携带关联 agentId（token hash 由 agents 表平移为镜像），
-/// service 目标无 agent 通道，agent_token_hash 仅占位。token 认证只查 agents 表，本表不再参与。
+/// 采集器台账（targets → collectors 泛化，三期模块3）：统一 push/pull 两类采集器的 CRUD，无 type 列。
+/// push 采集器创建时携带关联 agentId（token hash 镜像其值）；pull 采集器 agentId 为空（占位 hash）。
+/// token 认证只查 agents 表，本表不再参与。
 /// </summary>
-public interface ITargetRegistry
+public interface ICollectorRegistry
 {
-    /// <summary>创建目标。device 型传入关联 agentId（token hash 镜像其值）；service 型 agentId 为空（占位 hash）。</summary>
-    TargetInfo Create(string type, string name, IReadOnlyList<string> tags, long? agentId = null);
+    /// <summary>创建采集器。tags 由调用方组装（含内置 type:* 标签）；push 型传入关联 agentId。</summary>
+    CollectorInfo Create(string name, IReadOnlyList<string> tags, long? agentId = null);
 
-    TargetInfo? Update(long id, string name, IReadOnlyList<string> tags);
+    CollectorInfo? Update(long id, string name, IReadOnlyList<string> tags);
 
     bool Delete(long id);
 
-    TargetInfo? Get(long id);
+    CollectorInfo? Get(long id);
 
-    IReadOnlyList<TargetInfo> List();
+    IReadOnlyList<CollectorInfo> List();
 
-    void Touch(long targetId, DateTimeOffset seenAtUtc);
+    void Touch(long collectorId, DateTimeOffset seenAtUtc);
 }
 
-public sealed class TargetRegistry : ITargetRegistry
+public sealed class CollectorRegistry : ICollectorRegistry
 {
     private readonly SqliteConnectionFactory _connectionFactory;
     private readonly TimeProvider _timeProvider;
 
-    public TargetRegistry(SqliteConnectionFactory connectionFactory, TimeProvider timeProvider)
+    public CollectorRegistry(SqliteConnectionFactory connectionFactory, TimeProvider timeProvider)
     {
         _connectionFactory = connectionFactory;
         _timeProvider = timeProvider;
     }
 
-    public TargetInfo Create(string type, string name, IReadOnlyList<string> tags, long? agentId = null)
+    public CollectorInfo Create(string name, IReadOnlyList<string> tags, long? agentId = null)
     {
         var nowUtc = _timeProvider.GetUtcNow();
         using var connection = _connectionFactory.CreateOpenConnection();
         long id;
         using (var command = connection.CreateCommand())
         {
-            // device 型目标：token hash 镜像关联 agent 的值（子查询）并落 agent_id 关联列；service 型目标无 agent，占位 hash 满足历史 NOT NULL UNIQUE 约束
+            // push 型采集器：token hash 镜像关联 agent 的值（子查询）并落 agent_id 关联列；pull 型无 agent，占位 hash 满足历史 NOT NULL UNIQUE 约束
             command.CommandText = """
-                INSERT INTO targets(type, name, tags_json, agent_token_hash, agent_id, created_at_utc, updated_at_utc)
-                VALUES ($type, $name, $tags,
+                INSERT INTO collectors(name, tags_json, agent_token_hash, agent_id, created_at_utc, updated_at_utc)
+                VALUES ($name, $tags,
                         COALESCE((SELECT token_hash FROM agents WHERE id = $agentId), $placeholderHash),
                         $agentId, $createdAt, $updatedAt)
                 """;
-            command.Parameters.AddWithValue("$type", type);
             command.Parameters.AddWithValue("$name", name);
             command.Parameters.AddWithValue("$tags", SerializeTags(tags));
             command.Parameters.AddWithValue("$agentId", agentId ?? (object)DBNull.Value);
@@ -87,16 +95,16 @@ public sealed class TargetRegistry : ITargetRegistry
         selectId.CommandText = "SELECT last_insert_rowid()";
         id = (long)(selectId.ExecuteScalar() ?? 0L);
 
-        return new TargetInfo(id, type, name, tags.ToArray(), nowUtc, nowUtc, null);
+        return new CollectorInfo(id, name, tags.ToArray(), agentId, nowUtc, nowUtc, null);
     }
 
-    public TargetInfo? Update(long id, string name, IReadOnlyList<string> tags)
+    public CollectorInfo? Update(long id, string name, IReadOnlyList<string> tags)
     {
         var nowUtc = _timeProvider.GetUtcNow();
         using var connection = _connectionFactory.CreateOpenConnection();
         using var command = connection.CreateCommand();
         command.CommandText = """
-            UPDATE targets SET name = $name, tags_json = $tags, updated_at_utc = $updatedAt
+            UPDATE collectors SET name = $name, tags_json = $tags, updated_at_utc = $updatedAt
             WHERE id = $id;
             """;
         command.Parameters.AddWithValue("$name", name);
@@ -115,63 +123,63 @@ public sealed class TargetRegistry : ITargetRegistry
     {
         using var connection = _connectionFactory.CreateOpenConnection();
         using var command = connection.CreateCommand();
-        command.CommandText = "DELETE FROM targets WHERE id = $id";
+        command.CommandText = "DELETE FROM collectors WHERE id = $id";
         command.Parameters.AddWithValue("$id", id);
         return command.ExecuteNonQuery() > 0;
     }
 
-    public TargetInfo? Get(long id)
+    public CollectorInfo? Get(long id)
     {
         using var connection = _connectionFactory.CreateOpenConnection();
         using var command = connection.CreateCommand();
         command.CommandText = """
-            SELECT id, type, name, tags_json, created_at_utc, updated_at_utc, last_seen_at_utc
-            FROM targets WHERE id = $id
+            SELECT id, name, tags_json, agent_id, created_at_utc, updated_at_utc, last_seen_at_utc
+            FROM collectors WHERE id = $id
             """;
         command.Parameters.AddWithValue("$id", id);
         using var reader = command.ExecuteReader();
-        return reader.Read() ? MapTarget(reader) : null;
+        return reader.Read() ? MapCollector(reader) : null;
     }
 
-    public IReadOnlyList<TargetInfo> List()
+    public IReadOnlyList<CollectorInfo> List()
     {
-        var targets = new List<TargetInfo>();
+        var collectors = new List<CollectorInfo>();
         using var connection = _connectionFactory.CreateOpenConnection();
         using var command = connection.CreateCommand();
         command.CommandText = """
-            SELECT id, type, name, tags_json, created_at_utc, updated_at_utc, last_seen_at_utc
-            FROM targets ORDER BY id
+            SELECT id, name, tags_json, agent_id, created_at_utc, updated_at_utc, last_seen_at_utc
+            FROM collectors ORDER BY id
             """;
         using var reader = command.ExecuteReader();
         while (reader.Read())
         {
-            targets.Add(MapTarget(reader));
+            collectors.Add(MapCollector(reader));
         }
 
-        return targets;
+        return collectors;
     }
 
-    public void Touch(long targetId, DateTimeOffset seenAtUtc)
+    public void Touch(long collectorId, DateTimeOffset seenAtUtc)
     {
         using var connection = _connectionFactory.CreateOpenConnection();
         using var command = connection.CreateCommand();
-        command.CommandText = "UPDATE targets SET last_seen_at_utc = $seenAt WHERE id = $id";
+        command.CommandText = "UPDATE collectors SET last_seen_at_utc = $seenAt WHERE id = $id";
         command.Parameters.AddWithValue("$seenAt", FormatUtc(seenAtUtc));
-        command.Parameters.AddWithValue("$id", targetId);
+        command.Parameters.AddWithValue("$id", collectorId);
         command.ExecuteNonQuery();
     }
 
-    private static TargetInfo MapTarget(SqliteDataReader reader)
+    private static CollectorInfo MapCollector(SqliteDataReader reader)
     {
         var id = reader.GetInt64(0);
-        var type = reader.GetString(1);
-        var name = reader.GetString(2);
-        var tags = ParseTags(reader.GetString(3));
+        var name = reader.GetString(1);
+        var tags = ParseTags(reader.GetString(2));
+        var agentId = reader.IsDBNull(3) ? null : (long?)reader.GetInt64(3);
         var createdAt = DateTimeOffset.Parse(reader.GetString(4));
         var updatedAt = DateTimeOffset.Parse(reader.GetString(5));
         var lastSeenColumn = reader.IsDBNull(6) ? null : reader.GetString(6);
         var lastSeen = lastSeenColumn is null ? (DateTimeOffset?)null : DateTimeOffset.Parse(lastSeenColumn);
-        return new TargetInfo(id, type, name, tags, createdAt, updatedAt, lastSeen);
+        return new CollectorInfo(id, name, tags, agentId, createdAt, updatedAt, lastSeen);
     }
 
     private static string SerializeTags(IReadOnlyList<string> tags) => JsonSerializer.Serialize(tags);

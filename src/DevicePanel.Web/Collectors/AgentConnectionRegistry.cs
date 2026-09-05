@@ -1,7 +1,7 @@
 using System.Collections.Concurrent;
 using DevicePanel.Protocol;
 
-namespace DevicePanel.Web.Targets;
+namespace DevicePanel.Web.Collectors;
 
 /// <summary>注册表中的一条在线连接：设备 ID + 通道 + 最近活跃时间（任一入站消息都会刷新）。</summary>
 public sealed class AgentConnectionEntry

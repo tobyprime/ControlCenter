@@ -2,7 +2,7 @@ using System.Net.WebSockets;
 using System.Text.Json;
 using DevicePanel.Protocol;
 
-namespace DevicePanel.Web.Targets;
+namespace DevicePanel.Web.Collectors;
 
 /// <summary>面板侧单条 agent WebSocket 连接：封装信封收发与主动关闭，实现 IDeviceChannel。</summary>
 public sealed class AgentConnection : IDeviceChannel

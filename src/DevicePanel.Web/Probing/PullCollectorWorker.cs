@@ -3,7 +3,7 @@ using System.Net;
 using System.Text.Json;
 using DevicePanel.Web.Alerting;
 using DevicePanel.Web.Metrics;
-using DevicePanel.Web.Targets;
+using DevicePanel.Web.Collectors;
 using Microsoft.Extensions.Logging;
 
 namespace DevicePanel.Web.Probing;
@@ -60,34 +60,34 @@ public sealed class HttpClientProbeClient : IProbeHttpClient
 /// <summary>
 /// 面板侧 HTTP/JSON 探针（模块2，不改 agent）：按目标配置的间隔轮询服务 URL。
 /// 成功：写 status=true（每次）+ latency_ms + 按 mappings 提取的指标样本，并刷新目标最近探测时间；
-/// 失败：连续 FailureThreshold 次仅在判定异常的转换点写一次 status=false（对齐 TargetStatusScanner 的转换语义）。
+/// 失败：连续 FailureThreshold 次仅在判定异常的转换点写一次 status=false（对齐 CollectorStatusScanner 的转换语义）。
 /// 全部样本走指标管道入库并喂告警引擎（约束 A/B：可见性与通知均由 metric key 注册与告警规则实例决定）。
 /// </summary>
-public sealed class HttpProbeWorker : BackgroundService
+public sealed class PullCollectorWorker : BackgroundService
 {
-    private readonly ITargetRegistry _targets;
-    private readonly IProbeConfigStore _configs;
+    private readonly ICollectorRegistry _targets;
+    private readonly IPullCollectorConfigStore _configs;
     private readonly IProbeHttpClient _client;
     private readonly IMetricKeyRegistry _metricKeys;
     private readonly IMetricsStore _metrics;
     private readonly IAlertRuleEngine _alerts;
     private readonly ProbeOptions _options;
     private readonly TimeProvider _clock;
-    private readonly ILogger<HttpProbeWorker> _logger;
+    private readonly ILogger<PullCollectorWorker> _logger;
     private readonly Dictionary<long, ProbeRuntime> _runtimes = new();
 
     private sealed record ProbeRuntime(DateTimeOffset NextRunUtc, int ConsecutiveFailures);
 
-    public HttpProbeWorker(
-        ITargetRegistry targets,
-        IProbeConfigStore configs,
+    public PullCollectorWorker(
+        ICollectorRegistry targets,
+        IPullCollectorConfigStore configs,
         IProbeHttpClient client,
         IMetricKeyRegistry metricKeys,
         IMetricsStore metrics,
         IAlertRuleEngine alerts,
         ProbeOptions options,
         TimeProvider clock,
-        ILogger<HttpProbeWorker> logger)
+        ILogger<PullCollectorWorker> logger)
     {
         _targets = targets;
         _configs = configs;
@@ -126,7 +126,7 @@ public sealed class HttpProbeWorker : BackgroundService
         var configs = _configs.List();
 
         // 目标已删除的运行时状态随轮清理（配置本身由外键级联删除）
-        var liveIds = configs.Select(c => c.TargetId).ToHashSet();
+        var liveIds = configs.Select(c => c.CollectorId).ToHashSet();
         foreach (var stale in _runtimes.Keys.Where(id => !liveIds.Contains(id)).ToList())
         {
             _runtimes.Remove(stale);
@@ -135,7 +135,7 @@ public sealed class HttpProbeWorker : BackgroundService
         foreach (var config in configs)
         {
             var failures = 0;
-            if (_runtimes.TryGetValue(config.TargetId, out var runtime))
+            if (_runtimes.TryGetValue(config.CollectorId, out var runtime))
             {
                 if (runtime.NextRunUtc > nowUtc)
                 {
@@ -152,16 +152,16 @@ public sealed class HttpProbeWorker : BackgroundService
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
                 // 丢点保连：单目标探针故障不影响其他目标与调度循环
-                _logger.LogWarning(ex, "目标 {TargetId} 探针执行异常，本次跳过", config.TargetId);
+                _logger.LogWarning(ex, "目标 {TargetId} 探针执行异常，本次跳过", config.CollectorId);
             }
 
             var interval = TimeSpan.FromSeconds(Math.Clamp(config.IntervalSeconds, _options.MinIntervalSeconds, _options.MaxIntervalSeconds));
-            _runtimes[config.TargetId] = new ProbeRuntime(nowUtc + interval, failures);
+            _runtimes[config.CollectorId] = new ProbeRuntime(nowUtc + interval, failures);
         }
     }
 
     /// <summary>执行一次探针并返回新的连续失败计数。</summary>
-    private async Task<int> ProbeAsync(ProbeConfig config, int consecutiveFailures, CancellationToken cancellationToken)
+    private async Task<int> ProbeAsync(PullCollectorConfig config, int consecutiveFailures, CancellationToken cancellationToken)
     {
         var nowUtc = _clock.GetUtcNow();
         var result = await _client.FetchAsync(config.Url, cancellationToken).ConfigureAwait(false);
@@ -171,25 +171,25 @@ public sealed class HttpProbeWorker : BackgroundService
             if (failures == _options.FailureThreshold)
             {
                 // 判定异常的转换点：只写一次 status=false，后续持续失败不再刷样本
-                WriteSample(config.TargetId, MetricKeys.Status, new MetricSample(nowUtc, 0, "false"), nowUtc);
-                _logger.LogWarning("目标 {TargetId} 探针连续 {Failures} 次失败，判定服务异常", config.TargetId, failures);
+                WriteSample(config.CollectorId, MetricKeys.Status, new MetricSample(nowUtc, 0, "false"), nowUtc);
+                _logger.LogWarning("目标 {TargetId} 探针连续 {Failures} 次失败，判定服务异常", config.CollectorId, failures);
             }
 
             return failures;
         }
 
-        _targets.Touch(config.TargetId, nowUtc);
-        WriteSample(config.TargetId, MetricKeys.Status, new MetricSample(nowUtc, 1, "true"), nowUtc);
+        _targets.Touch(config.CollectorId, nowUtc);
+        WriteSample(config.CollectorId, MetricKeys.Status, new MetricSample(nowUtc, 1, "true"), nowUtc);
         if (result.LatencyMs is { } latency)
         {
-            WriteSample(config.TargetId, MetricKeys.LatencyMs, new MetricSample(nowUtc, latency, null), nowUtc);
+            WriteSample(config.CollectorId, MetricKeys.LatencyMs, new MetricSample(nowUtc, latency, null), nowUtc);
         }
 
         ExtractAndStore(config, result.BodyJson, nowUtc);
         return 0;
     }
 
-    private void ExtractAndStore(ProbeConfig config, string? body, DateTimeOffset nowUtc)
+    private void ExtractAndStore(PullCollectorConfig config, string? body, DateTimeOffset nowUtc)
     {
         if (body is null || config.Mappings.Count == 0)
         {
@@ -203,7 +203,7 @@ public sealed class HttpProbeWorker : BackgroundService
         }
         catch (JsonException ex)
         {
-            _logger.LogWarning("目标 {TargetId} 探针响应非 JSON，跳过提取：{Message}", config.TargetId, ex.Message);
+            _logger.LogWarning("目标 {TargetId} 探针响应非 JSON，跳过提取：{Message}", config.CollectorId, ex.Message);
             return;
         }
 
@@ -214,7 +214,7 @@ public sealed class HttpProbeWorker : BackgroundService
                 if (_metricKeys.Get(mapping.MetricKey) is null)
                 {
                     // 约束 A：只有注册过的 metric key 才进入管道
-                    _logger.LogWarning("目标 {TargetId} 提取映射的指标 {Key} 未注册，跳过", config.TargetId, mapping.MetricKey);
+                    _logger.LogWarning("目标 {TargetId} 提取映射的指标 {Key} 未注册，跳过", config.CollectorId, mapping.MetricKey);
                     continue;
                 }
 
@@ -222,29 +222,29 @@ public sealed class HttpProbeWorker : BackgroundService
                 {
                     if (JsonPath.Evaluate(document.RootElement, mapping.JsonPath) is not { } value)
                     {
-                        _logger.LogWarning("目标 {TargetId} JSONPath 未命中（{Path}），指标 {Key} 本轮丢点", config.TargetId, mapping.JsonPath, mapping.MetricKey);
+                        _logger.LogWarning("目标 {TargetId} JSONPath 未命中（{Path}），指标 {Key} 本轮丢点", config.CollectorId, mapping.JsonPath, mapping.MetricKey);
                         continue;
                     }
 
                     if (ToSample(nowUtc, value, mapping) is { } sample)
                     {
-                        WriteSample(config.TargetId, mapping.MetricKey, sample, nowUtc);
+                        WriteSample(config.CollectorId, mapping.MetricKey, sample, nowUtc);
                     }
                     else
                     {
-                        _logger.LogWarning("目标 {TargetId} 提取值与指标 {Key} 声明类型 {Type} 不符，本轮丢点", config.TargetId, mapping.MetricKey, mapping.ValueType);
+                        _logger.LogWarning("目标 {TargetId} 提取值与指标 {Key} 声明类型 {Type} 不符，本轮丢点", config.CollectorId, mapping.MetricKey, mapping.ValueType);
                     }
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
                     // 提取失败 = 该指标本轮丢点，不影响 status/latency 与其他映射
-                    _logger.LogWarning(ex, "目标 {TargetId} 提取指标 {Key} 失败（{Path}）", config.TargetId, mapping.MetricKey, mapping.JsonPath);
+                    _logger.LogWarning(ex, "目标 {TargetId} 提取指标 {Key} 失败（{Path}）", config.CollectorId, mapping.MetricKey, mapping.JsonPath);
                 }
             }
         }
     }
 
-    private static MetricSample? ToSample(DateTimeOffset timeUtc, JsonElement value, ProbeMetricMapping mapping) => mapping.ValueType switch
+    private static MetricSample? ToSample(DateTimeOffset timeUtc, JsonElement value, PullMetricMapping mapping) => mapping.ValueType switch
     {
         MetricValueType.Number => value.ValueKind == JsonValueKind.Number ? new MetricSample(timeUtc, value.GetDouble(), null) : null,
         MetricValueType.Enum or MetricValueType.String => value.ValueKind switch

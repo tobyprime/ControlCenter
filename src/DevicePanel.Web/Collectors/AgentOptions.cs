@@ -1,4 +1,4 @@
-namespace DevicePanel.Web.Targets;
+namespace DevicePanel.Web.Collectors;
 
 /// <summary>agent 接入与心跳判定参数（appsettings: DevicePanel:Agent）。</summary>
 public sealed class AgentOptions
