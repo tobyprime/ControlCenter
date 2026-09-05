@@ -9,7 +9,7 @@ namespace DevicePanel.Web.Tests;
 
 /// <summary>
 /// 日志 API 集成测试：假 agent 走真实 /agent/ws 通道接入，浏览器侧 GET
-/// /api/devices/{id}/logs/services 与 /logs/tail（会话 Cookie 认证）。
+/// /api/collectors/{id}/logs/services 与 /logs/tail（会话 Cookie 认证）。
 /// 验证请求下行、seq 关联回包、离线 409、未知设备 404、agent 错误 502、超时 504。
 /// </summary>
 public class LogsApiTests : IDisposable
@@ -34,7 +34,7 @@ public class LogsApiTests : IDisposable
     {
         var (deviceId, agent) = await ConnectAgentAsync();
 
-        var response = await GetAsync($"/api/devices/{deviceId}/logs/services");
+        var response = await GetAsync($"/api/collectors/{deviceId}/logs/services");
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
 
         var payload = await response.Content.ReadFromJsonAsync<JsonElement>();
@@ -53,7 +53,7 @@ public class LogsApiTests : IDisposable
     {
         var (deviceId, agent) = await ConnectAgentAsync();
 
-        var response = await GetAsync($"/api/devices/{deviceId}/logs/tail?service=nginx.service&kind=systemd&lines=37");
+        var response = await GetAsync($"/api/collectors/{deviceId}/logs/tail?service=nginx.service&kind=systemd&lines=37");
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
 
         var request = await agent.ReceiveUntilAsync(AgentMessageTypes.LogsTailRequest);
@@ -74,13 +74,13 @@ public class LogsApiTests : IDisposable
     {
         var (deviceId, agent) = await ConnectAgentAsync();
 
-        var response = await GetAsync($"/api/devices/{deviceId}/logs/tail?service=nginx.service&kind=systemd&lines=99999");
+        var response = await GetAsync($"/api/collectors/{deviceId}/logs/tail?service=nginx.service&kind=systemd&lines=99999");
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
 
         var request = await agent.ReceiveUntilAsync(AgentMessageTypes.LogsTailRequest);
         Assert.Equal(1000, request.Payload.GetProperty("lines").GetInt32());
 
-        var defaultResponse = await GetAsync($"/api/devices/{deviceId}/logs/tail?service=nginx.service&kind=systemd");
+        var defaultResponse = await GetAsync($"/api/collectors/{deviceId}/logs/tail?service=nginx.service&kind=systemd");
         Assert.Equal(HttpStatusCode.OK, defaultResponse.StatusCode);
         var defaultRequest = await agent.ReceiveUntilAsync(AgentMessageTypes.LogsTailRequest);
         Assert.Equal(200, defaultRequest.Payload.GetProperty("lines").GetInt32());
@@ -91,7 +91,7 @@ public class LogsApiTests : IDisposable
     {
         var client = await AuthenticatedClientAsync();
 
-        var response = await client.GetAsync("/api/devices/424242/logs/services");
+        var response = await client.GetAsync("/api/collectors/424242/logs/services");
 
         Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
     }
@@ -102,7 +102,7 @@ public class LogsApiTests : IDisposable
         var client = await AuthenticatedClientAsync();
         var created = await CreateDeviceAsync(client);
 
-        var response = await client.GetAsync($"/api/devices/{created.Id}/logs/services");
+        var response = await client.GetAsync($"/api/collectors/{created.Id}/logs/services");
 
         Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
         var payload = await response.Content.ReadFromJsonAsync<JsonElement>();
@@ -114,7 +114,7 @@ public class LogsApiTests : IDisposable
     {
         var (deviceId, agent) = await ConnectAgentAsync(AgentMode.Error);
 
-        var response = await GetAsync($"/api/devices/{deviceId}/logs/tail?service=ghost.service&kind=systemd&lines=10");
+        var response = await GetAsync($"/api/collectors/{deviceId}/logs/tail?service=ghost.service&kind=systemd&lines=10");
 
         Assert.Equal(HttpStatusCode.BadGateway, response.StatusCode);
         var payload = await response.Content.ReadFromJsonAsync<JsonElement>();
@@ -127,7 +127,7 @@ public class LogsApiTests : IDisposable
         // 假 agent 收到请求后不回复（黑洞模式）
         var (deviceId, _) = await ConnectAgentAsync(AgentMode.Silent);
 
-        var response = await GetAsync($"/api/devices/{deviceId}/logs/services");
+        var response = await GetAsync($"/api/collectors/{deviceId}/logs/services");
 
         Assert.Equal(HttpStatusCode.GatewayTimeout, response.StatusCode);
     }
@@ -137,7 +137,7 @@ public class LogsApiTests : IDisposable
     {
         var (deviceId, _) = await ConnectAgentAsync();
 
-        var response = await GetAsync($"/api/devices/{deviceId}/logs/tail?service=bad%3Bname&kind=systemd&lines=10");
+        var response = await GetAsync($"/api/collectors/{deviceId}/logs/tail?service=bad%3Bname&kind=systemd&lines=10");
 
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
         var payload = await response.Content.ReadFromJsonAsync<JsonElement>();
@@ -149,7 +149,7 @@ public class LogsApiTests : IDisposable
     {
         var (deviceId, _) = await ConnectAgentAsync();
 
-        var response = await GetAsync($"/api/devices/{deviceId}/logs/tail?service=a.service&kind=files&lines=10");
+        var response = await GetAsync($"/api/collectors/{deviceId}/logs/tail?service=a.service&kind=files&lines=10");
 
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
     }
@@ -159,7 +159,7 @@ public class LogsApiTests : IDisposable
     {
         var (deviceId, _) = await ConnectAgentAsync();
 
-        var response = await GetAsync($"/api/devices/{deviceId}/logs/tail?kind=systemd&lines=10");
+        var response = await GetAsync($"/api/collectors/{deviceId}/logs/tail?kind=systemd&lines=10");
 
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
     }
@@ -180,7 +180,7 @@ public class LogsApiTests : IDisposable
 
     private static async Task<(long Id, string AgentToken)> CreateDeviceAsync(HttpClient client)
     {
-        var response = await client.PostAsJsonAsync("/api/targets", new { name = "日志设备", tags = new[] { "机房A" } });
+        var response = await client.PostAsJsonAsync("/api/collectors", new { name = "日志设备", tags = new[] { "机房A" } });
         response.EnsureSuccessStatusCode();
         var payload = await response.Content.ReadFromJsonAsync<JsonElement>();
         return (payload.GetProperty("id").GetInt64(), payload.GetProperty("agentToken").GetString()!);

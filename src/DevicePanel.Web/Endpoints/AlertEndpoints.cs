@@ -1,7 +1,7 @@
 using System.Text.Json;
 using DevicePanel.Web.Alerting;
 using DevicePanel.Web.Metrics;
-using DevicePanel.Web.Targets;
+using DevicePanel.Web.Collectors;
 using Microsoft.AspNetCore.Mvc;
 
 namespace DevicePanel.Web.Endpoints;
@@ -127,7 +127,7 @@ public static class AlertEndpoints
                 sampleDriven = t.SampleDriven,
             })));
 
-        rules.MapGet("/", (IAlertRuleStore store, ITargetRegistry targets, IMetricKeyRegistry metricKeys,
+        rules.MapGet("/", (IAlertRuleStore store, ICollectorRegistry targets, IMetricKeyRegistry metricKeys,
             [FromQuery] long? targetId, [FromQuery] string? metricKey) =>
         {
             var names = targets.List().ToDictionary(t => t.Id, t => t.Name);
@@ -137,7 +137,7 @@ public static class AlertEndpoints
         rules.MapPost("/", (
             [FromBody] CreateAlertRuleRequest request,
             IAlertRuleStore store,
-            ITargetRegistry targets,
+            ICollectorRegistry targets,
             IMetricKeyRegistry metricKeys,
             IEnumerable<IAlertRuleType> ruleTypes,
             AlertOptions options) =>
@@ -205,7 +205,7 @@ public static class AlertEndpoints
             [FromBody] UpdateAlertRuleRequest request,
             IAlertRuleStore store,
             IAlertRuleEngine engine,
-            ITargetRegistry targets,
+            ICollectorRegistry targets,
             IMetricKeyRegistry metricKeys,
             IEnumerable<IAlertRuleType> ruleTypes) =>
         {

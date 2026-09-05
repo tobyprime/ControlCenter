@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { fetchSession } from '@/router'
-import { listTargets, type Target } from '@/api/targets'
+import { listCollectors, type Collector } from '@/api/collectors'
 import { fetchActiveAlertCount } from '@/api/alerts'
 import { fetchDashboardLayout, saveDashboardLayout, type DashboardCard } from '@/api/dashboard'
 import {
@@ -33,12 +33,12 @@ fetchSession().then((session) => {
 })
 
 const overview = ref({ total: '—', online: '—', alerts: '—' })
-const targets = ref<Target[]>([])
+const targets = ref<Collector[]>([])
 let refreshTimer: number | undefined
 
 async function refreshOverview() {
   try {
-    const list: Target[] = await listTargets()
+    const list: Collector[] = await listCollectors()
     targets.value = list
     targetsReady.value = true
     overview.value.total = String(list.length)
@@ -348,7 +348,7 @@ onBeforeUnmount(() => {
     <div class="home-header">
       <div>
         <h1 class="home-title">欢迎，{{ username || '管理员' }}</h1>
-        <p class="home-description">设备与目标、日志查看、终端交互、告警通知均已上线；主页概览支持自定义卡片布局与指标卡。</p>
+        <p class="home-description">采集器接入、日志查看、终端交互、告警通知均已上线；主页概览支持自定义卡片布局与指标卡。</p>
       </div>
       <button v-if="!editing" type="button" class="primary-button" @click="enterEdit">
         进入编辑

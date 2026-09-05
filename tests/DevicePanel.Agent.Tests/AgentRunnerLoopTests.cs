@@ -115,8 +115,116 @@ public class AgentRunnerLoopTests
             $"下行后指标上报中断：{Describe(envelopes)}");
     }
 
+    [Fact]
+    public async Task Metrics_Latest_Request_Is_Answered_With_Echoed_Seq()
+    {
+        // 按需查询（三期模块3）：面板下发 metrics.latest.request，agent 即时采样一次并按请求 seq 回包
+        using var server = new RecordingWsServer();
+        await server.StartAsync();
+
+        var collector = new FixedCollector(new MetricsSample(11, 22, 33, 4400, 5500));
+        var options = new AgentOptions
+        {
+            Url = $"ws://127.0.0.1:{server.Port}/agent/ws",
+            Token = "dpk_test",
+            HeartbeatIntervalSeconds = 1,
+        };
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        var runner = new AgentRunner(options, new StringWriter(), collector);
+        var runTask = Task.Run(() => runner.RunAsync(cts.Token));
+
+        var deadline = DateTime.UtcNow.AddSeconds(3);
+        while (server.ReceivedSnapshot().Count(e => e.Type == AgentMessageTypes.Heartbeat) == 0)
+        {
+            Assert.True(DateTime.UtcNow < deadline, "等待首个心跳超时");
+            await Task.Delay(50, CancellationToken.None);
+        }
+
+        await server.SendDownstreamAsync(AgentEnvelope.Create(AgentMessageTypes.MetricsLatestRequest, 42));
+
+        var reply = await WaitForEnvelopeAsync(server, AgentMessageTypes.MetricsLatestResponse);
+        Assert.Equal(42, reply.Seq);
+        Assert.Equal(11, reply.Payload.GetProperty("cpu").GetDouble());
+        Assert.Equal(5500, reply.Payload.GetProperty("netTx").GetDouble());
+
+        await cts.CancelAsync();
+        try
+        {
+            await runTask;
+        }
+        catch (OperationCanceledException)
+        {
+        }
+    }
+
+    [Fact]
+    public async Task Metrics_Latest_Sampling_Failure_Responds_Error_With_Echoed_Seq()
+    {
+        using var server = new RecordingWsServer();
+        await server.StartAsync();
+
+        var collector = new ThrowingCollector(new InvalidOperationException("温度传感器读取失败"));
+        var options = new AgentOptions
+        {
+            Url = $"ws://127.0.0.1:{server.Port}/agent/ws",
+            Token = "dpk_test",
+            HeartbeatIntervalSeconds = 1,
+        };
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        var runner = new AgentRunner(options, new StringWriter(), collector);
+        var runTask = Task.Run(() => runner.RunAsync(cts.Token));
+
+        var deadline = DateTime.UtcNow.AddSeconds(3);
+        while (server.ReceivedSnapshot().Count(e => e.Type == AgentMessageTypes.Heartbeat) == 0)
+        {
+            Assert.True(DateTime.UtcNow < deadline, "等待 agent 接入超时");
+            await Task.Delay(50, CancellationToken.None);
+        }
+
+        await server.SendDownstreamAsync(AgentEnvelope.Create(AgentMessageTypes.MetricsLatestRequest, 7));
+
+        var reply = await WaitForEnvelopeAsync(server, AgentMessageTypes.MetricsError);
+        Assert.Equal(7, reply.Seq);
+        Assert.Contains("温度传感器", reply.Payload.GetProperty("message").GetString());
+
+        await cts.CancelAsync();
+        try
+        {
+            await runTask;
+        }
+        catch (OperationCanceledException)
+        {
+        }
+    }
+
+    private static async Task<AgentEnvelope> WaitForEnvelopeAsync(RecordingWsServer server, string type)
+    {
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        while (DateTime.UtcNow < deadline)
+        {
+            var match = server.ReceivedSnapshot().FirstOrDefault(e => e.Type == type);
+            if (match is not null)
+            {
+                return match;
+            }
+
+            await Task.Delay(50, CancellationToken.None);
+        }
+
+        throw new TimeoutException($"等待 {type} 超时");
+    }
+
     private static string Describe(List<AgentEnvelope> envelopes) =>
         string.Join(",", envelopes.Select(e => e.Type));
+
+    private sealed class ThrowingCollector : IMetricsCollector
+    {
+        private readonly Exception _exception;
+
+        public ThrowingCollector(Exception exception) => _exception = exception;
+
+        public MetricsSample Sample() => throw _exception;
+    }
 
     private sealed class FixedCollector : IMetricsCollector
     {

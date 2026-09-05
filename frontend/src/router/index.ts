@@ -42,16 +42,16 @@ const router = createRouter({
           meta: { title: '首页' },
         },
         {
-          path: 'targets',
-          name: 'targets',
-          component: () => import('@/views/TargetsView.vue'),
-          meta: { title: '目标管理' },
+          path: 'collectors',
+          name: 'collectors',
+          component: () => import('@/views/CollectorsView.vue'),
+          meta: { title: '采集器' },
         },
         {
-          path: 'targets/:id',
-          name: 'target-detail',
-          component: () => import('@/views/TargetDetailView.vue'),
-          meta: { title: '目标详情' },
+          path: 'collectors/:id',
+          name: 'collector-detail',
+          component: () => import('@/views/CollectorDetailView.vue'),
+          meta: { title: '采集器详情' },
         },
         {
           path: 'agents',
@@ -76,12 +76,6 @@ const router = createRouter({
           name: 'terminal-records',
           component: () => import('@/views/TerminalRecordsView.vue'),
           meta: { title: '终端留痕' },
-        },
-        {
-          path: 'logs',
-          name: 'logs',
-          component: () => import('@/views/LogsView.vue'),
-          meta: { title: '日志查看' },
         },
         {
           path: 'alerts',

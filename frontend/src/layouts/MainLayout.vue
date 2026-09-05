@@ -56,12 +56,11 @@ async function onLogout() {
       <aside class="sidebar" :class="{ open: drawerOpen }">
         <nav class="nav">
           <RouterLink class="nav-item" to="/" @click="drawerOpen = false">首页</RouterLink>
-          <RouterLink class="nav-item" to="/targets" :class="{ active: route.name === 'targets' || route.name === 'target-detail' }" @click="drawerOpen = false">目标管理</RouterLink>
+          <RouterLink class="nav-item" to="/collectors" :class="{ active: route.name === 'collectors' || route.name === 'collector-detail' }" @click="drawerOpen = false">采集器</RouterLink>
           <RouterLink class="nav-item" to="/agents" :class="{ active: route.name === 'agents' }" @click="drawerOpen = false">Agent 管理</RouterLink>
           <RouterLink class="nav-item" to="/metrics" :class="{ active: route.name === 'metrics' }" @click="drawerOpen = false">指标曲线</RouterLink>
           <RouterLink class="nav-item" to="/terminal" :class="{ active: route.name === 'terminal' }" @click="drawerOpen = false">Web 终端</RouterLink>
           <RouterLink class="nav-item" to="/terminal/records" :class="{ active: route.name === 'terminal-records' }" @click="drawerOpen = false">终端留痕</RouterLink>
-          <RouterLink class="nav-item" to="/logs" :class="{ active: route.name === 'logs' }" @click="drawerOpen = false">日志查看</RouterLink>
           <RouterLink class="nav-item" to="/alerts" :class="{ active: route.name === 'alerts' }" @click="drawerOpen = false">告警规则</RouterLink>
         </nav>
       </aside>

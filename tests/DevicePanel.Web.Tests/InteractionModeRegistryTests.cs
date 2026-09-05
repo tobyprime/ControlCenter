@@ -1,4 +1,5 @@
-using DevicePanel.Web.Targets;
+using DevicePanel.Web.Agents;
+using DevicePanel.Web.Collectors;
 using DevicePanel.Web.Interactions;
 using Microsoft.Extensions.Time.Testing;
 using Xunit;
@@ -59,8 +60,11 @@ public class DeviceInteractionModeCatalogTests : IDisposable
     [Fact]
     public void Existing_Device_Declares_Shell_Mode()
     {
-        var targets = new TargetRegistry(_db.Factory, _clock);
-        var deviceId = targets.Create(TargetTypes.Device, "网关", []).Id;
+        // push 采集器（关联 agent）才声明 shell；构造上经由 agent 台账建立关联
+        var agents = new AgentRegistry(_db.Factory, _clock);
+        var agentId = agents.Create("网关 agent", Array.Empty<string>()).Agent.Id;
+        var targets = new CollectorRegistry(_db.Factory, _clock);
+        var deviceId = targets.Create("网关", [CollectorBuiltinTags.Device], agentId).Id;
         var catalog = new DeviceInteractionModeCatalog(targets);
 
         Assert.Equal([ShellInteractionMode.ModeKey], catalog.GetDeclaredModeKeys(deviceId));
@@ -70,8 +74,8 @@ public class DeviceInteractionModeCatalogTests : IDisposable
     public void Service_Target_Declares_No_Modes()
     {
         // 服务目标无 agent 回连通道：不声明任何交互模式（集成审查 round 1 问题 1）
-        var targets = new TargetRegistry(_db.Factory, _clock);
-        var serviceId = targets.Create(TargetTypes.Service, "探针服务", []).Id;
+        var targets = new CollectorRegistry(_db.Factory, _clock);
+        var serviceId = targets.Create("探针服务", [CollectorBuiltinTags.Service]).Id;
         var catalog = new DeviceInteractionModeCatalog(targets);
 
         Assert.Empty(catalog.GetDeclaredModeKeys(serviceId));
@@ -80,7 +84,7 @@ public class DeviceInteractionModeCatalogTests : IDisposable
     [Fact]
     public void Unknown_Target_Returns_Empty_Declaration()
     {
-        var catalog = new DeviceInteractionModeCatalog(new TargetRegistry(_db.Factory, _clock));
+        var catalog = new DeviceInteractionModeCatalog(new CollectorRegistry(_db.Factory, _clock));
 
         Assert.Empty(catalog.GetDeclaredModeKeys(424242));
     }

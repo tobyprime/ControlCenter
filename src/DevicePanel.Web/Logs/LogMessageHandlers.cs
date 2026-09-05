@@ -1,5 +1,5 @@
 using DevicePanel.Protocol;
-using DevicePanel.Web.Targets;
+using DevicePanel.Web.Collectors;
 
 namespace DevicePanel.Web.Logs;
 

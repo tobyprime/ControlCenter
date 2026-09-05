@@ -13,7 +13,7 @@ import {
   type MetricValueType,
   type TargetSeries,
 } from '@/api/metrics'
-import { listTargets, type Target } from '@/api/targets'
+import { listCollectors, type Collector } from '@/api/collectors'
 import MetricChart, { type ChartSeries } from '@/components/MetricChart.vue'
 import { byteUnitFormatter as unitFormatter, humanizeBytes } from '@/utils/format'
 
@@ -35,7 +35,7 @@ const chartColors = ['#2563eb', '#16a34a', '#d97706', '#9333ea', '#dc2626', '#08
 // 辅助指标：不作为独立曲线展示（内存 used/total 并入内存卡副标题，传感器名并入温度卡副标题）
 const auxiliaryKeys = ['mem_used', 'mem_total', 'temp_sensor']
 
-const targets = ref<Target[]>([])
+const targets = ref<Collector[]>([])
 const metricKeys = ref<MetricKeyInfo[]>([])
 // 当前目标可用指标（TOB-374 ①）：null = 未就绪/拉取失败，按全量口径展示
 const availableKeys = ref<MetricKeyInfo[] | null>(null)
@@ -198,7 +198,7 @@ async function refresh(showError = true) {
 
 async function loadBaseline() {
   try {
-    const [targetList, keys] = await Promise.all([listTargets(), listMetricKeys()])
+    const [targetList, keys] = await Promise.all([listCollectors(), listMetricKeys()])
     targets.value = targetList
     metricKeys.value = keys
     if (targets.value.length > 0 && selectedTargetId.value === null) {
@@ -408,7 +408,7 @@ onBeforeUnmount(() => {
 
     <div v-if="loading" class="empty-state">加载中…</div>
     <div v-else-if="targets.length === 0" class="empty-state">
-      还没有目标。先到「目标管理」登记目标并接入 agent，指标数据会自动上报。
+      还没有采集器。先到「采集器」页登记采集器并接入 agent，指标数据会自动上报。
     </div>
     <template v-else>
       <p class="granularity-note">

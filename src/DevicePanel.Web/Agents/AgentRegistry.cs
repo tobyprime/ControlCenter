@@ -1,11 +1,11 @@
 using System.Text.Json;
 using DevicePanel.Web.Infrastructure;
-using DevicePanel.Web.Targets;
+using DevicePanel.Web.Collectors;
 using Microsoft.Data.Sqlite;
 
 namespace DevicePanel.Web.Agents;
 
-/// <summary>Agent 实体（三期模块2）：连接身份与能力声明的唯一宿主。TargetId 非空表示与 target 处于双写期关联。</summary>
+/// <summary>Agent 实体（三期模块2）：连接身份与能力声明的唯一宿主。CollectorId 非空表示与采集器处于关联。</summary>
 public sealed record AgentInfo(
     long Id,
     string Name,
@@ -14,7 +14,7 @@ public sealed record AgentInfo(
     DateTimeOffset CreatedAtUtc,
     DateTimeOffset UpdatedAtUtc,
     DateTimeOffset? LastSeenAtUtc,
-    long? TargetId = null)
+    long? CollectorId = null)
 {
     /// <summary>在线 = 最近心跳距当前时间不超过连续 2 个心跳周期（AgentOptions.OfflineAfter），与 target 在线口径一致。</summary>
     public bool IsOnline(TimeProvider clock, AgentOptions options) =>
@@ -50,9 +50,9 @@ public interface IAgentRegistry
 
     bool Delete(long agentId);
 
-    long? FindTargetIdByAgentId(long agentId);
+    long? FindCollectorIdByAgentId(long agentId);
 
-    long? FindAgentIdByTargetId(long targetId);
+    long? FindAgentIdByCollectorId(long collectorId);
 }
 
 public sealed class AgentRegistry : IAgentRegistry
@@ -135,7 +135,7 @@ public sealed class AgentRegistry : IAgentRegistry
         using (var mirror = connection.CreateCommand())
         {
             mirror.Transaction = transaction;
-            mirror.CommandText = "UPDATE targets SET agent_token_hash = $tokenHash WHERE agent_id = $id";
+            mirror.CommandText = "UPDATE collectors SET agent_token_hash = $tokenHash WHERE agent_id = $id";
             mirror.Parameters.AddWithValue("$tokenHash", AgentToken.Hash(token));
             mirror.Parameters.AddWithValue("$id", agentId);
             mirror.ExecuteNonQuery();
@@ -234,28 +234,28 @@ public sealed class AgentRegistry : IAgentRegistry
         return command.ExecuteNonQuery() > 0;
     }
 
-    public long? FindTargetIdByAgentId(long agentId)
+    public long? FindCollectorIdByAgentId(long agentId)
     {
         using var connection = _connectionFactory.CreateOpenConnection();
         using var command = connection.CreateCommand();
-        command.CommandText = "SELECT id FROM targets WHERE agent_id = $id";
+        command.CommandText = "SELECT id FROM collectors WHERE agent_id = $id";
         command.Parameters.AddWithValue("$id", agentId);
         return command.ExecuteScalar() as long?;
     }
 
-    public long? FindAgentIdByTargetId(long targetId)
+    public long? FindAgentIdByCollectorId(long collectorId)
     {
         using var connection = _connectionFactory.CreateOpenConnection();
         using var command = connection.CreateCommand();
-        command.CommandText = "SELECT agent_id FROM targets WHERE id = $id";
-        command.Parameters.AddWithValue("$id", targetId);
+        command.CommandText = "SELECT agent_id FROM collectors WHERE id = $id";
+        command.Parameters.AddWithValue("$id", collectorId);
         return command.ExecuteScalar() as long?;
     }
 
-    /// <summary>关联目标的 id 以子查询带出（关联列在 targets 侧），无关联时为 NULL。</summary>
+    /// <summary>关联采集器的 id 以子查询带出（关联列在 collectors 侧），无关联时为 NULL。</summary>
     private const string SelectColumns = """
         agents.id, agents.name, agents.labels_json, agents.capabilities_json, agents.created_at_utc, agents.updated_at_utc, agents.last_seen_at_utc,
-        (SELECT t.id FROM targets t WHERE t.agent_id = agents.id) AS target_id
+        (SELECT t.id FROM collectors t WHERE t.agent_id = agents.id) AS collector_id
         """;
 
     private static AgentInfo MapAgent(SqliteDataReader reader)
@@ -269,8 +269,8 @@ public sealed class AgentRegistry : IAgentRegistry
         var updatedAt = DateTimeOffset.Parse(reader.GetString(5));
         var lastSeenColumn = reader.IsDBNull(6) ? null : reader.GetString(6);
         var lastSeen = lastSeenColumn is null ? (DateTimeOffset?)null : DateTimeOffset.Parse(lastSeenColumn);
-        var targetId = reader.IsDBNull(7) ? null : (long?)reader.GetInt64(7);
-        return new AgentInfo(id, name, labels, capabilities, createdAt, updatedAt, lastSeen, targetId);
+        var collectorId = reader.IsDBNull(7) ? null : (long?)reader.GetInt64(7);
+        return new AgentInfo(id, name, labels, capabilities, createdAt, updatedAt, lastSeen, collectorId);
     }
 
     private static List<string> ParseJsonArray(string json)

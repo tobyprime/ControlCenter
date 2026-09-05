@@ -1,0 +1,1 @@
+function n(l){return l?l.mode==="pull"?l.online?{label:"正常",cls:"online"}:l.lastSeenAtUtc?{label:"异常",cls:"alarm"}:{label:"未探测",cls:"offline"}:l.online?{label:"在线",cls:"online"}:{label:"离线",cls:"offline"}:{label:"—",cls:"offline"}}export{n as c};

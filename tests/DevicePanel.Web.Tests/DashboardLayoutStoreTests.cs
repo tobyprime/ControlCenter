@@ -98,7 +98,7 @@ public class DashboardLayoutStoreTests : IDisposable
         using (var connection = _database.CreateOpenConnection())
         {
             using var command = connection.CreateCommand();
-            command.CommandText = "DELETE FROM targets;";
+            command.CommandText = "DELETE FROM collectors;";
             command.ExecuteNonQuery();
         }
 

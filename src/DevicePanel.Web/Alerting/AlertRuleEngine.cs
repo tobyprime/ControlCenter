@@ -1,6 +1,6 @@
 using System.Text.Json;
 using DevicePanel.Web.Metrics;
-using DevicePanel.Web.Targets;
+using DevicePanel.Web.Collectors;
 using Microsoft.Extensions.Logging;
 
 namespace DevicePanel.Web.Alerting;
@@ -32,7 +32,7 @@ public sealed class AlertRuleEngine : IAlertRuleEngine
     private readonly IAlertRuleStore _rules;
     private readonly IMetricKeyRegistry _metricKeys;
     private readonly IMetricsStore _metrics;
-    private readonly ITargetRegistry _targets;
+    private readonly ICollectorRegistry _targets;
     private readonly IReadOnlyDictionary<string, IAlertRuleType> _ruleTypes;
     private readonly IAlertStateStore _states;
     private readonly AlertDispatcher _dispatcher;
@@ -43,7 +43,7 @@ public sealed class AlertRuleEngine : IAlertRuleEngine
         IAlertRuleStore rules,
         IMetricKeyRegistry metricKeys,
         IMetricsStore metrics,
-        ITargetRegistry targets,
+        ICollectorRegistry targets,
         IEnumerable<IAlertRuleType> ruleTypes,
         IAlertStateStore states,
         AlertDispatcher dispatcher,

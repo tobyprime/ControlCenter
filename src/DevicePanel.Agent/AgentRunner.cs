@@ -241,7 +241,7 @@ public sealed class AgentRunner
                         break; // 连接关闭或异常断开
                     }
 
-                    await HandleInboundAsync(inbound, channel, logsChannel).ConfigureAwait(false);
+                    await HandleInboundAsync(inbound, downlink, channel, logsChannel).ConfigureAwait(false);
                     continue; // 未决的 tick 任务保留，下轮继续观察
                 }
 
@@ -302,11 +302,18 @@ public sealed class AgentRunner
             MetricsPayload.From(sample), AgentJsonContext.Default.MetricsPayload, ct).ConfigureAwait(false);
     }
 
-    private async Task HandleInboundAsync(AgentEnvelope envelope, ITerminalChannel? channel, ILogsChannel? logsChannel)
+    private async Task HandleInboundAsync(AgentEnvelope envelope, AgentDownlink downlink, ITerminalChannel? channel, ILogsChannel? logsChannel)
     {
         // 扩展点：按前缀路由到对应通道；各通道内部兜异常——下行失败不打断心跳/指标节拍（回归锚：AgentRunnerLoopTests）
         try
         {
+            if (envelope.Type == AgentMessageTypes.MetricsLatestRequest)
+            {
+                // 按需查询（三期模块3）：即时采样一次并按请求 seq 回包；失败回 metrics.error（采样快速，仍后台化保节拍）
+                _ = HandleMetricsLatestAsync(envelope.Seq, downlink);
+                return;
+            }
+
             if (channel is not null &&
                 envelope.Type.StartsWith(AgentMessageTypes.TermPrefix, StringComparison.Ordinal))
             {
@@ -328,6 +335,27 @@ public sealed class AgentRunner
         }
 
         await _output.WriteLineAsync($"收到面板消息：{envelope.Type}（seq={envelope.Seq}）").ConfigureAwait(false);
+    }
+
+    /// <summary>metrics.latest.request 处理体：即时采样一次回 metrics.latest.response；采样失败回 metrics.error（连接断开时发送降级为 no-op）。</summary>
+    private async Task HandleMetricsLatestAsync(long seq, AgentDownlink downlink)
+    {
+        try
+        {
+            await downlink.SendMetricsLatestResponseAsync(seq, MetricsPayload.From(_metricsCollector.Sample()), CancellationToken.None)
+                .ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            try
+            {
+                await downlink.SendMetricsErrorAsync(seq, $"指标采样失败：{ex.Message}", CancellationToken.None).ConfigureAwait(false);
+            }
+            catch (Exception sendEx)
+            {
+                await _output.WriteLineAsync($"指标查询错误回包失败：{sendEx.Message}").ConfigureAwait(false);
+            }
+        }
     }
 
     private async Task<AgentEnvelope?> ReceiveAsync(ClientWebSocket socket, CancellationToken ct)

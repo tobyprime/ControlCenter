@@ -30,7 +30,7 @@ public class AgentDataMigrationTests
 
         // —— 升级（013 起）——
         DatabaseMigrator.Migrate(connection);
-        Assert.Equal(13L, Count(connection, "SELECT COUNT(*) FROM schema_migrations"));
+        Assert.Equal(14L, Count(connection, "SELECT COUNT(*) FROM schema_migrations"));
 
         // device 目标 → agent：名字沿用、token hash 原样平移、last_seen 随 agent、关联建立
         Assert.Equal((1L, "在线设备", "hash-device-a", "2026-08-30T12:00:00.0000000+00:00"),
@@ -39,13 +39,15 @@ public class AgentDataMigrationTests
             QueryAgent(connection, "SELECT id, name, token_hash, last_seen_at_utc FROM agents ORDER BY id LIMIT 1 OFFSET 1"));
         Assert.Equal(2L, Count(connection, "SELECT COUNT(*) FROM agents"));
 
-        // targets.agent_id 关联指向对应 agent；service 目标不生成 agent、关联为空
-        Assert.Equal(1L, Scalar(connection, "SELECT agent_id FROM targets WHERE id = 1"));
-        Assert.Equal(2L, Scalar(connection, "SELECT agent_id FROM targets WHERE id = 2"));
-        Assert.Equal(DBNull.Value, Scalar(connection, "SELECT agent_id FROM targets WHERE id = 3"));
+        // collectors.agent_id 关联指向对应 agent；service 采集器不生成 agent、关联为空（014 后台账更名为 collectors）
+        Assert.Equal(1L, Scalar(connection, "SELECT agent_id FROM collectors WHERE id = 1"));
+        Assert.Equal(2L, Scalar(connection, "SELECT agent_id FROM collectors WHERE id = 2"));
+        Assert.Equal(DBNull.Value, Scalar(connection, "SELECT agent_id FROM collectors WHERE id = 3"));
 
-        // service 目标本体不受影响
-        Assert.Equal(("service", "hash-service-x"), QueryTuple(connection, "SELECT type, agent_token_hash FROM targets WHERE id = 3"));
+        // service 目标本体不受影响（type 已下沉为内置标签）
+        Assert.Equal(("hash-service-x", "type:service"), QueryTuple(connection, """
+            SELECT agent_token_hash, json_extract(tags_json, '$[#-1]') FROM collectors WHERE id = 3
+            """));
     }
 
     [Fact]
@@ -54,7 +56,7 @@ public class AgentDataMigrationTests
         using var database = new TempSqliteDatabase(applyMigrations: true);
         using var connection = database.CreateOpenConnection();
 
-        Assert.Equal(13L, Count(connection, "SELECT COUNT(*) FROM schema_migrations"));
+        Assert.Equal(14L, Count(connection, "SELECT COUNT(*) FROM schema_migrations"));
         Assert.Equal(0L, Count(connection, "SELECT COUNT(*) FROM agents"));
     }
 

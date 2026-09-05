@@ -2,7 +2,7 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using DevicePanel.Web.Metrics;
-using DevicePanel.Web.Targets;
+using DevicePanel.Web.Collectors;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Time.Testing;
 using Xunit;
@@ -254,7 +254,7 @@ public class MetricsApiTests : IDisposable
     private async Task<long> SeedDataAsync(double cpuBase = 10)
     {
         var client = await AuthenticatedClientAsync();
-        var created = await client.PostAsJsonAsync("/api/targets", new { name = $"指标设备-{Guid.NewGuid():N}"[..24], tags = Array.Empty<string>() });
+        var created = await client.PostAsJsonAsync("/api/collectors", new { name = $"指标设备-{Guid.NewGuid():N}"[..24], tags = Array.Empty<string>() });
         created.EnsureSuccessStatusCode();
         var targetId = (await created.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetInt64();
 
@@ -297,13 +297,13 @@ public class MetricsApiTests : IDisposable
 
     private async Task<long> CreateTargetAsync(HttpClient client, string name, string type)
     {
-        var created = await client.PostAsJsonAsync("/api/targets", new { type, name, tags = Array.Empty<string>() });
+        var created = await client.PostAsJsonAsync("/api/collectors", new { type, name, tags = Array.Empty<string>() });
         created.EnsureSuccessStatusCode();
         return (await created.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetInt64();
     }
 
     private long CreateServiceTargetViaRegistry(string name) =>
-        _factory.Services.GetRequiredService<ITargetRegistry>().Create(TargetTypes.Service, name, Array.Empty<string>()).Id;
+        _factory.Services.GetRequiredService<ICollectorRegistry>().Create(name, [CollectorBuiltinTags.Service]).Id;
 
     private async Task<JsonElement> AvailableKeysAsync(HttpClient client, long targetId)
     {

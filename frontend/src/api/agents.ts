@@ -10,8 +10,8 @@ export interface Agent {
   updatedAtUtc: string
   lastSeenAtUtc?: string | null
   online: boolean
-  /** 双写期关联的 target id；null 表示台账直建、未关联目标。 */
-  targetId?: number | null
+  /** 关联的采集器 id；null 表示台账直建、未关联采集器。 */
+  collectorId?: number | null
 }
 
 export interface AgentCreated extends Agent {

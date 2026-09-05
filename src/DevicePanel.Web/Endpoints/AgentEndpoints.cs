@@ -1,6 +1,6 @@
 using DevicePanel.Protocol;
 using DevicePanel.Web.Agents;
-using DevicePanel.Web.Targets;
+using DevicePanel.Web.Collectors;
 using Microsoft.AspNetCore.Mvc;
 
 namespace DevicePanel.Web.Endpoints;
@@ -14,7 +14,7 @@ public sealed record AgentResponse(
     DateTimeOffset UpdatedAtUtc,
     DateTimeOffset? LastSeenAtUtc,
     bool Online,
-    long? TargetId);
+    long? CollectorId);
 
 public sealed record AgentCreatedResponse(
     long Id,
@@ -76,17 +76,17 @@ public static class AgentEndpoints
             }
 
             // 旧 token 立即失效：断开用旧 token 建立的在线连接（关联 agent 的连接键仍是 target id）
-            var targetId = registry.FindTargetIdByAgentId(id);
+            var targetId = registry.FindCollectorIdByAgentId(id);
             connections.TryDisconnect(targetId ?? -id, WebSocketCloseCodes.TokenReset, "token 已重置");
             return Results.Ok(new TokenResetResponse(token));
         });
 
         agents.MapDelete("/{id:long}", (long id, IAgentRegistry registry, AgentConnectionRegistry connections) =>
         {
-            // 关联目标的 agent 从目标页删除（目标删除级联 agent）；此处删除会破坏双写期关联，拒绝
-            if (registry.FindTargetIdByAgentId(id) is not null)
+            // 关联采集器的 agent 从采集器页删除（采集器删除级联 agent）；此处删除会破坏双写期关联，拒绝
+            if (registry.FindCollectorIdByAgentId(id) is not null)
             {
-                return Results.BadRequest(new { error = "该 Agent 已关联目标，请在目标管理页删除" });
+                return Results.BadRequest(new { error = "该 Agent 已关联采集器，请在采集器页删除" });
             }
 
             if (!registry.Delete(id))
@@ -103,7 +103,7 @@ public static class AgentEndpoints
 
     private static AgentResponse ToResponse(AgentInfo agent, AgentOptions options, TimeProvider clock) =>
         new(agent.Id, agent.Name, agent.Labels, agent.Capabilities, agent.CreatedAtUtc, agent.UpdatedAtUtc, agent.LastSeenAtUtc,
-            agent.IsOnline(clock, options), agent.TargetId);
+            agent.IsOnline(clock, options), agent.CollectorId);
 
     private static AgentCreatedResponse ToCreatedResponse(AgentCreated created) =>
         new(created.Agent.Id, created.Agent.Name, created.Agent.Labels, created.Agent.Capabilities, created.Token);

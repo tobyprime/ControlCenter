@@ -1,6 +1,6 @@
 using DevicePanel.Protocol;
 using DevicePanel.Web.Alerting;
-using DevicePanel.Web.Targets;
+using DevicePanel.Web.Collectors;
 
 namespace DevicePanel.Web.Metrics;
 

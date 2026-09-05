@@ -1,7 +1,7 @@
 using System.Globalization;
 using DevicePanel.Web.Alerting;
 using DevicePanel.Web.Metrics;
-using DevicePanel.Web.Targets;
+using DevicePanel.Web.Collectors;
 using Microsoft.AspNetCore.Mvc;
 
 namespace DevicePanel.Web.Endpoints;
@@ -145,19 +145,19 @@ public static class MetricsEndpoints
             return registry.Delete(normalized) ? Results.NoContent() : Results.NotFound(new { error = "指标不存在" });
         });
 
-        // 目标已上报指标总览（最新值 + 注册元数据），供目标详情与规则创建使用
-        metrics.MapGet("/{targetId:long}/overview", (long targetId, IMetricsStore store, IMetricKeyRegistry registry, ITargetRegistry targets) =>
+        // 采集器已上报指标总览（最新值 + 注册元数据），供采集器详情与规则创建使用
+        metrics.MapGet("/{collectorId:long}/overview", (long collectorId, IMetricsStore store, IMetricKeyRegistry registry, ICollectorRegistry collectors) =>
         {
-            if (targets.Get(targetId) is null)
+            if (collectors.Get(collectorId) is null)
             {
-                return Results.NotFound(new { error = "目标不存在" });
+                return Results.NotFound(new { error = "采集器不存在" });
             }
 
-            var items = store.ListReportedKeys(targetId)
+            var items = store.ListReportedKeys(collectorId)
                 .Select(key =>
                 {
                     var info = registry.Get(key);
-                    var latest = store.GetLatest(targetId, key);
+                    var latest = store.GetLatest(collectorId, key);
                     return new MetricOverviewItem(
                         key,
                         info?.ValueType.ToStorage() ?? "number",
@@ -172,36 +172,36 @@ public static class MetricsEndpoints
             return Results.Ok(items);
         });
 
-        // 按来源可用指标（TOB-374 ①）：优先该来源已上报且已注册的 key；无上报数据时按目标类型回退到内置 key
-        metrics.MapGet("/{targetId:long}/available", (long targetId, IMetricsStore store, IMetricKeyRegistry registry, ITargetRegistry targets) =>
+        // 按来源可用指标（TOB-374 ①）：优先该来源已上报且已注册的 key；无上报数据时按内置标签回退到内置 key
+        metrics.MapGet("/{collectorId:long}/available", (long collectorId, IMetricsStore store, IMetricKeyRegistry registry, ICollectorRegistry collectors) =>
         {
-            var target = targets.Get(targetId);
-            if (target is null)
+            var collector = collectors.Get(collectorId);
+            if (collector is null)
             {
-                return Results.NotFound(new { error = "目标不存在" });
+                return Results.NotFound(new { error = "采集器不存在" });
             }
 
-            var reported = store.ListReportedKeys(targetId).Where(key => registry.Get(key) is not null).ToList();
+            var reported = store.ListReportedKeys(collectorId).Where(key => registry.Get(key) is not null).ToList();
             var keys = reported.Count > 0
                 ? reported
-                : MetricKeys.ForTargetType(target.Type).Where(key => registry.Get(key) is not null).ToList();
+                : MetricKeys.ForCollector(collector.Tags).Where(key => registry.Get(key) is not null).ToList();
             return Results.Ok(keys.Select(key => ToKeyResponse(registry.Get(key)!)));
         });
 
-        metrics.MapGet("/{targetId:long}/series", (
-            long targetId,
+        metrics.MapGet("/{collectorId:long}/series", (
+            long collectorId,
             [FromQuery] string? keys,
             [FromQuery] string? from,
             [FromQuery] string? to,
             [FromQuery] string? granularity,
             IMetricsStore store,
             IMetricKeyRegistry registry,
-            ITargetRegistry targets,
+            ICollectorRegistry collectors,
             TimeProvider clock) =>
         {
-            if (targets.Get(targetId) is null)
+            if (collectors.Get(collectorId) is null)
             {
-                return Results.NotFound(new { error = "目标不存在" });
+                return Results.NotFound(new { error = "采集器不存在" });
             }
 
             if (string.IsNullOrWhiteSpace(keys))
@@ -241,15 +241,15 @@ public static class MetricsEndpoints
             {
                 var points = resolved switch
                 {
-                    Hour => store.QueryHourly(targetId, key, fromUtc, toUtc).Select(b => new SeriesPoint(FormatUtc(b.TimeUtc), b.Avg)),
-                    Day => store.QueryDaily(targetId, key, fromUtc, toUtc).Select(b => new SeriesPoint(FormatUtc(b.TimeUtc), b.Avg)),
-                    _ => store.QueryRaw(targetId, key, fromUtc, toUtc).Select(s => new SeriesPoint(FormatUtc(s.TimeUtc), s.ValueNum)),
+                    Hour => store.QueryHourly(collectorId, key, fromUtc, toUtc).Select(b => new SeriesPoint(FormatUtc(b.TimeUtc), b.Avg)),
+                    Day => store.QueryDaily(collectorId, key, fromUtc, toUtc).Select(b => new SeriesPoint(FormatUtc(b.TimeUtc), b.Avg)),
+                    _ => store.QueryRaw(collectorId, key, fromUtc, toUtc).Select(s => new SeriesPoint(FormatUtc(s.TimeUtc), s.ValueNum)),
                 };
                 return new MetricSeriesResponse(key, points.ToList());
             });
 
             return Results.Ok(new SeriesResponse(
-                targetId,
+                collectorId,
                 resolved,
                 FormatUtc(fromUtc),
                 FormatUtc(toUtc),
