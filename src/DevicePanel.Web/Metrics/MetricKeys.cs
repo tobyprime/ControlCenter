@@ -1,5 +1,7 @@
 namespace DevicePanel.Web.Metrics;
 
+using DevicePanel.Web.Targets;
+
 /// <summary>内置指标 key 常量（随迁移播种到 metric_keys；代码内仅供采集链路引用，不含业务语义）。</summary>
 public static class MetricKeys
 {
@@ -35,4 +37,12 @@ public static class MetricKeys
 
     /// <summary>探针响应耗时（ms，模块2）：仅成功请求产生样本。</summary>
     public const string LatencyMs = "latency_ms";
+
+    /// <summary>按目标类型给出内置指标 key（无上报数据时的可用指标回退口径）。</summary>
+    public static IReadOnlyList<string> ForTargetType(string targetType) => targetType switch
+    {
+        TargetTypes.Device => [Cpu, Mem, MemUsed, MemTotal, Disk, DiskRx, DiskTx, NetRx, NetTx, Temp, TempSensor, Online],
+        TargetTypes.Service => [Status, LatencyMs],
+        _ => [],
+    };
 }

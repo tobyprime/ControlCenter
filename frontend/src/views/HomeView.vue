@@ -1,11 +1,12 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { fetchSession } from '@/router'
 import { listTargets, type Target } from '@/api/targets'
 import { fetchActiveAlertCount } from '@/api/alerts'
 import { fetchDashboardLayout, saveDashboardLayout, type DashboardCard } from '@/api/dashboard'
 import {
   listMetricKeys,
+  fetchTargetAvailableMetrics,
   fetchTargetOverview,
   fetchTargetSeries,
   type MetricKeyInfo,
@@ -140,6 +141,18 @@ function chartKeyInfoOf(card: DashboardCard): MetricKeyInfo | undefined {
   return config ? keyInfoOf(metricKeys.value, config.key) : undefined
 }
 
+// 查看态标题「来源名 · 指标名」（TOB-374 ③）；目标/指标任一未知时退回卡片类型文案。
+// 卡片类型文案（数值卡等）只在编辑态展示，查看态不再重复
+function metricCardTitle(card: DashboardCard): string {
+  const config = metricConfigOf(card)
+  if (!config) {
+    return cardLabel(card.type)
+  }
+  const targetName = targets.value.find((target) => target.id === config.targetId)?.name ?? ''
+  const keyName = keyInfoOf(metricKeys.value, config.key)?.displayName ?? ''
+  return [targetName, keyName].filter(Boolean).join(' · ') || cardLabel(card.type)
+}
+
 async function refreshRegistries() {
   try {
     metricKeys.value = await listMetricKeys()
@@ -148,6 +161,35 @@ async function refreshRegistries() {
     // 注册表失败不阻塞主页，指标卡按加载态等待下个刷新周期
   }
 }
+
+// 按来源可用指标（TOB-374 ①）：目标就绪后预取一次并随指标卡周期刷新，
+// 供卡片配置表单按所选来源过滤指标下拉；单目标失败按未知处理，表单回退全量口径
+const availableByTarget = ref<Record<number, MetricKeyInfo[]>>({})
+
+async function refreshAvailableMetrics() {
+  const entries = await Promise.all(
+    targets.value.map(async (target) => {
+      try {
+        return [target.id, await fetchTargetAvailableMetrics(target.id)] as const
+      } catch {
+        return [target.id, null] as const
+      }
+    }),
+  )
+  const next: Record<number, MetricKeyInfo[]> = {}
+  for (const [targetId, infos] of entries) {
+    if (infos) {
+      next[targetId] = infos
+    }
+  }
+  availableByTarget.value = next
+}
+
+watch(targetsReady, (ready) => {
+  if (ready) {
+    void refreshAvailableMetrics()
+  }
+})
 
 async function refreshMetricCards() {
   const configured = cards.value
@@ -286,6 +328,7 @@ onMounted(() => {
   refreshTimer = window.setInterval(refreshOverview, 15000)
   metricTimer = window.setInterval(() => {
     refreshRegistries()
+    refreshAvailableMetrics()
     refreshMetricCards()
   }, 30000)
 })
@@ -367,25 +410,30 @@ onBeforeUnmount(() => {
         <!-- 指标卡（TOB-368）：编辑态配置来源/类型/时间窗，查看态按类型渲染 -->
         <template v-else-if="editing">
           <span class="overview-label">{{ cardLabel(card.type) }}</span>
-          <DashboardCardConfigForm :card="card" :targets="targets" :metric-keys="metricKeys" />
+          <DashboardCardConfigForm
+            :card="card"
+            :targets="targets"
+            :metric-keys="metricKeys"
+            :available-by-target="availableByTarget"
+          />
         </template>
         <DashboardValueCard
           v-else-if="card.type === 'metric-value'"
-          :label="cardLabel(card.type)"
+          :label="metricCardTitle(card)"
           :item="overviewItemOf(card)"
           :degraded-reason="degradedReasonFor(card)"
           :loading="metricLoading || registriesLoading"
         />
         <DashboardStatusCard
           v-else-if="card.type === 'metric-status'"
-          :label="cardLabel(card.type)"
+          :label="metricCardTitle(card)"
           :item="overviewItemOf(card)"
           :degraded-reason="degradedReasonFor(card)"
           :loading="metricLoading || registriesLoading"
         />
         <DashboardChartCard
           v-else
-          :label="cardLabel(card.type)"
+          :label="metricCardTitle(card)"
           :series="chartSeriesOf(card)"
           :key-info="chartKeyInfoOf(card)"
           :degraded-reason="degradedReasonFor(card)"
