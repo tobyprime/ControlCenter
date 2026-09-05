@@ -14,6 +14,7 @@ import {
 } from '@/api/metrics'
 import { listTargets, type Target } from '@/api/targets'
 import MetricChart, { type ChartSeries } from '@/components/MetricChart.vue'
+import { byteUnitFormatter as unitFormatter, humanizeBytes } from '@/utils/format'
 
 interface RangeOption {
   label: string
@@ -85,28 +86,6 @@ function overviewLatestNum(key: string): number | null {
 
 function overviewLatestText(key: string): string | null {
   return overview.value.find((item) => item.key === key)?.latestValueText ?? null
-}
-
-/** 字节数值人性化：1024 进位，保留一位小数（原始字节取整）。 */
-function humanizeBytes(value: number): string {
-  const units = ['B', 'KB', 'MB', 'GB', 'TB']
-  let current = value
-  let index = 0
-  while (Math.abs(current) >= 1024 && index < units.length - 1) {
-    current /= 1024
-    index += 1
-  }
-  return `${index === 0 ? Math.round(current) : current.toFixed(1)} ${units[index]}`
-}
-
-function unitFormatter(unit: string): ((value: number) => string) | undefined {
-  if (unit === 'B/s') {
-    return (value) => `${humanizeBytes(value)}/s`
-  }
-  if (unit === 'B') {
-    return (value) => humanizeBytes(value)
-  }
-  return undefined
 }
 
 function memSubtitle(): string {
