@@ -4,7 +4,7 @@ using System.Text;
 using System.Text.Json;
 using DevicePanel.Protocol;
 using DevicePanel.Web.Auth;
-using DevicePanel.Web.Targets;
+using DevicePanel.Web.Collectors;
 using DevicePanel.Web.Terminal;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Time.Testing;
@@ -316,7 +316,7 @@ public class TerminalWsTests : IDisposable
 
     private static async Task<(long Id, string AgentToken)> CreateDeviceAsync(HttpClient client)
     {
-        var response = await client.PostAsJsonAsync("/api/targets", new { name = "终端设备", tags = new[] { "机房A" } });
+        var response = await client.PostAsJsonAsync("/api/collectors", new { name = "终端设备", tags = new[] { "机房A" } });
         response.EnsureSuccessStatusCode();
         var payload = await response.Content.ReadFromJsonAsync<JsonElement>();
         return (payload.GetProperty("id").GetInt64(), payload.GetProperty("agentToken").GetString()!);

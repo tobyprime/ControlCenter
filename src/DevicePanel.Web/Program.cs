@@ -2,12 +2,14 @@ using DevicePanel.Web.Alerting;
 using DevicePanel.Web.Auth;
 using DevicePanel.Web.Dashboard;
 using DevicePanel.Web.Endpoints;
+using DevicePanel.Web.Agents;
+using DevicePanel.Web.Control;
 using DevicePanel.Web.Infrastructure;
 using DevicePanel.Web.Interactions;
 using DevicePanel.Web.Logs;
 using DevicePanel.Web.Metrics;
 using DevicePanel.Web.Probing;
-using DevicePanel.Web.Targets;
+using DevicePanel.Web.Collectors;
 using DevicePanel.Web.Terminal;
 
 // wwwroot 双候选解析：发布产物从仓库根目录运行时，静态文件回退到应用目录自带的 wwwroot。
@@ -57,13 +59,15 @@ if (allowedOrigins.Count > 0)
             .AllowAnyMethod()));
 }
 
-// 目标台账（设备/服务统一实体）与 agent 接入通道
+// 目标台账（设备/服务统一实体）与 agent 实体（三期模块2：一 agent 一 token，token 唯一宿主）、接入通道
 var agentOptions = new AgentOptions();
 builder.Configuration.GetSection(AgentOptions.SectionName).Bind(agentOptions);
 builder.Services.AddSingleton(agentOptions);
-builder.Services.AddSingleton<ITargetRegistry, TargetRegistry>();
+builder.Services.AddSingleton<IAgentRegistry, AgentRegistry>();
+builder.Services.AddSingleton<ICollectorRegistry, CollectorRegistry>();
 builder.Services.AddSingleton<AgentConnectionRegistry>();
 builder.Services.AddSingleton<IAgentMessageHandler, HeartbeatMessageHandler>();
+builder.Services.AddSingleton<IAgentMessageHandler, AgentCapabilitiesMessageHandler>();
 builder.Services.AddSingleton<AgentMessageDispatcher>();
 builder.Services.AddSingleton<HeartbeatMonitor>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<HeartbeatMonitor>());
@@ -75,6 +79,14 @@ builder.Services.AddSingleton(metricsOptions);
 builder.Services.AddSingleton<IMetricKeyRegistry, MetricKeyRegistry>();
 builder.Services.AddSingleton<IMetricsStore, MetricsStore>();
 builder.Services.AddSingleton<IAgentMessageHandler, MetricsMessageHandler>();
+// 按需查询（三期模块3）：最新值经 metrics.latest.request 下行 agent 即时采样（pull 采集器直读存储），与日志同一请求-响应模式
+builder.Services.AddSingleton<MetricsQueryService>();
+builder.Services.AddSingleton<IAgentMessageHandler, MetricsLatestResponseHandler>();
+builder.Services.AddSingleton<IAgentMessageHandler, MetricsQueryErrorHandler>();
+// 采集器数据类型注册表（验收8）：新增数据类型 = 注册一个 ICollectorDataType 实现
+builder.Services.AddSingleton<ICollectorDataType, MetricsDataType>();
+builder.Services.AddSingleton<ICollectorDataType, LogsDataType>();
+builder.Services.AddSingleton<CollectorDataTypeCatalog>();
 
 // 告警规则化（约束 B）：规则实例（可插拔规则类型）→ 评估引擎 → 渠道抽象 → 本地待发队列断线补发（无丢失）
 var alertOptions = new AlertOptions();
@@ -97,16 +109,16 @@ builder.Services.AddSingleton<HttpClient>(_ => new HttpClient { Timeout = TimeSp
 builder.Services.AddSingleton<INotifier, NapcatNotifier>();
 builder.Services.AddSingleton<AlertDispatcher>();
 builder.Services.AddSingleton<AlertDispatchWorker>();
-builder.Services.AddSingleton<TargetStatusScanner>();
+builder.Services.AddSingleton<CollectorStatusScanner>();
 builder.Services.AddSingleton<AlertRuleSweepService>();
 
 // 服务监测（模块2）：面板侧 HTTP/JSON 探针——样本照走指标管道与告警引擎（约束 A/B），不改 agent
 var probeOptions = new ProbeOptions();
 builder.Configuration.GetSection(ProbeOptions.SectionName).Bind(probeOptions);
 builder.Services.AddSingleton(probeOptions);
-builder.Services.AddSingleton<IProbeConfigStore, ProbeConfigStore>();
+builder.Services.AddSingleton<IPullCollectorConfigStore, PullCollectorConfigStore>();
 builder.Services.AddSingleton<IProbeHttpClient, HttpClientProbeClient>();
-builder.Services.AddSingleton<HttpProbeWorker>();
+builder.Services.AddSingleton<PullCollectorWorker>();
 
 // 主页布局持久化：单用户单套布局存储与读写 API（TOB-366）
 builder.Services.AddSingleton<IDashboardLayoutStore, DashboardLayoutStore>();
@@ -128,6 +140,20 @@ builder.Services.AddSingleton<IAgentMessageHandler, LogsServicesResponseHandler>
 builder.Services.AddSingleton<IAgentMessageHandler, LogsTailResponseHandler>();
 builder.Services.AddSingleton<IAgentMessageHandler, LogsErrorHandler>();
 
+// 控制器统一抽象（三期模块4）：类型注册表（新增类型 = 注册 IControlType）+ 下发（ctrl.* 请求-响应/seq 关联）+ 全量留痕
+var controlOptions = new ControlOptions();
+builder.Configuration.GetSection(ControlOptions.SectionName).Bind(controlOptions);
+builder.Services.AddSingleton(controlOptions);
+builder.Services.AddSingleton<IControlType, ButtonControlType>();
+builder.Services.AddSingleton<IControlType, ToggleControlType>();
+builder.Services.AddSingleton<IControlType, InputControlType>();
+builder.Services.AddSingleton<IControlType, SliderControlType>();
+builder.Services.AddSingleton<ControlTypeCatalog>();
+builder.Services.AddSingleton<IControlLogStore, ControlLogStore>();
+builder.Services.AddSingleton<ControlInvokeService>();
+builder.Services.AddSingleton<IAgentMessageHandler, ControlInvokeResponseHandler>();
+builder.Services.AddSingleton<IAgentMessageHandler, ControlErrorHandler>();
+
 // 交互模式（约束 C）：注册表收集全部 IInteractionMode，核心按目标声明渲染入口，不绑定单一形态
 builder.Services.AddSingleton<IInteractionMode, ShellInteractionMode>();
 builder.Services.AddSingleton<InteractionModeRegistry>();
@@ -141,9 +167,9 @@ builder.Services.AddHostedService<AlertSettingsSeeder>();
 
 // 告警分发 worker 依赖迁移完成后的表结构：必须排在 DatabaseInitializer 之后启动
 builder.Services.AddHostedService(sp => sp.GetRequiredService<AlertDispatchWorker>());
-builder.Services.AddHostedService(sp => sp.GetRequiredService<TargetStatusScanner>());
+builder.Services.AddHostedService(sp => sp.GetRequiredService<CollectorStatusScanner>());
 builder.Services.AddHostedService(sp => sp.GetRequiredService<AlertRuleSweepService>());
-builder.Services.AddHostedService(sp => sp.GetRequiredService<HttpProbeWorker>());
+builder.Services.AddHostedService(sp => sp.GetRequiredService<PullCollectorWorker>());
 
 // 清理任务依赖迁移完成后的表结构：必须排在 DatabaseInitializer 之后启动
 builder.Services.AddSingleton<MetricsRetentionService>();
@@ -163,13 +189,16 @@ app.UseWebSockets();
 
 app.MapHealthEndpoints();
 app.MapAuthEndpoints();
-app.MapTargetEndpoints();
-app.MapProbeEndpoints();
+app.MapAgentEndpoints();
+app.MapCollectorEndpoints();
+app.MapPullCollectorEndpoints();
 app.MapMetricsEndpoints();
+app.MapMetricsLatestEndpoints();
 app.MapAlertEndpoints();
 app.MapDashboardEndpoints();
 app.MapTerminalEndpoints();
 app.MapLogEndpoints();
+app.MapControlEndpoints();
 app.MapInteractionEndpoints();
 app.MapAgentWsEndpoints();
 

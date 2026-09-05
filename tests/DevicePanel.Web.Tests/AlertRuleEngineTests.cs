@@ -1,6 +1,6 @@
 using DevicePanel.Web.Alerting;
 using DevicePanel.Web.Metrics;
-using DevicePanel.Web.Targets;
+using DevicePanel.Web.Collectors;
 using Microsoft.Extensions.Time.Testing;
 using Xunit;
 
@@ -14,7 +14,7 @@ public class AlertRuleEngineTests : IDisposable
 {
     private readonly TempSqliteDatabase _db = new();
     private readonly FakeTimeProvider _clock = new(new DateTimeOffset(2026, 9, 4, 8, 0, 0, TimeSpan.Zero));
-    private readonly TargetRegistry _targets;
+    private readonly CollectorRegistry _targets;
     private readonly MetricsStore _metrics;
     private readonly AlertRuleStore _rules;
     private readonly MetricKeyRegistry _metricKeys;
@@ -25,13 +25,13 @@ public class AlertRuleEngineTests : IDisposable
 
     public AlertRuleEngineTests()
     {
-        _targets = new TargetRegistry(_db.Factory, _clock);
+        _targets = new CollectorRegistry(_db.Factory, _clock);
         _metrics = new MetricsStore(_db.Factory);
         _rules = new AlertRuleStore(_db.Factory, _clock);
         _metricKeys = new MetricKeyRegistry(_db.Factory, _clock);
         _outbox = new AlertOutboxStore(_db.Factory);
         _engine = CreateEngine();
-        _targetId = _targets.Create(TargetTypes.Device, _targetName, ["机房A"]).Target.Id;
+        _targetId = _targets.Create(_targetName, ["机房A", CollectorBuiltinTags.Device]).Id;
 
         // 清空迁移播种的内置规则：引擎行为测试从干净状态开始，各用例自建规则
         foreach (var seeded in _rules.List())
@@ -195,7 +195,7 @@ public class AlertRuleEngineTests : IDisposable
     [Fact]
     public void Target_Level_Rule_Shadows_Global_For_That_Target_Only()
     {
-        var otherId = _targets.Create(TargetTypes.Device, "普通设备", ["机房B"]).Target.Id;
+        var otherId = _targets.Create("普通设备", ["机房B", CollectorBuiltinTags.Device]).Id;
         CreateRule(null, MetricKeys.Cpu, ThresholdAboveRuleType.TypeIdValue, """{"threshold":90}""");
         CreateRule(_targetId, MetricKeys.Cpu, ThresholdAboveRuleType.TypeIdValue, """{"threshold":50}""");
 

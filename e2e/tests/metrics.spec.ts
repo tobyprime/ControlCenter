@@ -28,8 +28,8 @@ async function expectNoHorizontalOverflow(page: Page, label: string) {
   expect.soft(overflow, `${label} 横向溢出应为 0`).toBeLessThanOrEqual(0)
 }
 
-async function createTargetViaApi(page: Page, name: string): Promise<{ id: number; agentToken: string }> {
-  const response = await page.request.post('/api/targets', {
+async function createCollectorViaApi(page: Page, name: string): Promise<{ id: number; agentToken: string }> {
+  const response = await page.request.post('/api/collectors', {
     data: { name, tags: ['E2E'] },
   })
   expect(response.ok()).toBeTruthy()
@@ -89,8 +89,8 @@ test.describe('指标曲线（TOB-338）', () => {
     // 两台“负载不同”的设备（验收 5：曲线与所选设备对应）
     const lowName = `低负载机 ${Date.now()}`
     const highName = `高负载机 ${Date.now()}`
-    const lowLoad = await createTargetViaApi(page, lowName)
-    const highLoad = await createTargetViaApi(page, highName)
+    const lowLoad = await createCollectorViaApi(page, lowName)
+    const highLoad = await createCollectorViaApi(page, highName)
 
     const lowReports = [10, 14, 12, 16, 11].map((cpu) => ({
       cpu,
@@ -157,8 +157,8 @@ test.describe('指标曲线（TOB-338）', () => {
   test('长跨度切聚合 + 375px 响应式', async ({ page }) => {
     await login(page)
 
-    const target = await createTargetViaApi(page, `聚合口径机 ${Date.now()}`)
-    await reportMetricsViaWebSocket(page, target.agentToken, [
+    const collector = await createCollectorViaApi(page, `聚合口径机 ${Date.now()}`)
+    await reportMetricsViaWebSocket(page, collector.agentToken, [
       { cpu: 20, mem: 50, disk: 45, netRx: 2048, netTx: 1024 },
     ])
 

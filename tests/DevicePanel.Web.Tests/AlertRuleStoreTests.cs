@@ -1,6 +1,6 @@
 using DevicePanel.Web.Alerting;
 using DevicePanel.Web.Metrics;
-using DevicePanel.Web.Targets;
+using DevicePanel.Web.Collectors;
 using Microsoft.Extensions.Time.Testing;
 using Xunit;
 
@@ -27,7 +27,7 @@ public class AlertRuleStoreTests : IDisposable
     private AlertRuleStore CreateStore() => new(_db.Factory, _clock);
 
     private long CreateTarget() =>
-        new TargetRegistry(_db.Factory, _clock).Create(TargetTypes.Device, "规则目标", []).Target.Id;
+        new CollectorRegistry(_db.Factory, _clock).Create("规则目标", [CollectorBuiltinTags.Device]).Id;
 
     [Fact]
     public void Create_And_Get_RoundTrip_Preserves_Fields()

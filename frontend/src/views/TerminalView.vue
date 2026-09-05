@@ -4,7 +4,7 @@ import { useRoute } from 'vue-router'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
-import { listTargets as listDevices, type Target as Device } from '@/api/targets'
+import { listCollectors as listDevices, type Collector as Device } from '@/api/collectors'
 import { terminalWebSocketUrl } from '@/api/terminal'
 import { listDeviceInteractionModes, type InteractionModeInfo } from '@/api/interactions'
 
@@ -13,7 +13,7 @@ type SessionState = 'idle' | 'connecting' | 'open' | 'closed' | 'error'
 const route = useRoute()
 const devices = ref<Device[]>([])
 // 终端入口仅服务 device 目标（agent 回连通道）：service 目标无 shell 声明，不进可连接下拉（集成审查问题 1）
-const connectableDevices = computed(() => devices.value.filter((device) => device.type === 'device'))
+const connectableDevices = computed(() => devices.value.filter((device) => device.mode === 'push'))
 const selectedDeviceId = ref<number | null>(null)
 const sessionState = ref<SessionState>('idle')
 const statusText = ref('选择一台在线设备，点击「打开终端」。')

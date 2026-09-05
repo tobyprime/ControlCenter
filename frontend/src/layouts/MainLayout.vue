@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { clearSession, fetchSession } from '@/router'
 import { logout } from '@/api/auth'
@@ -16,6 +16,16 @@ fetchSession()
     router.replace({ name: 'login' })
   })
 
+// 移动端抽屉导航（TOB-374 ②）：≤768px 侧栏变抽屉，汉堡按钮打开，遮罩或路由跳转关闭；桌面端常驻不受影响
+const drawerOpen = ref(false)
+
+watch(
+  () => route.fullPath,
+  () => {
+    drawerOpen.value = false
+  },
+)
+
 async function onLogout() {
   try {
     await logout()
@@ -29,7 +39,12 @@ async function onLogout() {
 <template>
   <div class="layout">
     <header class="topbar">
-      <span class="brand">设备与环境统一管理面板</span>
+      <div class="topbar-brand">
+        <button type="button" class="nav-toggle" aria-label="打开导航菜单" @click="drawerOpen = true">
+          <span></span><span></span><span></span>
+        </button>
+        <span class="brand">设备与环境统一管理面板</span>
+      </div>
       <div class="topbar-actions">
         <span class="username">{{ username }}</span>
         <button type="button" class="logout-button" @click="onLogout">退出登录</button>
@@ -37,15 +52,17 @@ async function onLogout() {
     </header>
 
     <div class="layout-body">
-      <aside class="sidebar">
+      <div class="sidebar-mask" :class="{ show: drawerOpen }" @click="drawerOpen = false"></div>
+      <aside class="sidebar" :class="{ open: drawerOpen }">
         <nav class="nav">
-          <RouterLink class="nav-item" to="/">首页</RouterLink>
-          <RouterLink class="nav-item" to="/targets" :class="{ active: route.name === 'targets' || route.name === 'target-detail' }">目标管理</RouterLink>
-          <RouterLink class="nav-item" to="/metrics" :class="{ active: route.name === 'metrics' }">指标曲线</RouterLink>
-          <RouterLink class="nav-item" to="/terminal" :class="{ active: route.name === 'terminal' }">Web 终端</RouterLink>
-          <RouterLink class="nav-item" to="/terminal/records" :class="{ active: route.name === 'terminal-records' }">终端留痕</RouterLink>
-          <RouterLink class="nav-item" to="/logs" :class="{ active: route.name === 'logs' }">日志查看</RouterLink>
-          <RouterLink class="nav-item" to="/alerts" :class="{ active: route.name === 'alerts' }">告警规则</RouterLink>
+          <RouterLink class="nav-item" to="/" @click="drawerOpen = false">首页</RouterLink>
+          <RouterLink class="nav-item" to="/collectors" :class="{ active: route.name === 'collectors' || route.name === 'collector-detail' }" @click="drawerOpen = false">采集器</RouterLink>
+          <RouterLink class="nav-item" to="/agents" :class="{ active: route.name === 'agents' }" @click="drawerOpen = false">Agent 管理</RouterLink>
+          <RouterLink class="nav-item" to="/metrics" :class="{ active: route.name === 'metrics' }" @click="drawerOpen = false">指标曲线</RouterLink>
+          <RouterLink class="nav-item" to="/terminal" :class="{ active: route.name === 'terminal' }" @click="drawerOpen = false">Web 终端</RouterLink>
+          <RouterLink class="nav-item" to="/terminal/records" :class="{ active: route.name === 'terminal-records' }" @click="drawerOpen = false">终端留痕</RouterLink>
+          <RouterLink class="nav-item" to="/control-logs" :class="{ active: route.name === 'control-logs' }" @click="drawerOpen = false">控制留痕</RouterLink>
+          <RouterLink class="nav-item" to="/alerts" :class="{ active: route.name === 'alerts' }" @click="drawerOpen = false">告警规则</RouterLink>
         </nav>
       </aside>
 
@@ -73,9 +90,43 @@ async function onLogout() {
   border-bottom: 1px solid var(--color-border);
 }
 
+.topbar-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
 .brand {
   font-size: 1rem;
   font-weight: 600;
+}
+
+/* 汉堡按钮（TOB-374 ②）：仅移动端显示 */
+.nav-toggle {
+  display: none;
+  flex-direction: column;
+  justify-content: center;
+  gap: 4px;
+  width: 36px;
+  height: 36px;
+  padding: 8px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  background: transparent;
+  cursor: pointer;
+}
+
+.nav-toggle span {
+  display: block;
+  width: 100%;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--color-text);
+}
+
+.sidebar-mask {
+  display: none;
 }
 
 .topbar-actions {
@@ -149,8 +200,45 @@ async function onLogout() {
 }
 
 @media (max-width: 768px) {
+  .nav-toggle {
+    display: inline-flex;
+  }
+
+  /* 侧栏变抽屉：默认收起，.open 滑出；遮罩点击关闭 */
   .sidebar {
-    display: none;
+    position: fixed;
+    top: var(--topbar-height);
+    bottom: 0;
+    left: 0;
+    z-index: 60;
+    width: var(--sidebar-width);
+    max-width: 80vw;
+    overflow-y: auto;
+    transform: translateX(-100%);
+    transition: transform 0.2s ease;
+  }
+
+  .sidebar.open {
+    transform: translateX(0);
+  }
+
+  .sidebar-mask {
+    display: block;
+    position: fixed;
+    top: var(--topbar-height);
+    right: 0;
+    bottom: 0;
+    left: 0;
+    z-index: 55;
+    background: rgba(15, 23, 42, 0.45);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.2s ease;
+  }
+
+  .sidebar-mask.show {
+    opacity: 1;
+    pointer-events: auto;
   }
 
   .topbar {

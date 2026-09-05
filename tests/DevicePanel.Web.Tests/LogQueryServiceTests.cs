@@ -1,6 +1,6 @@
 using System.Text.Json;
 using DevicePanel.Protocol;
-using DevicePanel.Web.Targets;
+using DevicePanel.Web.Collectors;
 using DevicePanel.Web.Logs;
 using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
@@ -173,6 +173,8 @@ public class LogQueryServiceTests
         public FakeChannel(long deviceId) => DeviceId = deviceId;
 
         public long DeviceId { get; }
+
+        public long AgentId => 0;
 
         public bool IsOpen => true;
 

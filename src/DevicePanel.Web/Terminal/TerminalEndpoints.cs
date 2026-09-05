@@ -1,6 +1,6 @@
 using System.Globalization;
 using System.Net.WebSockets;
-using DevicePanel.Web.Targets;
+using DevicePanel.Web.Collectors;
 using Microsoft.AspNetCore.Mvc;
 
 namespace DevicePanel.Web.Terminal;
@@ -24,7 +24,7 @@ public static class TerminalEndpoints
         endpoints.MapGet("/api/devices/{deviceId:long}/terminal", async (
             HttpContext http,
             long deviceId,
-            ITargetRegistry devices,
+            ICollectorRegistry devices,
             AgentConnectionRegistry connections,
             TerminalSessionRegistry sessions,
             ITerminalStore store,
@@ -74,7 +74,7 @@ public static class TerminalEndpoints
             [FromQuery] string? from,
             [FromQuery] string? to,
             ITerminalStore store,
-            ITargetRegistry devices) =>
+            ICollectorRegistry devices) =>
         {
             if (deviceId is { } id && devices.Get(id) is null)
             {

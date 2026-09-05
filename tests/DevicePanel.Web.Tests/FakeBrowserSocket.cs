@@ -76,7 +76,7 @@ public sealed class FakeBrowserSocket : WebSocket
 }
 
 /// <summary>测试用 agent 通道替身：记录发往 agent 的信封，可控制在线状态。</summary>
-public sealed class FakeAgentChannel : DevicePanel.Web.Targets.IDeviceChannel
+public sealed class FakeAgentChannel : DevicePanel.Web.Collectors.IDeviceChannel
 {
     public FakeAgentChannel(long deviceId = 1, bool isOpen = true)
     {
@@ -85,6 +85,8 @@ public sealed class FakeAgentChannel : DevicePanel.Web.Targets.IDeviceChannel
     }
 
     public long DeviceId { get; }
+
+    public long AgentId { get; }
     public bool IsOpen { get; set; }
 
     public List<(string Type, long Seq, JsonElement Payload)> Sent { get; } = new();

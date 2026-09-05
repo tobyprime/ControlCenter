@@ -23,6 +23,12 @@ namespace DevicePanel.Agent;
 [JsonSerializable(typeof(LogsServicesPayload))]
 [JsonSerializable(typeof(LogsTailPayload))]
 [JsonSerializable(typeof(LogsErrorPayload))]
+[JsonSerializable(typeof(ControlInvokeRequestPayload))]
+[JsonSerializable(typeof(ControlInvokeResponsePayload))]
+[JsonSerializable(typeof(ControlErrorPayload))]
+[JsonSerializable(typeof(ControllerReportPayload))]
+[JsonSerializable(typeof(CapabilitiesReportPayload))]
+[JsonSerializable(typeof(string[]))]
 internal sealed partial class AgentJsonContext : JsonSerializerContext;
 
 internal sealed record AuthPayload(string Token);
@@ -81,24 +87,32 @@ public sealed class AgentRunner
     private readonly IMetricsCollector _metricsCollector;
     private readonly Func<IAgentDownlink, ITerminalChannel>? _terminalChannelFactory;
     private readonly Func<IAgentDownlink, ILogsChannel>? _logsChannelFactory;
+    private readonly Func<IAgentDownlink, IControllersChannel>? _controllersChannelFactory;
 
     public AgentRunner(AgentOptions options, TextWriter output)
         : this(options, output, new LinuxMetricsCollector(),
             downlink => new TerminalChannel(downlink, new LinuxPtySessionFactory(), output),
-            downlink => new LogsChannel((ILogsDownlink)downlink, new LinuxLogsSource(new ProcessCommandRunner()), output))
+            downlink => new LogsChannel((ILogsDownlink)downlink, new LinuxLogsSource(new ProcessCommandRunner()), output),
+            downlink => new ControllersChannel((IControllersDownlink)downlink,
+                ControllerSpecFile.Load(options.ControllersFile ?? DefaultControllersPath(), output)))
     {
     }
 
     internal AgentRunner(AgentOptions options, TextWriter output, IMetricsCollector metricsCollector,
         Func<IAgentDownlink, ITerminalChannel>? terminalChannelFactory = null,
-        Func<IAgentDownlink, ILogsChannel>? logsChannelFactory = null)
+        Func<IAgentDownlink, ILogsChannel>? logsChannelFactory = null,
+        Func<IAgentDownlink, IControllersChannel>? controllersChannelFactory = null)
     {
         _options = options;
         _output = output;
         _metricsCollector = metricsCollector;
         _terminalChannelFactory = terminalChannelFactory;
         _logsChannelFactory = logsChannelFactory;
+        _controllersChannelFactory = controllersChannelFactory;
     }
+
+    /// <summary>控制器声明文件缺省位置：程序目录下 controllers.json（缺失视为无声明，不影响连接）。</summary>
+    private static string DefaultControllersPath() => Path.Combine(AppContext.BaseDirectory, "controllers.json");
 
     public async Task<int> RunAsync(CancellationToken cancellationToken)
     {
@@ -180,9 +194,41 @@ public sealed class AgentRunner
         // 节拍发送也经 downlink 走同一把发送锁（ClientWebSocket 不允许并发发送）
         ITerminalChannel? channel = _terminalChannelFactory?.Invoke(downlink);
         ILogsChannel? logsChannel = _logsChannelFactory?.Invoke(downlink);
+        IControllersChannel? controllersChannel = _controllersChannelFactory?.Invoke(downlink);
+
+        // 能力声明（三期模块2）：认证成功后上报本连接实际可提供的通道，面板持久化并在管理页展示；
+        // 控制器声明（三期模块4）随对象形态一并上报，面板按注册表校验 type 后持久化
+        var capabilities = new List<string> { AgentCapabilityNames.Metrics };
+        if (channel is not null)
+        {
+            capabilities.Add(AgentCapabilityNames.Terminal);
+        }
+
+        if (logsChannel is not null)
+        {
+            capabilities.Add(AgentCapabilityNames.Logs);
+        }
+
+        if (controllersChannel is { Declarations.Count: > 0 })
+        {
+            capabilities.Add(AgentCapabilityNames.Controllers);
+            await downlink.SendAsync(AgentMessageTypes.AgentCapabilities,
+                new CapabilitiesReportPayload(capabilities,
+                    controllersChannel.Declarations
+                        .Select(d => new ControllerReportPayload(d.Key, d.Type, d.Label, d.Tags, d.ParamsSchema))
+                        .ToArray()),
+                AgentJsonContext.Default.CapabilitiesReportPayload, cancellationToken).ConfigureAwait(false);
+        }
+        else
+        {
+            // 无控制器声明：沿用旧版字符串数组形态（面板向后兼容）
+            await downlink.SendAsync(AgentMessageTypes.AgentCapabilities,
+                capabilities.ToArray(), AgentJsonContext.Default.StringArray, cancellationToken).ConfigureAwait(false);
+        }
+
         try
         {
-            await MessageLoopAsync(socket, downlink, channel, logsChannel, startedAt, cancellationToken).ConfigureAwait(false);
+            await MessageLoopAsync(socket, downlink, channel, logsChannel, controllersChannel, startedAt, cancellationToken).ConfigureAwait(false);
         }
         finally
         {
@@ -202,7 +248,7 @@ public sealed class AgentRunner
     /// 心跳与指标将永远不会发出（回归锚：AgentRunnerLoopTests）。
     /// </summary>
     private async Task MessageLoopAsync(ClientWebSocket socket, AgentDownlink downlink, ITerminalChannel? channel,
-        ILogsChannel? logsChannel, DateTimeOffset startedAt, CancellationToken cancellationToken)
+        ILogsChannel? logsChannel, IControllersChannel? controllersChannel, DateTimeOffset startedAt, CancellationToken cancellationToken)
     {
         var heartbeatInterval = TimeSpan.FromSeconds(_options.HeartbeatIntervalSeconds);
         using var heartbeatTimer = new PeriodicTimer(heartbeatInterval);
@@ -225,7 +271,7 @@ public sealed class AgentRunner
                         break; // 连接关闭或异常断开
                     }
 
-                    await HandleInboundAsync(inbound, channel, logsChannel).ConfigureAwait(false);
+                    await HandleInboundAsync(inbound, downlink, channel, logsChannel, controllersChannel).ConfigureAwait(false);
                     continue; // 未决的 tick 任务保留，下轮继续观察
                 }
 
@@ -286,11 +332,19 @@ public sealed class AgentRunner
             MetricsPayload.From(sample), AgentJsonContext.Default.MetricsPayload, ct).ConfigureAwait(false);
     }
 
-    private async Task HandleInboundAsync(AgentEnvelope envelope, ITerminalChannel? channel, ILogsChannel? logsChannel)
+    private async Task HandleInboundAsync(AgentEnvelope envelope, AgentDownlink downlink, ITerminalChannel? channel,
+        ILogsChannel? logsChannel, IControllersChannel? controllersChannel)
     {
         // 扩展点：按前缀路由到对应通道；各通道内部兜异常——下行失败不打断心跳/指标节拍（回归锚：AgentRunnerLoopTests）
         try
         {
+            if (envelope.Type == AgentMessageTypes.MetricsLatestRequest)
+            {
+                // 按需查询（三期模块3）：即时采样一次并按请求 seq 回包；失败回 metrics.error（采样快速，仍后台化保节拍）
+                _ = HandleMetricsLatestAsync(envelope.Seq, downlink);
+                return;
+            }
+
             if (channel is not null &&
                 envelope.Type.StartsWith(AgentMessageTypes.TermPrefix, StringComparison.Ordinal))
             {
@@ -304,6 +358,13 @@ public sealed class AgentRunner
                 await logsChannel.HandleAsync(envelope, CancellationToken.None).ConfigureAwait(false);
                 return;
             }
+
+            if (controllersChannel is not null &&
+                envelope.Type.StartsWith(AgentMessageTypes.ControlPrefix, StringComparison.Ordinal))
+            {
+                await controllersChannel.HandleAsync(envelope, CancellationToken.None).ConfigureAwait(false);
+                return;
+            }
         }
         catch (Exception ex)
         {
@@ -312,6 +373,27 @@ public sealed class AgentRunner
         }
 
         await _output.WriteLineAsync($"收到面板消息：{envelope.Type}（seq={envelope.Seq}）").ConfigureAwait(false);
+    }
+
+    /// <summary>metrics.latest.request 处理体：即时采样一次回 metrics.latest.response；采样失败回 metrics.error（连接断开时发送降级为 no-op）。</summary>
+    private async Task HandleMetricsLatestAsync(long seq, AgentDownlink downlink)
+    {
+        try
+        {
+            await downlink.SendMetricsLatestResponseAsync(seq, MetricsPayload.From(_metricsCollector.Sample()), CancellationToken.None)
+                .ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            try
+            {
+                await downlink.SendMetricsErrorAsync(seq, $"指标采样失败：{ex.Message}", CancellationToken.None).ConfigureAwait(false);
+            }
+            catch (Exception sendEx)
+            {
+                await _output.WriteLineAsync($"指标查询错误回包失败：{sendEx.Message}").ConfigureAwait(false);
+            }
+        }
     }
 
     private async Task<AgentEnvelope?> ReceiveAsync(ClientWebSocket socket, CancellationToken ct)

@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import {
   deleteMetricKey,
+  fetchTargetAvailableMetrics,
   fetchTargetOverview,
   fetchTargetSeries,
   listMetricKeys,
@@ -12,7 +13,7 @@ import {
   type MetricValueType,
   type TargetSeries,
 } from '@/api/metrics'
-import { listTargets, type Target } from '@/api/targets'
+import { listCollectors, type Collector } from '@/api/collectors'
 import MetricChart, { type ChartSeries } from '@/components/MetricChart.vue'
 import { byteUnitFormatter as unitFormatter, humanizeBytes } from '@/utils/format'
 
@@ -34,8 +35,10 @@ const chartColors = ['#2563eb', '#16a34a', '#d97706', '#9333ea', '#dc2626', '#08
 // 辅助指标：不作为独立曲线展示（内存 used/total 并入内存卡副标题，传感器名并入温度卡副标题）
 const auxiliaryKeys = ['mem_used', 'mem_total', 'temp_sensor']
 
-const targets = ref<Target[]>([])
+const targets = ref<Collector[]>([])
 const metricKeys = ref<MetricKeyInfo[]>([])
+// 当前目标可用指标（TOB-374 ①）：null = 未就绪/拉取失败，按全量口径展示
+const availableKeys = ref<MetricKeyInfo[] | null>(null)
 const overview = ref<MetricOverviewItem[]>([])
 const selectedTargetId = ref<number | null>(null)
 const selectedKeys = ref<string[]>([])
@@ -102,7 +105,39 @@ function tempSubtitle(): string {
   return sensor ? `传感器：${sensor}` : ''
 }
 
-const selectableKeys = computed(() => metricKeys.value.filter((info) => !auxiliaryKeys.includes(info.key)))
+const selectableKeys = computed(() => {
+  const base = metricKeys.value.filter((info) => !auxiliaryKeys.includes(info.key))
+  // 按来源可用指标（TOB-374 ①）：只列当前目标可用的指标；可用列表未就绪或拉取失败时维持全量口径
+  const available = availableKeys.value
+  if (available === null) {
+    return base
+  }
+  return base.filter((info) => available.some((avail) => avail.key === info.key))
+})
+
+// 默认选中口径（TOB-374 ①）：偏好内置设备指标 ∩ 当前目标可用指标；
+// 偏好全部不可用（如纯探针服务）时默认全选可用指标，页面不空手而归
+const DEFAULT_KEY_PREFERENCE = ['cpu', 'mem', 'disk', 'net_rx', 'net_tx', 'temp', 'disk_rx', 'disk_tx']
+
+function defaultKeysFor(): string[] {
+  const selectable = selectableKeys.value
+  const preferred = DEFAULT_KEY_PREFERENCE.filter((key) => selectable.some((info) => info.key === key))
+  return preferred.length > 0 ? preferred : selectable.map((info) => info.key)
+}
+
+// 拉取当前目标可用指标（后端口径：优先已上报 key，无上报数据回退按类型内置 key）
+async function applyTargetAvailability() {
+  const targetId = selectedTargetId.value
+  if (targetId === null) {
+    availableKeys.value = null
+    return
+  }
+  try {
+    availableKeys.value = await fetchTargetAvailableMetrics(targetId)
+  } catch {
+    availableKeys.value = null
+  }
+}
 
 const chartModels = computed(() => {
   return (series.value?.series ?? [])
@@ -163,16 +198,14 @@ async function refresh(showError = true) {
 
 async function loadBaseline() {
   try {
-    const [targetList, keys] = await Promise.all([listTargets(), listMetricKeys()])
+    const [targetList, keys] = await Promise.all([listCollectors(), listMetricKeys()])
     targets.value = targetList
     metricKeys.value = keys
-    const defaultKeys = ['cpu', 'mem', 'disk', 'net_rx', 'net_tx', 'temp', 'disk_rx', 'disk_tx'].filter((key) =>
-      keys.some((info) => info.key === key),
-    )
-    selectedKeys.value = defaultKeys
     if (targets.value.length > 0 && selectedTargetId.value === null) {
       selectedTargetId.value = targets.value[0].id
     }
+    await applyTargetAvailability()
+    selectedKeys.value = defaultKeysFor()
     await refresh()
   } catch (e) {
     errorMessage.value = e instanceof Error ? e.message : '目标或指标列表加载失败'
@@ -180,9 +213,14 @@ async function loadBaseline() {
   }
 }
 
-function onSelectTarget() {
+async function onSelectTarget() {
   loading.value = true
-  void refresh()
+  const previous = selectedKeys.value
+  await applyTargetAvailability()
+  // 切换目标后保留仍可用的已选指标；全部失效则回退默认口径
+  const kept = previous.filter((key) => selectableKeys.value.some((info) => info.key === key))
+  selectedKeys.value = kept.length > 0 ? kept : defaultKeysFor()
+  await refresh()
 }
 
 function onSelectRange() {
@@ -370,7 +408,7 @@ onBeforeUnmount(() => {
 
     <div v-if="loading" class="empty-state">加载中…</div>
     <div v-else-if="targets.length === 0" class="empty-state">
-      还没有目标。先到「目标管理」登记目标并接入 agent，指标数据会自动上报。
+      还没有采集器。先到「采集器」页登记采集器并接入 agent，指标数据会自动上报。
     </div>
     <template v-else>
       <p class="granularity-note">

@@ -1,4 +1,4 @@
-using DevicePanel.Web.Targets;
+using DevicePanel.Web.Collectors;
 using DevicePanel.Web.Metrics;
 using Microsoft.Extensions.Time.Testing;
 using Xunit;
@@ -14,7 +14,7 @@ public class MetricsRetentionTests : IDisposable
 
     public MetricsRetentionTests()
     {
-        _targetId = new TargetRegistry(_database.Factory, _clock).Create(TargetTypes.Device, "保留期设备", []).Target.Id;
+        _targetId = new CollectorRegistry(_database.Factory, _clock).Create("保留期设备", [CollectorBuiltinTags.Device]).Id;
     }
 
     public void Dispose() => _database.Dispose();

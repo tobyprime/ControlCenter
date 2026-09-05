@@ -33,18 +33,19 @@ async function request<T>(path: string): Promise<T> {
   return (await response.json()) as T
 }
 
-export async function listLogServices(deviceId: number): Promise<LogServiceInfo[]> {
-  const payload = await request<{ services: LogServiceInfo[] }>(`/api/devices/${deviceId}/logs/services`)
+/** 日志归并为采集器数据类型（三期模块3）：查询按采集器定位，经 agent 只读拉取。 */
+export async function listLogServices(collectorId: number): Promise<LogServiceInfo[]> {
+  const payload = await request<{ services: LogServiceInfo[] }>(`/api/collectors/${collectorId}/logs/services`)
   return payload.services
 }
 
 export async function fetchLogTail(
-  deviceId: number,
+  collectorId: number,
   service: string,
   kind: LogKind,
   lines: number,
 ): Promise<LogLineInfo[]> {
   const query = new URLSearchParams({ service, kind, lines: String(lines) })
-  const payload = await request<{ lines: LogLineInfo[] }>(`/api/devices/${deviceId}/logs/tail?${query.toString()}`)
+  const payload = await request<{ lines: LogLineInfo[] }>(`/api/collectors/${collectorId}/logs/tail?${query.toString()}`)
   return payload.lines
 }

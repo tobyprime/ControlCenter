@@ -1,4 +1,4 @@
-using DevicePanel.Web.Targets;
+using DevicePanel.Web.Collectors;
 
 namespace DevicePanel.Web.Interactions;
 
@@ -14,7 +14,7 @@ public static class InteractionEndpoints
 
         endpoints.MapGet("/api/devices/{deviceId:long}/interaction-modes", (
             long deviceId,
-            ITargetRegistry targets,
+            ICollectorRegistry targets,
             InteractionModeRegistry registry,
             IInteractionModeCatalog catalog) =>
         {

@@ -35,11 +35,20 @@ async function login(page: Page) {
 }
 
 async function createDeviceViaApi(page: Page, name: string): Promise<{ id: number; agentToken: string }> {
-  const response = await page.request.post('/api/targets', {
+  const response = await page.request.post('/api/collectors', {
     data: { name, tags: ['E2E'] },
   })
   expect(response.ok()).toBeTruthy()
   return (await response.json()) as { id: number; agentToken: string }
+}
+
+/** 进入采集器详情页（三期模块3：日志入口并入详情页，独立日志页已移除）。 */
+async function openCollectorDetail(page: Page, name: string) {
+  await page.getByRole('link', { name: '采集器' }).click()
+  const card = page.locator('.collector-card', { hasText: name })
+  await expect(card).toBeVisible()
+  await card.getByRole('button', { name: '详情' }).click()
+  await expect(page.getByRole('heading', { name })).toBeVisible()
 }
 
 /**
@@ -90,25 +99,20 @@ async function startLogsAgent(page: Page, token: string, services: FakeLogServic
   )
 }
 
-test.describe('日志查看（TOB-340）', () => {
+test.describe('日志查看（TOB-340 → 三期模块3 入口并入采集器详情）', () => {
   test.setTimeout(120_000)
 
-  test('设备+服务选日志尾部 N 行，关键字/级别过滤准确，N 可调（验收 1/2/3/4/5）', async ({ page }) => {
+  test('详情页自动加载服务清单并拉取尾部 N 行，关键字/级别过滤准确，N 可调（验收 1/2/3/4/5）', async ({ page }) => {
     await login(page)
 
     const deviceName = `日志验收机 ${Date.now()}`
     const device = await createDeviceViaApi(page, deviceName)
-    // 假 agent 先在线（页内 /agent/ws 长连接，SPA 导航不断开），随后进日志页
+    // 假 agent 先在线（页内 /agent/ws 长连接，SPA 导航不断开），随后进采集器详情页
     await startLogsAgent(page, device.agentToken)
 
-    await page.getByRole('link', { name: '日志查看' }).click()
-    await expect(page.getByRole('heading', { name: '日志查看' })).toBeVisible()
-
-    // 选定本测试的设备 → 服务清单加载并默认选中首个服务
-    const deviceSelect = page.locator('.logs-controls .control-select').first()
-    await deviceSelect.selectOption({ label: deviceName })
-
-    const serviceSelect = page.locator('.control-service select')
+    // 详情页挂载即拉服务清单并默认选中首个服务（nginx.service）
+    await openCollectorDetail(page, deviceName)
+    const serviceSelect = page.locator('.log-controls select').first()
     await expect(serviceSelect).toContainText('nginx.service', { timeout: 15_000 })
 
     // 验收 1：显示尾部日志，内容与假 agent 上报一致（systemd 服务带来源标注）
@@ -117,7 +121,7 @@ test.describe('日志查看（TOB-340）', () => {
     await expect(page.locator('.log-line')).toHaveCount(2)
 
     // 验收 2：关键字过滤——含关键字的保留、不含的隐藏
-    const keywordInput = page.locator('.control-keyword input')
+    const keywordInput = page.locator('.log-keyword input')
     await keywordInput.fill('connect')
     await expect(page.locator('.log-line')).toHaveCount(1)
     await expect(page.getByText('connect() failed')).toBeVisible()
@@ -138,7 +142,7 @@ test.describe('日志查看（TOB-340）', () => {
     await expect(page.locator('.log-line')).toHaveCount(2)
 
     // 验收 4：N 可调——改为 500 后 agent 收到的请求带 lines=500
-    await page.locator('select.control-lines').selectOption('500')
+    await page.locator('select.log-lines').selectOption('500')
     await expect(page.locator('.log-line')).toHaveCount(2)
     const tailRequests = await page.evaluate(() => window.__logTailRequests ?? [])
     expect(tailRequests.length).toBeGreaterThanOrEqual(2)
@@ -147,9 +151,9 @@ test.describe('日志查看（TOB-340）', () => {
     expect(tailRequests[tailRequests.length - 1].service).toBe('nginx.service')
     expect(tailRequests[tailRequests.length - 1].kind).toBe('systemd')
 
-    // 验收 5：拉取为只读按需进行——页面仅有手动刷新按钮，无自动轮询；假 agent 保持连接即零入站端口
+    // 验收 5：拉取为只读按需进行——仅有手动刷新按钮，无自动轮询；假 agent 保持连接即零入站端口
     await expect(page.getByRole('button', { name: /刷新/ })).toBeVisible()
-    await page.screenshot({ path: `${EVIDENCE_DIR}/logs-view.png`, fullPage: true })
+    await page.screenshot({ path: `${EVIDENCE_DIR}/logs-collector-detail.png`, fullPage: true })
   })
 
   test('离线设备给出明确错误提示（验收 5：不改变目标机状态）', async ({ page }) => {
@@ -158,11 +162,7 @@ test.describe('日志查看（TOB-340）', () => {
     const deviceName = `离线日志机 ${Date.now()}`
     await createDeviceViaApi(page, deviceName)
 
-    await page.getByRole('link', { name: '日志查看' }).click()
-    await expect(page.getByRole('heading', { name: '日志查看' })).toBeVisible()
-
-    const deviceSelect = page.locator('.logs-controls .control-select').first()
-    await deviceSelect.selectOption({ label: `${deviceName}（离线）` })
+    await openCollectorDetail(page, deviceName)
 
     await expect(page.getByText('设备离线，无法获取日志')).toBeVisible({ timeout: 15_000 })
   })
@@ -178,13 +178,9 @@ test.describe('日志查看（TOB-340）', () => {
       { name: 'nginx.service', kind: 'docker', description: 'nginx:1.27（Up 2 hours）' },
     ])
 
-    await page.getByRole('link', { name: '日志查看' }).click()
-    await expect(page.getByRole('heading', { name: '日志查看' })).toBeVisible()
+    await openCollectorDetail(page, deviceName)
 
-    const deviceSelect = page.locator('.logs-controls .control-select').first()
-    await deviceSelect.selectOption({ label: deviceName })
-
-    const serviceSelect = page.locator('.control-service select')
+    const serviceSelect = page.locator('.log-controls select').first()
     await expect(serviceSelect.locator('option')).toHaveCount(2)
 
     // 选中 docker 条目：发出的拉取请求 kind 必须是 docker

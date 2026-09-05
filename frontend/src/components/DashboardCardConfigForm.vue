@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import type { DashboardCard } from '@/api/dashboard'
-import type { Target } from '@/api/targets'
+import type { Collector } from '@/api/collectors'
 import type { MetricKeyInfo, MetricValueType } from '@/api/metrics'
 import {
   compatibleCardTypes,
@@ -18,8 +18,10 @@ import {
 // 直接改写编辑态 draft 卡片（保存布局时才随 config 落库），只读的 props 对象在编辑模型内。
 const props = defineProps<{
   card: DashboardCard
-  targets: Target[]
+  targets: Collector[]
   metricKeys: MetricKeyInfo[]
+  // 按来源可用指标（TOB-374 ①）：targetId → 该来源可用指标集合，由页面预取传入
+  availableByTarget: Record<number, MetricKeyInfo[]>
 }>()
 
 // 逐字段读取原始 config：配置中途（如只选了目标）也是合法的编辑态，
@@ -41,7 +43,8 @@ function updateConfig(patch: Partial<MetricCardConfig>) {
 function onTargetChange(event: Event) {
   const targetId = Number((event.target as HTMLSelectElement).value)
   if (Number.isInteger(targetId) && targetId > 0) {
-    updateConfig({ targetId })
+    // 切换来源后原指标未必仍可用（TOB-374 ①）：清空让用户按新来源重选
+    updateConfig({ targetId, key: '' })
   }
 }
 
@@ -84,14 +87,28 @@ const typeOptions = computed(() => {
 const selectedTargetId = computed(() => rawField('targetId', 0) || '')
 const selectedKey = computed(() => rawField('key', ''))
 const selectedWindowHours = computed(() => rawField('windowHours', DEFAULT_WINDOW_HOURS))
+
+// 指标下拉只列所选来源可用的指标（TOB-374 ①）；可用集合未就绪时维持全量注册表口径，
+// 存量配置里的失效指标仍保留为选项，避免编辑态下拉显示空白
+const metricOptions = computed(() => {
+  const available = props.availableByTarget[rawField('targetId', 0)]
+  if (!available || available.length === 0) {
+    return props.metricKeys
+  }
+  const current = selectedKey.value ? keyInfoOf(props.metricKeys, selectedKey.value) : undefined
+  if (current && !available.some((info) => info.key === current.key)) {
+    return [current, ...available]
+  }
+  return available
+})
 </script>
 
 <template>
   <div class="card-config">
     <label class="control-field">
-      <span class="control-label">目标</span>
+      <span class="control-label">采集器</span>
       <select :value="selectedTargetId" @change="onTargetChange">
-        <option value="" disabled>请选择目标</option>
+        <option value="" disabled>请选择采集器</option>
         <option v-for="target in targets" :key="target.id" :value="target.id">{{ target.name }}</option>
       </select>
     </label>
@@ -99,7 +116,7 @@ const selectedWindowHours = computed(() => rawField('windowHours', DEFAULT_WINDO
       <span class="control-label">指标</span>
       <select :value="selectedKey" @change="onKeyChange">
         <option value="" disabled>请选择指标</option>
-        <option v-for="info in metricKeys" :key="info.key" :value="info.key">{{ info.displayName }}（{{ info.key }}）</option>
+        <option v-for="info in metricOptions" :key="info.key" :value="info.key">{{ info.displayName }}（{{ info.key }}）</option>
       </select>
     </label>
     <label class="control-field">

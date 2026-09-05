@@ -2,7 +2,7 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using DevicePanel.Web.Interactions;
-using DevicePanel.Web.Targets;
+using DevicePanel.Web.Collectors;
 using Microsoft.Extensions.DependencyInjection;
 using Xunit;
 
@@ -46,8 +46,11 @@ public class InteractionApiTests : IDisposable
         login.EnsureSuccessStatusCode();
 
         using var scope = _factory.Services.CreateScope();
-        var targets = scope.ServiceProvider.GetRequiredService<DevicePanel.Web.Targets.ITargetRegistry>();
-        _deviceId = targets.Create(TargetTypes.Device, "交互设备", ["机房A"]).Target.Id;
+        // shell 入口跟随 push 采集器（关联 agent）声明；先建 agent 再建采集器
+        var agents = scope.ServiceProvider.GetRequiredService<DevicePanel.Web.Agents.IAgentRegistry>();
+        var agentId = agents.Create("交互设备 agent", Array.Empty<string>()).Agent.Id;
+        var targets = scope.ServiceProvider.GetRequiredService<DevicePanel.Web.Collectors.ICollectorRegistry>();
+        _deviceId = targets.Create("交互设备", ["机房A", CollectorBuiltinTags.Device], agentId).Id;
     }
 
     public void Dispose() => _factory.Dispose();
@@ -88,8 +91,8 @@ public class InteractionApiTests : IDisposable
         var login = await client.PostAsJsonAsync("/api/auth/login", new { username = "admin", password = "test-password-1" });
         login.EnsureSuccessStatusCode();
         using var scope = factory.Services.CreateScope();
-        var targets = scope.ServiceProvider.GetRequiredService<DevicePanel.Web.Targets.ITargetRegistry>();
-        var deviceId = targets.Create(TargetTypes.Device, "声明设备", []).Target.Id;
+        var targets = scope.ServiceProvider.GetRequiredService<DevicePanel.Web.Collectors.ICollectorRegistry>();
+        var deviceId = targets.Create("声明设备", [CollectorBuiltinTags.Device]).Id;
 
         var response = await client.GetAsync($"/api/devices/{deviceId}/interaction-modes");
         response.EnsureSuccessStatusCode();

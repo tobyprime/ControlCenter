@@ -206,11 +206,11 @@ public class DatabaseMigrationTests : IClassFixture<TestAppFactory>
                     "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'dashboard_layouts';");
                 Assert.Equal(1L, Convert.ToInt64(tableExists));
 
-                // 一期 devices 表升级为 targets，且设备数据保留（TOB-361 迁移链完整）
-                var targetsExists = ExecuteScalar(
+                // 一期 devices 表升级为 targets、三期再归并为 collectors，设备数据保留（TOB-361 迁移链完整）
+                var collectorsExists = ExecuteScalar(
                     connection,
-                    "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'targets';");
-                Assert.Equal(1L, Convert.ToInt64(targetsExists));
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'collectors';");
+                Assert.Equal(1L, Convert.ToInt64(collectorsExists));
 
                 var applied = ExecuteScalar(
                     connection,

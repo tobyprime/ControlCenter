@@ -2,14 +2,14 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using DevicePanel.Web.Metrics;
-using DevicePanel.Web.Targets;
+using DevicePanel.Web.Collectors;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Time.Testing;
 using Xunit;
 
 namespace DevicePanel.Web.Tests;
 
-/// <summary>指标查询与 MetricKey 注册 API：自动粒度、key 参数校验、注册表 CRUD、目标指标总览。</summary>
+/// <summary>指标查询与 MetricKey 注册 API：自动粒度、key 参数校验、注册表 CRUD、目标指标总览、按来源可用指标。</summary>
 public class MetricsApiTests : IDisposable
 {
     public sealed class Factory : TestAppFactory
@@ -188,11 +188,73 @@ public class MetricsApiTests : IDisposable
         Assert.Equal(400, (int)badGranularity.StatusCode);
     }
 
+    // --- 按来源可用指标（TOB-374 ①：选来源→选指标 只列该来源可用的指标） ---
+
+    [Fact]
+    public async Task Available_Without_Reported_Data_Falls_Back_To_Builtin_Keys_By_Type()
+    {
+        var client = await AuthenticatedClientAsync();
+        var deviceId = await CreateTargetAsync(client, "可用指标设备", "device");
+        var serviceId = CreateServiceTargetViaRegistry("可用指标服务");
+
+        var deviceKeys = (await AvailableKeysAsync(client, deviceId)).EnumerateArray()
+            .Select(k => k.GetProperty("key").GetString()).ToHashSet();
+        Assert.Subset(deviceKeys, new HashSet<string?> { "cpu", "mem", "disk", "net_rx", "net_tx", "online" });
+        Assert.DoesNotContain(deviceKeys, k => k == "status");
+        Assert.DoesNotContain(deviceKeys, k => k == "latency_ms");
+
+        var serviceKeys = (await AvailableKeysAsync(client, serviceId)).EnumerateArray()
+            .Select(k => k.GetProperty("key").GetString()).ToHashSet();
+        Assert.Subset(serviceKeys, new HashSet<string?> { "status", "latency_ms" });
+        Assert.DoesNotContain(serviceKeys, k => k == "cpu");
+        Assert.DoesNotContain(serviceKeys, k => k == "online");
+    }
+
+    [Fact]
+    public async Task Available_Prefers_Reported_Keys_And_Carries_Registry_Metadata()
+    {
+        var targetId = await SeedDataAsync();
+        var client = await AuthenticatedClientAsync();
+
+        var keys = (await AvailableKeysAsync(client, targetId)).EnumerateArray()
+            .ToDictionary(k => k.GetProperty("key").GetString()!, k => k);
+
+        Assert.Equal(new HashSet<string> { "cpu", "mem", "disk", "net_rx", "net_tx" }, keys.Keys.ToHashSet());
+        Assert.Equal("CPU 使用率", keys["cpu"].GetProperty("displayName").GetString());
+        Assert.Equal("%", keys["cpu"].GetProperty("unit").GetString());
+        Assert.Equal("number", keys["cpu"].GetProperty("valueType").GetString());
+        Assert.True(keys["cpu"].GetProperty("builtIn").GetBoolean());
+    }
+
+    [Fact]
+    public async Task Available_Service_Reported_Keys_Win_Over_Fallback()
+    {
+        var serviceId = CreateServiceTargetViaRegistry("探针服务");
+        var store = _factory.Services.GetRequiredService<IMetricsStore>();
+        store.Insert(serviceId, MetricKeys.LatencyMs,
+            new MetricSample(new DateTimeOffset(2026, 9, 3, 12, 0, 0, TimeSpan.Zero), 42, null));
+
+        var client = await AuthenticatedClientAsync();
+        var names = (await AvailableKeysAsync(client, serviceId)).EnumerateArray()
+            .Select(k => k.GetProperty("key").GetString()).ToHashSet();
+
+        Assert.Equal(new HashSet<string?> { "latency_ms" }, names);
+    }
+
+    [Fact]
+    public async Task Available_Unknown_Target_Returns_404()
+    {
+        var client = await AuthenticatedClientAsync();
+        var response = await client.GetAsync("/api/metrics/999/available");
+
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+    }
+
     /// <summary>种入 9/3 当天 00:10/00:20/00:30/00:40 四个样本：cpu=cpuBase+10*i，mem=20+10*i，disk=30+10*i，net_rx=100*(i+1)，net_tx=1000*(i+1)。</summary>
     private async Task<long> SeedDataAsync(double cpuBase = 10)
     {
         var client = await AuthenticatedClientAsync();
-        var created = await client.PostAsJsonAsync("/api/targets", new { name = $"指标设备-{Guid.NewGuid():N}"[..24], tags = Array.Empty<string>() });
+        var created = await client.PostAsJsonAsync("/api/collectors", new { name = $"指标设备-{Guid.NewGuid():N}"[..24], tags = Array.Empty<string>() });
         created.EnsureSuccessStatusCode();
         var targetId = (await created.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetInt64();
 
@@ -231,5 +293,22 @@ public class MetricsApiTests : IDisposable
         var login = await client.PostAsJsonAsync("/api/auth/login", new { username = "admin", password = "test-password-1" });
         login.EnsureSuccessStatusCode();
         return client;
+    }
+
+    private async Task<long> CreateTargetAsync(HttpClient client, string name, string type)
+    {
+        var created = await client.PostAsJsonAsync("/api/collectors", new { type, name, tags = Array.Empty<string>() });
+        created.EnsureSuccessStatusCode();
+        return (await created.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetInt64();
+    }
+
+    private long CreateServiceTargetViaRegistry(string name) =>
+        _factory.Services.GetRequiredService<ICollectorRegistry>().Create(name, [CollectorBuiltinTags.Service]).Id;
+
+    private async Task<JsonElement> AvailableKeysAsync(HttpClient client, long targetId)
+    {
+        var response = await client.GetAsync($"/api/metrics/{targetId}/available");
+        response.EnsureSuccessStatusCode();
+        return await response.Content.ReadFromJsonAsync<JsonElement>();
     }
 }

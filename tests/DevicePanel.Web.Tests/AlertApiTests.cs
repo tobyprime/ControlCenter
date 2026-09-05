@@ -273,7 +273,7 @@ public class AlertApiTests : IDisposable
 
     private async Task<long> CreateTargetAsync(HttpClient client, string name)
     {
-        var created = await client.PostAsJsonAsync("/api/targets", new { name, tags = new[] { "告警" } });
+        var created = await client.PostAsJsonAsync("/api/collectors", new { name, tags = new[] { "告警" } });
         created.EnsureSuccessStatusCode();
         var payload = await created.Content.ReadFromJsonAsync<JsonElement>();
         return payload.GetProperty("id").GetInt64();

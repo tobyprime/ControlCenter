@@ -1,11 +1,12 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { fetchSession } from '@/router'
-import { listTargets, type Target } from '@/api/targets'
+import { listCollectors, type Collector } from '@/api/collectors'
 import { fetchActiveAlertCount } from '@/api/alerts'
 import { fetchDashboardLayout, saveDashboardLayout, type DashboardCard } from '@/api/dashboard'
 import {
   listMetricKeys,
+  fetchTargetAvailableMetrics,
   fetchTargetOverview,
   fetchTargetSeries,
   type MetricKeyInfo,
@@ -25,6 +26,8 @@ import DashboardValueCard from '@/components/DashboardValueCard.vue'
 import DashboardStatusCard from '@/components/DashboardStatusCard.vue'
 import DashboardChartCard from '@/components/DashboardChartCard.vue'
 import DashboardCardConfigForm from '@/components/DashboardCardConfigForm.vue'
+import DashboardControlCard from '@/components/DashboardControlCard.vue'
+import DashboardControlCardConfigForm from '@/components/DashboardControlCardConfigForm.vue'
 
 const username = ref('')
 fetchSession().then((session) => {
@@ -32,12 +35,12 @@ fetchSession().then((session) => {
 })
 
 const overview = ref({ total: '—', online: '—', alerts: '—' })
-const targets = ref<Target[]>([])
+const targets = ref<Collector[]>([])
 let refreshTimer: number | undefined
 
 async function refreshOverview() {
   try {
-    const list: Target[] = await listTargets()
+    const list: Collector[] = await listCollectors()
     targets.value = list
     targetsReady.value = true
     overview.value.total = String(list.length)
@@ -140,6 +143,18 @@ function chartKeyInfoOf(card: DashboardCard): MetricKeyInfo | undefined {
   return config ? keyInfoOf(metricKeys.value, config.key) : undefined
 }
 
+// 查看态标题「来源名 · 指标名」（TOB-374 ③）；目标/指标任一未知时退回卡片类型文案。
+// 卡片类型文案（数值卡等）只在编辑态展示，查看态不再重复
+function metricCardTitle(card: DashboardCard): string {
+  const config = metricConfigOf(card)
+  if (!config) {
+    return cardLabel(card.type)
+  }
+  const targetName = targets.value.find((target) => target.id === config.targetId)?.name ?? ''
+  const keyName = keyInfoOf(metricKeys.value, config.key)?.displayName ?? ''
+  return [targetName, keyName].filter(Boolean).join(' · ') || cardLabel(card.type)
+}
+
 async function refreshRegistries() {
   try {
     metricKeys.value = await listMetricKeys()
@@ -148,6 +163,35 @@ async function refreshRegistries() {
     // 注册表失败不阻塞主页，指标卡按加载态等待下个刷新周期
   }
 }
+
+// 按来源可用指标（TOB-374 ①）：目标就绪后预取一次并随指标卡周期刷新，
+// 供卡片配置表单按所选来源过滤指标下拉；单目标失败按未知处理，表单回退全量口径
+const availableByTarget = ref<Record<number, MetricKeyInfo[]>>({})
+
+async function refreshAvailableMetrics() {
+  const entries = await Promise.all(
+    targets.value.map(async (target) => {
+      try {
+        return [target.id, await fetchTargetAvailableMetrics(target.id)] as const
+      } catch {
+        return [target.id, null] as const
+      }
+    }),
+  )
+  const next: Record<number, MetricKeyInfo[]> = {}
+  for (const [targetId, infos] of entries) {
+    if (infos) {
+      next[targetId] = infos
+    }
+  }
+  availableByTarget.value = next
+}
+
+watch(targetsReady, (ready) => {
+  if (ready) {
+    void refreshAvailableMetrics()
+  }
+})
 
 async function refreshMetricCards() {
   const configured = cards.value
@@ -286,6 +330,7 @@ onMounted(() => {
   refreshTimer = window.setInterval(refreshOverview, 15000)
   metricTimer = window.setInterval(() => {
     refreshRegistries()
+    refreshAvailableMetrics()
     refreshMetricCards()
   }, 30000)
 })
@@ -305,7 +350,7 @@ onBeforeUnmount(() => {
     <div class="home-header">
       <div>
         <h1 class="home-title">欢迎，{{ username || '管理员' }}</h1>
-        <p class="home-description">设备与目标、日志查看、终端交互、告警通知均已上线；主页概览支持自定义卡片布局与指标卡。</p>
+        <p class="home-description">采集器接入、日志查看、终端交互、告警通知均已上线；主页概览支持自定义卡片布局与指标卡。</p>
       </div>
       <button v-if="!editing" type="button" class="primary-button" @click="enterEdit">
         进入编辑
@@ -339,7 +384,7 @@ onBeforeUnmount(() => {
         v-for="(card, index) in editing ? draft : visibleCards"
         :key="card.id"
         class="overview-card"
-        :class="{ 'card-hidden': editing && !card.visible, 'card-dragging': dragIndex === index, 'card-chart': card.type === 'metric-chart' }"
+        :class="{ 'card-hidden': editing && !card.visible, 'card-dragging': dragIndex === index, 'card-chart': card.type === 'metric-chart', 'card-control': card.type === 'control-card' }"
         :data-card-type="card.type"
         :draggable="editing"
         @dragstart="onDragStart(index)"
@@ -357,8 +402,17 @@ onBeforeUnmount(() => {
           <button type="button" class="danger-button" @click="removeCard(index)">删除</button>
         </div>
 
+        <!-- 控制卡（三期模块4）：编辑态组合控制器，查看态直接操作并即时回执 -->
+        <template v-if="card.type === 'control-card'">
+          <template v-if="editing">
+            <span class="overview-label">{{ cardLabel(card.type) }}</span>
+            <DashboardControlCardConfigForm :card="card" :targets="targets" />
+          </template>
+          <DashboardControlCard v-else :card="card" />
+        </template>
+
         <!-- 一期概览卡 -->
-        <template v-if="!isMetricCardType(card.type)">
+        <template v-else-if="!isMetricCardType(card.type)">
           <span class="overview-label">{{ cardLabel(card.type) }}</span>
           <span class="overview-value">{{ overviewValue(card.type) }}</span>
           <span class="overview-hint">{{ cardHint(card.type) }}</span>
@@ -367,25 +421,30 @@ onBeforeUnmount(() => {
         <!-- 指标卡（TOB-368）：编辑态配置来源/类型/时间窗，查看态按类型渲染 -->
         <template v-else-if="editing">
           <span class="overview-label">{{ cardLabel(card.type) }}</span>
-          <DashboardCardConfigForm :card="card" :targets="targets" :metric-keys="metricKeys" />
+          <DashboardCardConfigForm
+            :card="card"
+            :targets="targets"
+            :metric-keys="metricKeys"
+            :available-by-target="availableByTarget"
+          />
         </template>
         <DashboardValueCard
           v-else-if="card.type === 'metric-value'"
-          :label="cardLabel(card.type)"
+          :label="metricCardTitle(card)"
           :item="overviewItemOf(card)"
           :degraded-reason="degradedReasonFor(card)"
           :loading="metricLoading || registriesLoading"
         />
         <DashboardStatusCard
           v-else-if="card.type === 'metric-status'"
-          :label="cardLabel(card.type)"
+          :label="metricCardTitle(card)"
           :item="overviewItemOf(card)"
           :degraded-reason="degradedReasonFor(card)"
           :loading="metricLoading || registriesLoading"
         />
         <DashboardChartCard
           v-else
-          :label="cardLabel(card.type)"
+          :label="metricCardTitle(card)"
           :series="chartSeriesOf(card)"
           :key-info="chartKeyInfoOf(card)"
           :degraded-reason="degradedReasonFor(card)"
@@ -511,6 +570,11 @@ onBeforeUnmount(() => {
 
 /* 曲线卡占满整行，保证序列可读 */
 .card-chart {
+  grid-column: 1 / -1;
+}
+
+/* 控制卡占满整行：组合多台设备的控制器，操作与回执需要横向空间 */
+.card-control {
   grid-column: 1 / -1;
 }
 

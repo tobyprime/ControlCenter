@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
-import { listTargets, type Target } from '@/api/targets'
-import { listMetricKeys, type MetricKeyInfo } from '@/api/metrics'
+import { computed, onMounted, ref, watch } from 'vue'
+import { listCollectors, type Collector } from '@/api/collectors'
+import { fetchTargetAvailableMetrics, listMetricKeys, type MetricKeyInfo } from '@/api/metrics'
 import {
   createAlertRule,
   deleteAlertRule,
@@ -28,7 +28,7 @@ const savingNapcat = ref(false)
 const napcatMessage = ref('')
 const napcatError = ref('')
 
-const targets = ref<Target[]>([])
+const targets = ref<Collector[]>([])
 const metricKeys = ref<MetricKeyInfo[]>([])
 const ruleTypes = ref<AlertRuleTypeInfo[]>([])
 const rules = ref<AlertRule[]>([])
@@ -71,10 +71,54 @@ const formUsableTypes = computed(() =>
   ruleTypes.value.filter((t) => t.supportedValueTypes.includes(formValueType.value)),
 )
 
+// 按来源可用指标（TOB-374 ①）：targetId → 该来源可用指标集合（优先已上报 key，回退按类型内置 key）
+const availableByTarget = ref<Record<number, MetricKeyInfo[]>>({})
+
+async function loadAvailableMetrics(): Promise<void> {
+  const entries = await Promise.all(
+    targets.value.map(async (target) => {
+      try {
+        return [target.id, await fetchTargetAvailableMetrics(target.id)] as const
+      } catch {
+        // 单目标拉取失败按未知处理：该来源回退全量口径
+        return [target.id, null] as const
+      }
+    }),
+  )
+  const next: Record<number, MetricKeyInfo[]> = {}
+  for (const [targetId, infos] of entries) {
+    if (infos) {
+      next[targetId] = infos
+    }
+  }
+  availableByTarget.value = next
+}
+
+// 作用域基准指标：目标作用域 = 该来源可用指标；全局作用域 = 各来源可用指标的并集。
+// 集合未就绪（页面刚加载）或整体拉取失败时回退全量注册表，保持原有可用性
+const scopeBaseKeys = computed<MetricKeyInfo[]>(() => {
+  if (formScope.value === 'target') {
+    return availableByTarget.value[formTargetId.value ?? -1] ?? metricKeys.value
+  }
+  const lists = Object.values(availableByTarget.value)
+  if (lists.length === 0) {
+    return metricKeys.value
+  }
+  const union = new Map<string, MetricKeyInfo>()
+  for (const list of lists) {
+    for (const info of list) {
+      if (!union.has(info.key)) {
+        union.set(info.key, info)
+      }
+    }
+  }
+  return [...union.values()]
+})
+
 const availableMetricKeys = computed(() => {
   const scope = formScope.value
   const tid = formTargetId.value
-  return metricKeys.value.filter((info) => {
+  return scopeBaseKeys.value.filter((info) => {
     const existing = rules.value.some(
       (rule) =>
         rule.metricKey === info.key &&
@@ -83,6 +127,15 @@ const availableMetricKeys = computed(() => {
     )
     return !existing
   })
+})
+
+// 可用集合异步就绪后收窄：表单打开时若当前指标已不可选，自动换一个可用指标
+watch(availableMetricKeys, (keys) => {
+  if (!showRuleForm.value || keys.some((info) => info.key === formMetricKey.value)) {
+    return
+  }
+  formMetricKey.value = keys[0]?.key ?? ''
+  onFormMetricChange()
 })
 
 async function loadSettings(): Promise<void> {
@@ -135,8 +188,9 @@ async function onSaveNapcat(): Promise<void> {
 function openRuleForm(): void {
   formScope.value = 'global'
   formTargetId.value = targets.value[0]?.id ?? null
-  formMetricKey.value = metricKeys.value[0]?.key ?? ''
+  // 先定规则类型再选默认指标：可用指标受既有同类型规则冲突过滤
   formRuleType.value = ruleTypes.value[0]?.typeId ?? ''
+  formMetricKey.value = availableMetricKeys.value[0]?.key ?? ''
   formError.value = ''
   showRuleForm.value = true
 }
@@ -303,10 +357,11 @@ function parameterText(rule: AlertRule): string {
 onMounted(async () => {
   try {
     await Promise.all([loadSettings(), loadQueue(), listRuleTypes().then((types) => (ruleTypes.value = types))])
-    const [targetList, keys, ruleList] = await Promise.all([listTargets(), listMetricKeys(), listAlertRules()])
+    const [targetList, keys, ruleList] = await Promise.all([listCollectors(), listMetricKeys(), listAlertRules()])
     targets.value = targetList
     metricKeys.value = keys
     rules.value = ruleList
+    await loadAvailableMetrics()
   } catch (e) {
     rulesError.value = e instanceof Error ? e.message : '告警规则加载失败'
   } finally {

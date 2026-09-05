@@ -13,8 +13,20 @@ public static class AgentMessageTypes
     public const string AuthError = "auth.error";
     public const string Heartbeat = "heartbeat";
 
+    /// <summary>能力声明：agent 认证成功后主动上报，payload 为字符串数组（如 ["metrics","terminal"]）；未上报 = 未声明（旧版兼容）。</summary>
+    public const string AgentCapabilities = "agent.capabilities";
+
     /// <summary>指标上报：agent 周期采集的 CPU/内存/磁盘/网络快照（指标 issue 使用）。</summary>
     public const string MetricsReport = "metrics.report";
+
+    /// <summary>指标按需查询请求：面板 → agent，payload 为空对象；agent 即时采样一次后回 metrics.latest.response（seq 沿用请求）。</summary>
+    public const string MetricsLatestRequest = "metrics.latest.request";
+
+    /// <summary>指标按需查询响应：agent → 面板，负载结构与 metrics.report 一致；seq 沿用请求（三期模块3 按需查询）。</summary>
+    public const string MetricsLatestResponse = "metrics.latest.response";
+
+    /// <summary>指标按需查询错误：agent → 面板（采样失败等），payload {message}；seq 沿用请求。</summary>
+    public const string MetricsError = "metrics.error";
 
     /// <summary>指标上报前缀（预留，指标 issue 使用，如 metrics.report）。</summary>
     public const string MetricsPrefix = "metrics.";
@@ -63,6 +75,29 @@ public static class AgentMessageTypes
 
     /// <summary>日志拉取前缀（日志 issue 使用：logs.services.request/response、logs.tail.request/response、logs.error）。</summary>
     public const string LogsPrefix = "logs.";
+
+    /// <summary>控制下发请求：面板 → agent，payload {key, type, params}；agent 回 ctrl.invoke.response（seq 沿用请求）。</summary>
+    public const string ControlInvokeRequest = "ctrl.invoke.request";
+
+    /// <summary>控制下发成功回执：agent → 面板，payload {message?}；seq 沿用请求（三期模块4 控制器）。</summary>
+    public const string ControlInvokeResponse = "ctrl.invoke.response";
+
+    /// <summary>控制下发错误：agent → 面板（控制器不存在/类型无执行器/执行失败等），payload {message}；seq 沿用请求。</summary>
+    public const string ControlError = "ctrl.error";
+
+    /// <summary>控制通道前缀（三期模块4 控制器使用：ctrl.invoke.request/response、ctrl.error）。</summary>
+    public const string ControlPrefix = "ctrl.";
+}
+
+/// <summary>agent.capabilities 内置能力名（三期模块2 起上报；具体能力类型由模块 3/4 扩充）。</summary>
+public static class AgentCapabilityNames
+{
+    public const string Metrics = "metrics";
+    public const string Terminal = "terminal";
+    public const string Logs = "logs";
+
+    /// <summary>控制器能力（三期模块4）：声明了控制器的 agent 上报，控制器实体随能力声明一并上报。</summary>
+    public const string Controllers = "controllers";
 }
 
 /// <summary>WebSocket 关闭码：4000-4999 为应用自定义区段，agent 依据关闭码决定是否/如何重连。</summary>
