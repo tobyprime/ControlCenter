@@ -67,6 +67,17 @@ public class DeviceInteractionModeCatalogTests : IDisposable
     }
 
     [Fact]
+    public void Service_Target_Declares_No_Modes()
+    {
+        // 服务目标无 agent 回连通道：不声明任何交互模式（集成审查 round 1 问题 1）
+        var targets = new TargetRegistry(_db.Factory, _clock);
+        var serviceId = targets.Create(TargetTypes.Service, "探针服务", []).Target.Id;
+        var catalog = new DeviceInteractionModeCatalog(targets);
+
+        Assert.Empty(catalog.GetDeclaredModeKeys(serviceId));
+    }
+
+    [Fact]
     public void Unknown_Target_Returns_Empty_Declaration()
     {
         var catalog = new DeviceInteractionModeCatalog(new TargetRegistry(_db.Factory, _clock));
