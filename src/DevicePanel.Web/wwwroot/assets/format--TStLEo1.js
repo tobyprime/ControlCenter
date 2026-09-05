@@ -1,0 +1,1 @@
+function i(e){const t=["B","KB","MB","GB","TB"];let n=e,r=0;for(;Math.abs(n)>=1024&&r<t.length-1;)n/=1024,r+=1;return`${r===0?Math.round(n):n.toFixed(1)} ${t[r]}`}function u(e){if(e==="B/s")return t=>`${i(t)}/s`;if(e==="B")return t=>i(t)}export{u as b,i as h};

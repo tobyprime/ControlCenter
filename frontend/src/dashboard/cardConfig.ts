@@ -1,4 +1,5 @@
 import type { MetricKeyInfo, MetricValueType } from '@/api/metrics'
+import { byteUnitFormatter } from '@/utils/format'
 
 // TOB-368 指标卡：三类卡片按 metric 值类型渲染（约束 A：核心语义中立，
 // 新增一种指标 = 注册 key + 类型，卡片无需改核心逻辑）。
@@ -98,22 +99,11 @@ export function metricCardStateText(input: {
   return ''
 }
 
-function humanizeBytes(value: number): string {
-  const units = ['B', 'KB', 'MB', 'GB', 'TB']
-  let current = value
-  let index = 0
-  while (Math.abs(current) >= 1024 && index < units.length - 1) {
-    current /= 1024
-    index += 1
-  }
-  return `${index === 0 ? Math.round(current) : current.toFixed(1)} ${units[index]}`
-}
-
-/** 指标数值展示：字节类单位人性化换算，其余最多一位小数并附单位（与指标曲线页口径一致）。 */
+/** 指标数值展示：字节类单位走共享字节格式化（utils/format 单一事实源），其余最多一位小数并附单位。 */
 export function formatMetricValue(value: number, unit: string): string {
-  if (unit === 'B' || unit === 'B/s') {
-    const text = humanizeBytes(value)
-    return unit === 'B/s' ? `${text}/s` : text
+  const byteFormat = byteUnitFormatter(unit)
+  if (byteFormat) {
+    return byteFormat(value)
   }
   const rounded = Math.abs(value) >= 100 ? Math.round(value).toString() : (Math.round(value * 10) / 10).toString()
   return unit ? `${rounded} ${unit}` : rounded
