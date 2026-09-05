@@ -12,6 +12,8 @@ type SessionState = 'idle' | 'connecting' | 'open' | 'closed' | 'error'
 
 const route = useRoute()
 const devices = ref<Device[]>([])
+// 终端入口仅服务 device 目标（agent 回连通道）：service 目标无 shell 声明，不进可连接下拉（集成审查问题 1）
+const connectableDevices = computed(() => devices.value.filter((device) => device.type === 'device'))
 const selectedDeviceId = ref<number | null>(null)
 const sessionState = ref<SessionState>('idle')
 const statusText = ref('选择一台在线设备，点击「打开终端」。')
@@ -206,7 +208,7 @@ onMounted(async () => {
   await refresh()
   // 支持 /terminal?device=<id> 深链：目标详情页交互入口可直接跳入对应模式
   const requested = Number(route.query.device)
-  if (Number.isFinite(requested) && devices.value.some((d) => d.id === requested)) {
+  if (Number.isFinite(requested) && connectableDevices.value.some((d) => d.id === requested)) {
     selectedDeviceId.value = requested
   }
 })
@@ -226,7 +228,7 @@ onBeforeUnmount(() => {
       </div>
       <div class="terminal-controls">
         <select v-model.number="selectedDeviceId" class="device-select" :disabled="sessionState === 'open'">
-          <option v-for="device in devices" :key="device.id" :value="device.id" :disabled="!device.online">
+          <option v-for="device in connectableDevices" :key="device.id" :value="device.id" :disabled="!device.online">
             {{ device.name }}（{{ device.online ? '在线' : '离线' }}）
           </option>
         </select>
@@ -253,7 +255,7 @@ onBeforeUnmount(() => {
     <div v-show="termHost && (sessionState === 'connecting' || sessionState === 'open')" ref="termHost" class="term-host"></div>
 
     <div v-if="loading" class="empty-state">加载中…</div>
-    <div v-else-if="devices.length === 0" class="empty-state">
+    <div v-else-if="connectableDevices.length === 0" class="empty-state">
       还没有可连接的设备。先在「设备管理」登记设备并接入 agent。
     </div>
     <div v-else-if="sessionState === 'idle' || sessionState === 'closed' || sessionState === 'error'" class="empty-state">
