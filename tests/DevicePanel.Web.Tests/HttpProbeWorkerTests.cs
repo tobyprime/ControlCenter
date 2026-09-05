@@ -48,7 +48,7 @@ public class HttpProbeWorkerTests : IDisposable
         _worker = new HttpProbeWorker(
             _targets, _configs, _client, _metricKeys, _metrics, _engine, new ProbeOptions(), _clock,
             Microsoft.Extensions.Logging.Abstractions.NullLogger<HttpProbeWorker>.Instance);
-        _targetId = _targets.Create(TargetTypes.Service, "MC 服务", ["游戏"]).Target.Id;
+        _targetId = _targets.Create(TargetTypes.Service, "MC 服务", ["游戏"]).Id;
 
         foreach (var seeded in _rules.List())
         {

@@ -28,7 +28,7 @@ public class TerminalRelayTests : IDisposable
         _store = new TerminalStore(_database.Factory);
         // terminal_sessions.device_id 带 FK：留痕测试需真实设备行
         var targets = new TargetRegistry(_database.Factory, _clock);
-        _deviceId = targets.Create(TargetTypes.Device, "中继测试设备", []).Target.Id;
+        _deviceId = targets.Create(TargetTypes.Device, "中继测试设备", []).Id;
     }
 
     public void Dispose() => _database.Dispose();

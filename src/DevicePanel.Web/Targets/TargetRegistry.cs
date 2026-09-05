@@ -1,4 +1,3 @@
-using System.Security.Cryptography;
 using System.Text.Json;
 using DevicePanel.Web.Infrastructure;
 using Microsoft.Data.Sqlite;
@@ -28,36 +27,29 @@ public sealed record TargetInfo(
         LastSeenAtUtc is { } lastSeen && clock.GetUtcNow() - lastSeen <= options.OfflineAfter;
 }
 
-public sealed record TargetCreated(TargetInfo Target, string AgentToken);
-
 /// <summary>
-/// 目标台账（设备与服务统一实体，二期模块0）：CRUD 与 agent token 签发/重置。
-/// token 明文只在创建/重置时返回一次，库中仅存 SHA-256(token)；重置即覆盖唯一 hash，旧 token 立即失效。
-/// service 类目标不走 agent 通道，token 仅占位。
+/// 目标台账（设备与服务统一实体，二期模块0）：CRUD。
+/// 三期模块2起 token 归 agent 实体所有：device 目标创建时携带关联 agentId（token hash 由 agents 表平移为镜像），
+/// service 目标无 agent 通道，agent_token_hash 仅占位。token 认证只查 agents 表，本表不再参与。
 /// </summary>
 public interface ITargetRegistry
 {
-    TargetCreated Create(string type, string name, IReadOnlyList<string> tags);
+    /// <summary>创建目标。device 型传入关联 agentId（token hash 镜像其值）；service 型 agentId 为空（占位 hash）。</summary>
+    TargetInfo Create(string type, string name, IReadOnlyList<string> tags, long? agentId = null);
 
     TargetInfo? Update(long id, string name, IReadOnlyList<string> tags);
 
     bool Delete(long id);
 
-    string? ResetToken(long id);
-
     TargetInfo? Get(long id);
 
     IReadOnlyList<TargetInfo> List();
-
-    long? FindTargetIdByToken(string token);
 
     void Touch(long targetId, DateTimeOffset seenAtUtc);
 }
 
 public sealed class TargetRegistry : ITargetRegistry
 {
-    public const string TokenTypePrefix = "dpk_";
-
     private readonly SqliteConnectionFactory _connectionFactory;
     private readonly TimeProvider _timeProvider;
 
@@ -67,22 +59,25 @@ public sealed class TargetRegistry : ITargetRegistry
         _timeProvider = timeProvider;
     }
 
-    public TargetCreated Create(string type, string name, IReadOnlyList<string> tags)
+    public TargetInfo Create(string type, string name, IReadOnlyList<string> tags, long? agentId = null)
     {
         var nowUtc = _timeProvider.GetUtcNow();
-        var token = GenerateToken();
         using var connection = _connectionFactory.CreateOpenConnection();
         long id;
         using (var command = connection.CreateCommand())
         {
+            // device 型目标：token hash 镜像关联 agent 的值（子查询）并落 agent_id 关联列；service 型目标无 agent，占位 hash 满足历史 NOT NULL UNIQUE 约束
             command.CommandText = """
-                INSERT INTO targets(type, name, tags_json, agent_token_hash, created_at_utc, updated_at_utc)
-                VALUES ($type, $name, $tags, $tokenHash, $createdAt, $updatedAt)
+                INSERT INTO targets(type, name, tags_json, agent_token_hash, agent_id, created_at_utc, updated_at_utc)
+                VALUES ($type, $name, $tags,
+                        COALESCE((SELECT token_hash FROM agents WHERE id = $agentId), $placeholderHash),
+                        $agentId, $createdAt, $updatedAt)
                 """;
             command.Parameters.AddWithValue("$type", type);
             command.Parameters.AddWithValue("$name", name);
             command.Parameters.AddWithValue("$tags", SerializeTags(tags));
-            command.Parameters.AddWithValue("$tokenHash", HashToken(token));
+            command.Parameters.AddWithValue("$agentId", agentId ?? (object)DBNull.Value);
+            command.Parameters.AddWithValue("$placeholderHash", AgentToken.Hash(AgentToken.Generate()));
             command.Parameters.AddWithValue("$createdAt", FormatUtc(nowUtc));
             command.Parameters.AddWithValue("$updatedAt", FormatUtc(nowUtc));
             command.ExecuteNonQuery();
@@ -92,8 +87,7 @@ public sealed class TargetRegistry : ITargetRegistry
         selectId.CommandText = "SELECT last_insert_rowid()";
         id = (long)(selectId.ExecuteScalar() ?? 0L);
 
-        var target = new TargetInfo(id, type, name, tags.ToArray(), nowUtc, nowUtc, null);
-        return new TargetCreated(target, token);
+        return new TargetInfo(id, type, name, tags.ToArray(), nowUtc, nowUtc, null);
     }
 
     public TargetInfo? Update(long id, string name, IReadOnlyList<string> tags)
@@ -126,22 +120,6 @@ public sealed class TargetRegistry : ITargetRegistry
         return command.ExecuteNonQuery() > 0;
     }
 
-    public string? ResetToken(long id)
-    {
-        var nowUtc = _timeProvider.GetUtcNow();
-        var token = GenerateToken();
-        using var connection = _connectionFactory.CreateOpenConnection();
-        using var command = connection.CreateCommand();
-        command.CommandText = """
-            UPDATE targets SET agent_token_hash = $tokenHash, updated_at_utc = $updatedAt
-            WHERE id = $id;
-            """;
-        command.Parameters.AddWithValue("$tokenHash", HashToken(token));
-        command.Parameters.AddWithValue("$updatedAt", FormatUtc(nowUtc));
-        command.Parameters.AddWithValue("$id", id);
-        return command.ExecuteNonQuery() == 0 ? null : token;
-    }
-
     public TargetInfo? Get(long id)
     {
         using var connection = _connectionFactory.CreateOpenConnection();
@@ -171,20 +149,6 @@ public sealed class TargetRegistry : ITargetRegistry
         }
 
         return targets;
-    }
-
-    public long? FindTargetIdByToken(string token)
-    {
-        if (string.IsNullOrEmpty(token))
-        {
-            return null;
-        }
-
-        using var connection = _connectionFactory.CreateOpenConnection();
-        using var command = connection.CreateCommand();
-        command.CommandText = "SELECT id FROM targets WHERE agent_token_hash = $tokenHash";
-        command.Parameters.AddWithValue("$tokenHash", HashToken(token));
-        return command.ExecuteScalar() as long?;
     }
 
     public void Touch(long targetId, DateTimeOffset seenAtUtc)
@@ -222,14 +186,6 @@ public sealed class TargetRegistry : ITargetRegistry
         {
             return [];
         }
-    }
-
-    private static string GenerateToken() => TokenTypePrefix + Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
-
-    private static string HashToken(string token)
-    {
-        var bytes = SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(token));
-        return Convert.ToHexString(bytes);
     }
 
     private static string FormatUtc(DateTimeOffset value) => value.ToString("O");

@@ -174,6 +174,8 @@ public class LogQueryServiceTests
 
         public long DeviceId { get; }
 
+        public long AgentId => 0;
+
         public bool IsOpen => true;
 
         public List<AgentEnvelope> Sent { get; } = new();

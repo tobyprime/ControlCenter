@@ -33,6 +33,13 @@ public sealed class MetricsMessageHandler : IAgentMessageHandler
 
     public Task HandleAsync(AgentChannelContext context, CancellationToken cancellationToken)
     {
+        // 未关联目标的 agent（模块2）：连接受理但指标暂不入库（无 target 维度的存储键；模块3接入 agent 维度管道）
+        if (context.Channel.DeviceId <= 0)
+        {
+            _logger.LogInformation("未关联目标的 Agent {AgentId} 上报指标已忽略（seq={Seq}）", context.Channel.AgentId, context.Seq);
+            return Task.CompletedTask;
+        }
+
         var receivedAtUtc = _clock.GetUtcNow();
         if (!MetricsPayloadReader.TryParse(context.Payload, receivedAtUtc, out var samples))
         {

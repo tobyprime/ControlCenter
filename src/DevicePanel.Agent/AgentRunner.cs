@@ -23,6 +23,7 @@ namespace DevicePanel.Agent;
 [JsonSerializable(typeof(LogsServicesPayload))]
 [JsonSerializable(typeof(LogsTailPayload))]
 [JsonSerializable(typeof(LogsErrorPayload))]
+[JsonSerializable(typeof(string[]))]
 internal sealed partial class AgentJsonContext : JsonSerializerContext;
 
 internal sealed record AuthPayload(string Token);
@@ -180,6 +181,21 @@ public sealed class AgentRunner
         // 节拍发送也经 downlink 走同一把发送锁（ClientWebSocket 不允许并发发送）
         ITerminalChannel? channel = _terminalChannelFactory?.Invoke(downlink);
         ILogsChannel? logsChannel = _logsChannelFactory?.Invoke(downlink);
+
+        // 能力声明（三期模块2）：认证成功后上报本连接实际可提供的通道，面板持久化并在管理页展示
+        var capabilities = new List<string> { AgentCapabilityNames.Metrics };
+        if (channel is not null)
+        {
+            capabilities.Add(AgentCapabilityNames.Terminal);
+        }
+
+        if (logsChannel is not null)
+        {
+            capabilities.Add(AgentCapabilityNames.Logs);
+        }
+
+        await downlink.SendAsync(AgentMessageTypes.AgentCapabilities,
+            capabilities.ToArray(), AgentJsonContext.Default.StringArray, cancellationToken).ConfigureAwait(false);
         try
         {
             await MessageLoopAsync(socket, downlink, channel, logsChannel, startedAt, cancellationToken).ConfigureAwait(false);

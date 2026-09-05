@@ -37,7 +37,7 @@ public class TargetStatusScannerTests : IDisposable
         _scanner = new TargetStatusScanner(
             _targets, _metrics, _engine, _agentOptions, new AlertOptions(), _clock,
             Microsoft.Extensions.Logging.Abstractions.NullLogger<TargetStatusScanner>.Instance);
-        _targetId = _targets.Create(TargetTypes.Device, "在线设备", []).Target.Id;
+        _targetId = _targets.Create(TargetTypes.Device, "在线设备", []).Id;
 
         // 清空迁移播种的内置规则：只保留用例自建的状态不符规则，断言不串扰
         foreach (var seeded in _rules.List())
@@ -129,7 +129,7 @@ public class TargetStatusScannerTests : IDisposable
     [Fact]
     public void Service_Targets_Are_Ignored()
     {
-        var serviceId = _targets.Create(TargetTypes.Service, "MC 服务", []).Target.Id;
+        var serviceId = _targets.Create(TargetTypes.Service, "MC 服务", []).Id;
         _targets.Touch(serviceId, _clock.GetUtcNow().AddHours(-1));
 
         _scanner.ScanOnce();

@@ -17,7 +17,7 @@ public class MetricsStoreTests : IDisposable
     {
         _targets = new TargetRegistry(_database.Factory, _clock);
         _store = new MetricsStore(_database.Factory);
-        _targetId = _targets.Create(TargetTypes.Device, "指标设备", []).Target.Id;
+        _targetId = _targets.Create(TargetTypes.Device, "指标设备", []).Id;
     }
 
     public void Dispose() => _database.Dispose();
@@ -94,7 +94,7 @@ public class MetricsStoreTests : IDisposable
     [Fact]
     public void ListReportedKeys_And_ListTargetsReporting_Support_Registry_Queries()
     {
-        var otherId = _targets.Create(TargetTypes.Device, "另一台", []).Target.Id;
+        var otherId = _targets.Create(TargetTypes.Device, "另一台", []).Id;
         var now = _clock.GetUtcNow();
         _store.Insert(_targetId, MetricKeys.Cpu, Sample(now, 10));
         _store.Insert(_targetId, MetricKeys.Online, new MetricSample(now, 1, "true"));
@@ -112,7 +112,7 @@ public class MetricsStoreTests : IDisposable
     {
         var inRange = new DateTimeOffset(2026, 9, 3, 10, 0, 0, TimeSpan.Zero);
         var tooEarly = new DateTimeOffset(2026, 9, 3, 9, 0, 0, TimeSpan.Zero);
-        var otherTargetId = _targets.Create(TargetTypes.Device, "另一台", []).Target.Id;
+        var otherTargetId = _targets.Create(TargetTypes.Device, "另一台", []).Id;
 
         _store.Insert(_targetId, MetricKeys.Cpu, Sample(tooEarly, 1));
         _store.Insert(_targetId, MetricKeys.Cpu, Sample(inRange, 2));

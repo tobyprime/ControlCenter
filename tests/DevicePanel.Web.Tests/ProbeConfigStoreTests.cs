@@ -19,7 +19,7 @@ public class ProbeConfigStoreTests : IDisposable
     {
         _targets = new TargetRegistry(_db.Factory, _clock);
         _store = new ProbeConfigStore(_db.Factory, _clock);
-        _targetId = _targets.Create(TargetTypes.Service, "MC 服务", ["游戏"]).Target.Id;
+        _targetId = _targets.Create(TargetTypes.Service, "MC 服务", ["游戏"]).Id;
     }
 
     public void Dispose() => _db.Dispose();
@@ -64,7 +64,7 @@ public class ProbeConfigStoreTests : IDisposable
     [Fact]
     public void List_Returns_Configs_For_All_Service_Targets()
     {
-        var otherId = _targets.Create(TargetTypes.Service, "另一个服务", []).Target.Id;
+        var otherId = _targets.Create(TargetTypes.Service, "另一个服务", []).Id;
         _store.Save(_targetId, "https://a.example.com", 30, []);
         _store.Save(otherId, "https://b.example.com", 60, []);
 
