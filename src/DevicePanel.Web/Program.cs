@@ -78,6 +78,14 @@ builder.Services.AddSingleton(metricsOptions);
 builder.Services.AddSingleton<IMetricKeyRegistry, MetricKeyRegistry>();
 builder.Services.AddSingleton<IMetricsStore, MetricsStore>();
 builder.Services.AddSingleton<IAgentMessageHandler, MetricsMessageHandler>();
+// 按需查询（三期模块3）：最新值经 metrics.latest.request 下行 agent 即时采样（pull 采集器直读存储），与日志同一请求-响应模式
+builder.Services.AddSingleton<MetricsQueryService>();
+builder.Services.AddSingleton<IAgentMessageHandler, MetricsLatestResponseHandler>();
+builder.Services.AddSingleton<IAgentMessageHandler, MetricsQueryErrorHandler>();
+// 采集器数据类型注册表（验收8）：新增数据类型 = 注册一个 ICollectorDataType 实现
+builder.Services.AddSingleton<ICollectorDataType, MetricsDataType>();
+builder.Services.AddSingleton<ICollectorDataType, LogsDataType>();
+builder.Services.AddSingleton<CollectorDataTypeCatalog>();
 
 // 告警规则化（约束 B）：规则实例（可插拔规则类型）→ 评估引擎 → 渠道抽象 → 本地待发队列断线补发（无丢失）
 var alertOptions = new AlertOptions();
@@ -170,6 +178,7 @@ app.MapAgentEndpoints();
 app.MapCollectorEndpoints();
 app.MapPullCollectorEndpoints();
 app.MapMetricsEndpoints();
+app.MapMetricsLatestEndpoints();
 app.MapAlertEndpoints();
 app.MapDashboardEndpoints();
 app.MapTerminalEndpoints();

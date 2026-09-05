@@ -19,6 +19,15 @@ public static class AgentMessageTypes
     /// <summary>指标上报：agent 周期采集的 CPU/内存/磁盘/网络快照（指标 issue 使用）。</summary>
     public const string MetricsReport = "metrics.report";
 
+    /// <summary>指标按需查询请求：面板 → agent，payload 为空对象；agent 即时采样一次后回 metrics.latest.response（seq 沿用请求）。</summary>
+    public const string MetricsLatestRequest = "metrics.latest.request";
+
+    /// <summary>指标按需查询响应：agent → 面板，负载结构与 metrics.report 一致；seq 沿用请求（三期模块3 按需查询）。</summary>
+    public const string MetricsLatestResponse = "metrics.latest.response";
+
+    /// <summary>指标按需查询错误：agent → 面板（采样失败等），payload {message}；seq 沿用请求。</summary>
+    public const string MetricsError = "metrics.error";
+
     /// <summary>指标上报前缀（预留，指标 issue 使用，如 metrics.report）。</summary>
     public const string MetricsPrefix = "metrics.";
 

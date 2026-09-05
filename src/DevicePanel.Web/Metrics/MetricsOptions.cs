@@ -10,4 +10,7 @@ public sealed class MetricsOptions
 
     /// <summary>过期清理任务的执行间隔（分钟），默认 6 小时。</summary>
     public int CleanupIntervalMinutes { get; set; } = 360;
+
+    /// <summary>按需查询（metrics.latest）等待 agent 响应的超时秒数，默认 10 秒。</summary>
+    public int RequestTimeoutSeconds { get; set; } = 10;
 }

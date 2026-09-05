@@ -49,6 +49,10 @@ public static class CollectorEndpoints
     {
         var collectors = endpoints.MapGroup("/api/collectors");
 
+        // 数据类型清单（验收8）：DI 收集的 ICollectorDataType 全集；新增数据类型 = 注册实现，核心管道零改动
+        collectors.MapGet("/data-types", (CollectorDataTypeCatalog catalog) =>
+            Results.Ok(catalog.List().Select(t => new { key = t.Key, displayName = t.DisplayName })));
+
         collectors.MapGet("/", (ICollectorRegistry registry, IAgentRegistry agents, AgentOptions options, TimeProvider clock, IMetricsStore metrics) =>
             Results.Ok(registry.List().Select(c => ToResponse(c, agents, options, clock, metrics))));
 

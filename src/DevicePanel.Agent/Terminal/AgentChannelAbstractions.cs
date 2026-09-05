@@ -122,6 +122,19 @@ internal sealed class AgentDownlink : IAgentDownlink, ILogsDownlink
                 JsonSerializer.SerializeToElement(new LogsErrorPayload(message), AgentJsonContext.Default.LogsErrorPayload)),
             cancellationToken);
 
+    // metrics.latest.* 响应按请求 seq 回包（请求-响应关联，与 logs.* 一致）
+    public Task SendMetricsLatestResponseAsync(long seq, MetricsPayload payload, CancellationToken cancellationToken) =>
+        SendCoreAsync(AgentMessageTypes.MetricsLatestResponse,
+            () => AgentEnvelope.Create(AgentMessageTypes.MetricsLatestResponse, seq,
+                JsonSerializer.SerializeToElement(payload, AgentJsonContext.Default.MetricsPayload)),
+            cancellationToken);
+
+    public Task SendMetricsErrorAsync(long seq, string message, CancellationToken cancellationToken) =>
+        SendCoreAsync(AgentMessageTypes.MetricsError,
+            () => AgentEnvelope.Create(AgentMessageTypes.MetricsError, seq,
+                JsonSerializer.SerializeToElement(new LogsErrorPayload(message), AgentJsonContext.Default.LogsErrorPayload)),
+            cancellationToken);
+
     private Task SendCoreAsync(string type, Func<AgentEnvelope> envelopeFactory, CancellationToken ct) =>
         SendCoreAsync(type, _ => envelopeFactory(), ct, throwWhenClosed: false);
 
