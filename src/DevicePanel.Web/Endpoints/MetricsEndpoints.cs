@@ -172,6 +172,22 @@ public static class MetricsEndpoints
             return Results.Ok(items);
         });
 
+        // 按来源可用指标（TOB-374 ①）：优先该来源已上报且已注册的 key；无上报数据时按目标类型回退到内置 key
+        metrics.MapGet("/{targetId:long}/available", (long targetId, IMetricsStore store, IMetricKeyRegistry registry, ITargetRegistry targets) =>
+        {
+            var target = targets.Get(targetId);
+            if (target is null)
+            {
+                return Results.NotFound(new { error = "目标不存在" });
+            }
+
+            var reported = store.ListReportedKeys(targetId).Where(key => registry.Get(key) is not null).ToList();
+            var keys = reported.Count > 0
+                ? reported
+                : MetricKeys.ForTargetType(target.Type).Where(key => registry.Get(key) is not null).ToList();
+            return Results.Ok(keys.Select(key => ToKeyResponse(registry.Get(key)!)));
+        });
+
         metrics.MapGet("/{targetId:long}/series", (
             long targetId,
             [FromQuery] string? keys,

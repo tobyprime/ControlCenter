@@ -97,6 +97,11 @@ export function fetchTargetOverview(targetId: number): Promise<MetricOverviewIte
   return request<MetricOverviewItem[]>(`/api/metrics/${targetId}/overview`)
 }
 
+/** 按来源可用指标（TOB-374 ①）：优先该来源已上报的 key，无上报数据回退到按类型的内置 key。 */
+export function fetchTargetAvailableMetrics(targetId: number): Promise<MetricKeyInfo[]> {
+  return request<MetricKeyInfo[]>(`/api/metrics/${targetId}/available`)
+}
+
 export async function fetchTargetSeries(
   targetId: number,
   keys: string[],

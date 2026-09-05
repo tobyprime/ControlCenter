@@ -372,9 +372,17 @@ test.describe('主页指标卡（TOB-368）', () => {
     return [{ key, points }]
   }
 
-  // 指标管道 mock：keys 注册表 / 指标概览 / 序列查询（序列 URL 捕获供时间窗断言）
+  // 指标管道 mock：keys 注册表 / 按来源可用指标 / 指标概览 / 序列查询（序列 URL 捕获供时间窗断言）
   async function mockMetricApis(page: Page, options?: { overviewEmpty?: boolean }) {
     await page.route('**/api/metrics/keys', (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify(METRIC_KEYS),
+      }),
+    )
+    // 按来源可用指标（TOB-374 ①）：mock 目标（真实创建的设备）与失效目标 999 都返回同一注册表
+    await page.route('**/api/metrics/*/available', (route) =>
       route.fulfill({
         status: 200,
         contentType: 'application/json',
@@ -552,7 +560,8 @@ test.describe('主页指标卡（TOB-368）', () => {
     // 而 mock 恰好掩盖过 order/sort 契约断裂——本用例锁真实 PUT→GET→刷新往返
     await login(page)
 
-    // 建唯一名目标并从真实注册表取一个 number 指标（内置 key 随迁移播种，必在）
+    // 建唯一名目标并从该目标真实可用指标里取一个 number 指标
+    //（TOB-374 ①口径：表单指标下拉按 /available 过滤，从全量注册表取值可能与选项集脱节）
     // 目标名避开「指标/目标/时间窗」等表单标签词：getByLabel 为子串匹配，
     // 名词混入选项文本会污染其他下拉的可访问名（真实教训：指标卡机 → strict 冲突）
     const created = await page.request.post('/api/targets', {
@@ -560,7 +569,9 @@ test.describe('主页指标卡（TOB-368）', () => {
     })
     expect(created.ok()).toBe(true)
     const target = (await created.json()) as { id: number }
-    const keys = (await (await page.request.get('/api/metrics/keys')).json()) as Array<{
+    const keys = (await (
+      await page.request.get(`/api/metrics/${target.id}/available`)
+    ).json()) as Array<{
       key: string
       valueType: string
       displayName: string
@@ -632,5 +643,148 @@ test.describe('主页指标卡（TOB-368）', () => {
     await expect(card.getByText('指标已不存在')).toHaveCount(0)
     // 页面不崩：概览卡正常渲染
     await expect(cardLocator(page, 'overview-total-devices')).toBeVisible()
+  })
+
+  test('查看态指标卡标题「来源 · 指标」，类型文案只在编辑态；概览卡不受影响（TOB-374 ③）', async ({
+    page,
+  }) => {
+    await mockLayoutApi(page)
+    await mockMetricApis(page)
+    await mockSeriesApi(page)
+    await login(page)
+    await createDevicesViaApi(page, 1)
+    await page.reload()
+
+    await page.getByRole('button', { name: '进入编辑' }).click()
+    await page.getByRole('button', { name: '添加「数值卡」' }).click()
+    const valueCard = cardLocator(page, 'metric-value')
+    await configureCard(valueCard, '主页概览机 1', '在线玩家（player.count）', '')
+    // 编辑态：卡片类型文案可见
+    await expect(valueCard.locator('.overview-label')).toHaveText('数值卡')
+    await page.getByRole('button', { name: '保存布局' }).click()
+
+    // 查看态：标题为「来源名 · 指标名」，不再出现卡片类型文案
+    await expect(valueCard.locator('.overview-label')).toHaveText('主页概览机 1 · 在线玩家')
+    await expect(valueCard).not.toContainText('数值卡')
+    await page.screenshot({ path: `${EVIDENCE_DIR}/home-metric-card-title.png`, fullPage: true })
+
+    // 一期概览卡标题保持类型文案，不受指标卡标题规则影响
+    await expect(cardLocator(page, 'overview-total-devices').locator('.overview-label')).toHaveText('设备总数')
+
+    // 重新进入编辑：类型文案恢复展示
+    await page.getByRole('button', { name: '进入编辑' }).click()
+    await expect(valueCard.locator('.overview-label')).toHaveText('数值卡')
+  })
+})
+
+test.describe('指标来源过滤与移动端抽屉导航（TOB-374）', () => {
+  test('卡片配置指标下拉按来源过滤：设备无服务指标，服务无设备指标，切换来源清空已选指标（验收 1）', async ({
+    page,
+  }) => {
+    await login(page)
+
+    // 设备目标（无上报数据 → 回退内置设备指标）；服务目标带探针（可用集合为内置服务指标
+    // 或探针已上报的 status，随后台探针节奏而变，断言只锁「不含设备指标」方向）
+    const device = await page.request.post('/api/targets', {
+      data: { name: 'TOB374设备机', tags: [] },
+    })
+    expect(device.ok()).toBeTruthy()
+    const service = await page.request.post('/api/targets', {
+      data: {
+        type: 'service',
+        name: 'TOB374服务机',
+        tags: [],
+        probe: {
+          url: 'http://127.0.0.1:1/health',
+          intervalSeconds: 60,
+          mappings: [
+            { metricKey: 'latency_ms', jsonPath: '$.latency', valueType: 'number', displayName: '响应时间', unit: 'ms' },
+          ],
+        },
+      },
+    })
+    expect(service.ok()).toBeTruthy()
+
+    await page.reload()
+    await page.getByRole('button', { name: '进入编辑' }).click()
+    await page.getByRole('button', { name: '添加「数值卡」' }).click()
+    const card = cardLocator(page, 'metric-value')
+    const metricSelect = card.getByLabel('指标')
+
+    // 设备来源：出现设备内置指标，不出现服务指标（status / latency_ms）
+    await card.getByLabel('目标').selectOption({ label: 'TOB374设备机' })
+    await expect
+      .poll(async () => (await metricSelect.locator('option').allTextContents()).join('\n'))
+      .not.toContain('latency_ms')
+    const deviceOptions = (await metricSelect.locator('option').allTextContents()).join('\n')
+    expect(deviceOptions).toContain('cpu')
+    expect(deviceOptions).toContain('online')
+    expect(deviceOptions).not.toContain('status')
+    await page.screenshot({ path: `${EVIDENCE_DIR}/home-metric-source-filter-device.png`, fullPage: true })
+
+    // 服务来源：不含设备指标；切换来源后原指标被清空，需按新来源重选
+    await metricSelect.selectOption({ label: 'CPU 使用率（cpu）' })
+    await card.getByLabel('目标').selectOption({ label: 'TOB374服务机' })
+    await expect(metricSelect).toHaveValue('')
+    await expect
+      .poll(async () => (await metricSelect.locator('option').allTextContents()).join('\n'))
+      .not.toContain('cpu')
+    const serviceOptions = (await metricSelect.locator('option').allTextContents()).join('\n')
+    expect(serviceOptions).toContain('status')
+    expect(serviceOptions).not.toContain('online')
+    expect(serviceOptions).not.toContain('net')
+    await page.screenshot({ path: `${EVIDENCE_DIR}/home-metric-source-filter-service.png`, fullPage: true })
+  })
+
+  test('移动端（≤768px）侧栏变抽屉：汉堡打开、遮罩与路由跳转关闭；桌面端常驻侧栏不受影响（验收 2/4）', async ({
+    page,
+  }) => {
+    await login(page)
+
+    // 桌面端（默认 1280 视口 > 768）：侧栏常驻，无汉堡按钮
+    const sidebar = page.locator('.sidebar')
+    await expect(page.locator('.nav-toggle')).toBeHidden()
+    await expect(sidebar).toBeVisible()
+    expect((await sidebar.boundingBox())!.x).toBe(0)
+
+    // 移动端视口：侧栏收起为抽屉（滑出屏幕左缘），出现汉堡按钮
+    await page.setViewportSize({ width: 375, height: 667 })
+    await expect(page.locator('.nav-toggle')).toBeVisible()
+    await expect.poll(async () => (await sidebar.boundingBox())?.x).toBeLessThan(0)
+
+    // 汉堡打开抽屉 + 遮罩出现
+    await page.locator('.nav-toggle').click()
+    await expect(sidebar).toHaveClass(/open/)
+    await expect(page.locator('.sidebar-mask')).toHaveClass(/show/)
+    await expect.poll(async () => (await sidebar.boundingBox())?.x).toBe(0)
+    await page.screenshot({ path: `${EVIDENCE_DIR}/mobile-drawer-open.png` })
+
+    // 点遮罩关闭（点击点避开抽屉宽度，落在遮罩上）
+    await page.locator('.sidebar-mask').click({ position: { x: 340, y: 300 } })
+    await expect(sidebar).not.toHaveClass(/open/)
+    await expect.poll(async () => (await sidebar.boundingBox())?.x).toBeLessThan(0)
+
+    // 汉堡再开 → 点导航项：路由跳转且抽屉关闭（能到达导航页面）
+    await page.locator('.nav-toggle').click()
+    await expect(sidebar).toHaveClass(/open/)
+    await sidebar.getByRole('link', { name: '指标曲线' }).click()
+    await expect(page).toHaveURL(/\/metrics/)
+    await expect(page.getByRole('heading', { name: '指标曲线' })).toBeVisible()
+    await expect(sidebar).not.toHaveClass(/open/)
+    await expect.poll(async () => (await sidebar.boundingBox())?.x).toBeLessThan(0)
+    await page.screenshot({ path: `${EVIDENCE_DIR}/mobile-drawer-closed-after-route.png` })
+
+    // 再走一条导航路径：抽屉 → 告警规则
+    await page.locator('.nav-toggle').click()
+    await expect(sidebar).toHaveClass(/open/)
+    await sidebar.getByRole('link', { name: '告警规则' }).click()
+    await expect(page).toHaveURL(/\/alerts/)
+    await expect(sidebar).not.toHaveClass(/open/)
+
+    // 桌面端回归：恢复视口后侧栏常驻、汉堡隐藏
+    await page.setViewportSize({ width: 1280, height: 720 })
+    await expect(page.locator('.nav-toggle')).toBeHidden()
+    await expect(sidebar).toBeVisible()
+    await expect.poll(async () => (await sidebar.boundingBox())?.x).toBe(0)
   })
 })
