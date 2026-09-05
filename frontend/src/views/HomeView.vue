@@ -348,7 +348,7 @@ onBeforeUnmount(() => {
     <div class="home-header">
       <div>
         <h1 class="home-title">欢迎，{{ username || '管理员' }}</h1>
-        <p class="home-description">设备与目标、日志查看、终端交互、告警通知均已上线；主页概览支持自定义卡片布局与指标卡。</p>
+        <p class="home-description">采集器接入、日志查看、终端交互、告警通知均已上线；主页概览支持自定义卡片布局与指标卡。</p>
       </div>
       <button v-if="!editing" type="button" class="primary-button" @click="enterEdit">
         进入编辑

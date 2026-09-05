@@ -408,7 +408,7 @@ onBeforeUnmount(() => {
 
     <div v-if="loading" class="empty-state">加载中…</div>
     <div v-else-if="targets.length === 0" class="empty-state">
-      还没有目标。先到「目标管理」登记目标并接入 agent，指标数据会自动上报。
+      还没有采集器。先到「采集器」页登记采集器并接入 agent，指标数据会自动上报。
     </div>
     <template v-else>
       <p class="granularity-note">

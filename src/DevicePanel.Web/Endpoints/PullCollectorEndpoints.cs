@@ -67,6 +67,8 @@ public static class PullCollectorRequests
             return false;
         }
 
+        // 先整体校验、全部通过后再统一注册：校验失败不得在注册表留下已注册的孤儿 key（审查修复 TOB-376）
+        var pendingRegistrations = new List<(string Key, MetricValueType ValueType, string DisplayName, string Unit)>();
         var seenKeys = new HashSet<string>(StringComparer.Ordinal);
         foreach (var raw in rawMappings)
         {
@@ -106,7 +108,7 @@ public static class PullCollectorRequests
             var existing = metricKeys.Get(key);
             if (existing is null)
             {
-                metricKeys.Register(key, valueType, displayName.Length > 0 ? displayName : key, unit);
+                pendingRegistrations.Add((key, valueType, displayName.Length > 0 ? displayName : key, unit));
             }
             else if (existing.ValueType != valueType)
             {
@@ -115,6 +117,11 @@ public static class PullCollectorRequests
             }
 
             mappings.Add(new PullMetricMapping(key, raw.JsonPath!.Trim(), valueType, displayName.Length > 0 ? displayName : key, unit));
+        }
+
+        foreach (var (key, valueType, displayName, unit) in pendingRegistrations)
+        {
+            metricKeys.Register(key, valueType, displayName, unit);
         }
 
         error = string.Empty;

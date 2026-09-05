@@ -115,7 +115,7 @@ async function onResetToken(agent: Agent) {
 
 async function onDelete(agent: Agent) {
   if (agent.collectorId) {
-    errorMessage.value = '该 Agent 已关联目标，请在目标管理页删除'
+    errorMessage.value = '该 Agent 已关联采集器，请在采集器页删除'
     return
   }
   if (!window.confirm(`确定删除 Agent「${agent.name}」？其 token 立即失效，在线连接将被断开，删除后不可恢复。`)) {
@@ -206,7 +206,7 @@ onBeforeUnmount(() => {
           </span>
         </div>
         <div class="agent-tags">
-          <span v-if="agent.collectorId" class="tag linked-tag">已关联目标 #{{ agent.collectorId }}</span>
+          <span v-if="agent.collectorId" class="tag linked-tag">已关联采集器 #{{ agent.collectorId }}</span>
           <span v-for="label in agent.labels" :key="label" class="tag">{{ label }}</span>
           <span v-if="agent.labels.length === 0" class="no-tags">无标签</span>
         </div>

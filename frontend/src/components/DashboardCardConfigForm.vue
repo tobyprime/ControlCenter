@@ -106,9 +106,9 @@ const metricOptions = computed(() => {
 <template>
   <div class="card-config">
     <label class="control-field">
-      <span class="control-label">目标</span>
+      <span class="control-label">采集器</span>
       <select :value="selectedTargetId" @change="onTargetChange">
-        <option value="" disabled>请选择目标</option>
+        <option value="" disabled>请选择采集器</option>
         <option v-for="target in targets" :key="target.id" :value="target.id">{{ target.name }}</option>
       </select>
     </label>

@@ -83,10 +83,10 @@ public static class AgentEndpoints
 
         agents.MapDelete("/{id:long}", (long id, IAgentRegistry registry, AgentConnectionRegistry connections) =>
         {
-            // 关联目标的 agent 从目标页删除（目标删除级联 agent）；此处删除会破坏双写期关联，拒绝
+            // 关联采集器的 agent 从采集器页删除（采集器删除级联 agent）；此处删除会破坏双写期关联，拒绝
             if (registry.FindCollectorIdByAgentId(id) is not null)
             {
-                return Results.BadRequest(new { error = "该 Agent 已关联目标，请在目标管理页删除" });
+                return Results.BadRequest(new { error = "该 Agent 已关联采集器，请在采集器页删除" });
             }
 
             if (!registry.Delete(id))

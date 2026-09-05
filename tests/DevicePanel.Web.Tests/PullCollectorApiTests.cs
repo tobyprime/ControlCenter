@@ -134,6 +134,26 @@ public class PullCollectorApiTests : IDisposable
     }
 
     [Fact]
+    public async Task Create_Pull_Collector_With_Later_Invalid_Mapping_Does_Not_Register_Earlier_Keys()
+    {
+        var client = await AuthenticatedClientAsync();
+
+        // 第一条映射引入新 key 且合法，第二条类型非法使整请求失败：失败请求不得在注册表留下孤儿 key
+        var response = await client.PostAsJsonAsync("/api/collectors", PullRequest("https://mc.zenoxs.cn/tiles/settings.json", 60,
+        [
+            new { metricKey = "mc.orphan", jsonPath = "$.value", valueType = "number", displayName = "", unit = "" },
+            new { metricKey = "mc.later", jsonPath = "$.flag", valueType = "bool", displayName = "", unit = "" },
+        ]));
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+
+        var keys = await client.GetAsync("/api/metrics/keys");
+        keys.EnsureSuccessStatusCode();
+        var keyList = await keys.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.DoesNotContain(keyList.EnumerateArray(), k => k.GetProperty("key").GetString() == "mc.orphan");
+    }
+
+    [Fact]
     public async Task Create_Pull_Collector_With_Conflicting_Registered_Key_Type_Returns_400()
     {
         var client = await AuthenticatedClientAsync();
