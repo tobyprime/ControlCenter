@@ -3,6 +3,7 @@ import { writeFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { defineConfig, type Plugin } from 'vite'
 import vue from '@vitejs/plugin-vue'
+import { pagesCacheHeaders } from './pages-headers.mjs'
 
 // 默认模式：构建产物输出到 ASP.NET Core 服务的 wwwroot，由后端内嵌承载（同源）
 // pages 模式（--mode pages）：产物输出 dist/，可独立部署到 Cloudflare Pages——
@@ -18,16 +19,8 @@ function cloudflarePagesSpaFallback(): Plugin {
     closeBundle() {
       const outDir = resolve(__dirname, 'dist')
       writeFileSync(resolve(outDir, '_redirects'), '/*    /index.html   200\n')
-      writeFileSync(
-        resolve(outDir, '_headers'),
-        [
-          '/*',
-          '  Cache-Control: no-cache',
-          '/assets/*',
-          '  Cache-Control: public, max-age=31536000, immutable',
-          '',
-        ].join('\n'),
-      )
+      // 内容在 pages-headers.mjs（node:test 断言规则结构，防多规则同名头合并回归）
+      writeFileSync(resolve(outDir, '_headers'), pagesCacheHeaders)
     },
   }
 }
