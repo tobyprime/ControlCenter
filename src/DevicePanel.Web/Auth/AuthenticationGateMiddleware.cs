@@ -103,6 +103,8 @@ public sealed class AuthenticationGateMiddleware
             return;
         }
 
+        // 壳页面必须回源校验：发版后浏览器才能立即拿到引用新 hash 资产的新壳
+        context.Response.Headers.CacheControl = "no-cache";
         context.Response.ContentType = "text/html; charset=utf-8";
         await context.Response.SendFileAsync(shellPath);
     }

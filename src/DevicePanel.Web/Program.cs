@@ -184,7 +184,17 @@ if (allowedOrigins.Count > 0)
 }
 
 app.UseMiddleware<DevicePanel.Web.Auth.AuthenticationGateMiddleware>();
-app.UseStaticFiles();
+// 前端缓存策略：带 hash 的 /assets 内容寻址、长缓存 immutable；其余静态文件（含 index.html）
+// no-cache 回源校验，发版即换新，避免浏览器持旧壳引用已删除的旧 hash 资产（TOB-373 发版排查）。
+app.UseStaticFiles(new StaticFileOptions
+{
+    OnPrepareResponse = ctx =>
+    {
+        ctx.Context.Response.Headers.CacheControl = ctx.Context.Request.Path.StartsWithSegments("/assets")
+            ? "public, max-age=31536000, immutable"
+            : "no-cache";
+    },
+});
 app.UseWebSockets();
 
 app.MapHealthEndpoints();
