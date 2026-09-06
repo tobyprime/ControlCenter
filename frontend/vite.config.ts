@@ -9,13 +9,25 @@ import vue from '@vitejs/plugin-vue'
 //   静态托管无后端回退，附带 _redirects（SPA 路由全部回退 index.html）；
 //   API/WSS 绝对地址以构建环境变量 VITE_API_BASE_URL 注入（如 VITE_API_BASE_URL=https://api.example.com）
 
-// Cloudflare Pages SPA 回退：所有未命中静态文件的路径返回 index.html
+// Cloudflare Pages SPA 回退 + 缓存策略（与后端内嵌形态的静态文件缓存策略对齐，TOB-373 发版排查）：
+// - _redirects：所有未命中静态文件的路径返回 index.html；
+// - _headers：HTML 壳 no-cache 回源校验（发版即换新，不依赖用户强刷），带 hash 的 /assets 长缓存 immutable
 function cloudflarePagesSpaFallback(): Plugin {
   return {
     name: 'cloudflare-pages-spa-fallback',
     closeBundle() {
       const outDir = resolve(__dirname, 'dist')
       writeFileSync(resolve(outDir, '_redirects'), '/*    /index.html   200\n')
+      writeFileSync(
+        resolve(outDir, '_headers'),
+        [
+          '/*',
+          '  Cache-Control: no-cache',
+          '/assets/*',
+          '  Cache-Control: public, max-age=31536000, immutable',
+          '',
+        ].join('\n'),
+      )
     },
   }
 }
