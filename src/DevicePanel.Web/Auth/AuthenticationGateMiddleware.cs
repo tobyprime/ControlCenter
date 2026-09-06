@@ -6,6 +6,7 @@ namespace DevicePanel.Web.Auth;
 /// 统一登录拦截：
 /// - /healthz、/api/auth/login、/api/auth/logout 匿名可达；
 /// - 其余 /api/* 未登录一律 401；
+/// - EnableFrontend=false（前端独立部署收紧为 API-only）：其余路径一律 404；
 /// - 静态资源（带扩展名）放行给静态文件中间件；
 /// - 其余视为 SPA 路由：未登录跳转 /login，已登录回退 index.html。
 /// </summary>
@@ -18,7 +19,7 @@ public sealed class AuthenticationGateMiddleware
         _next = next;
     }
 
-    public async Task InvokeAsync(HttpContext context, ISessionService sessions, AuthOptions options, IWebHostEnvironment environment)
+    public async Task InvokeAsync(HttpContext context, ISessionService sessions, AuthOptions options, IWebHostEnvironment environment, ServingOptions serving)
     {
         var path = context.Request.Path;
 
@@ -31,6 +32,14 @@ public sealed class AuthenticationGateMiddleware
         if (path.StartsWithSegments("/api"))
         {
             await RejectUnauthorizedApiAsync(context, sessions, options);
+            return;
+        }
+
+        // 前端独立部署（Cloudflare Pages）后收紧：非 API 暴露面一律 404，后端不再托管 SPA
+        if (!serving.EnableFrontend)
+        {
+            context.Response.StatusCode = StatusCodes.Status404NotFound;
+            await context.Response.WriteAsync("此入口仅提供 API（/api、/agent/ws、/healthz），前端由独立站点托管");
             return;
         }        if (Path.HasExtension(path.Value))
         {

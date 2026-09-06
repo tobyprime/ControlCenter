@@ -45,6 +45,11 @@ builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddSingleton<ISessionService, SessionService>();
 builder.Services.AddSingleton<ILoginRateLimiter, LoginRateLimiter>();
 
+// 前端托管形态（TOB-373）：公网前端独立部署后可关闭内嵌 SPA 托管，集群入口收紧为 API-only
+var servingOptions = new ServingOptions();
+builder.Configuration.GetSection(ServingOptions.SectionName).Bind(servingOptions);
+builder.Services.AddSingleton(servingOptions);
+
 // 跨域前端（如 Cloudflare Pages 独立域名）：配置了允许来源才启用 CORS（凭据模式，回显具体来源）
 var corsSettings = new CorsSettings();
 builder.Configuration.GetSection(CorsSettings.SectionName).Bind(corsSettings);
@@ -186,15 +191,19 @@ if (allowedOrigins.Count > 0)
 app.UseMiddleware<DevicePanel.Web.Auth.AuthenticationGateMiddleware>();
 // 前端缓存策略：带 hash 的 /assets 内容寻址、长缓存 immutable；其余静态文件（含 index.html）
 // no-cache 回源校验，发版即换新，避免浏览器持旧壳引用已删除的旧 hash 资产（TOB-373 发版排查）。
-app.UseStaticFiles(new StaticFileOptions
+// API-only 形态（EnableFrontend=false）不下线门禁之前已 404 拦截，静态文件管道整体跳过。
+if (servingOptions.EnableFrontend)
 {
-    OnPrepareResponse = ctx =>
+    app.UseStaticFiles(new StaticFileOptions
     {
-        ctx.Context.Response.Headers.CacheControl = ctx.Context.Request.Path.StartsWithSegments("/assets")
-            ? "public, max-age=31536000, immutable"
-            : "no-cache";
-    },
-});
+        OnPrepareResponse = ctx =>
+        {
+            ctx.Context.Response.Headers.CacheControl = ctx.Context.Request.Path.StartsWithSegments("/assets")
+                ? "public, max-age=31536000, immutable"
+                : "no-cache";
+        },
+    });
+}
 app.UseWebSockets();
 
 app.MapHealthEndpoints();
