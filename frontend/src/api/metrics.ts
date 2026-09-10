@@ -7,7 +7,7 @@ import {
   getApiMetricsSeries,
   postApiMetricsKeys,
   putApiMetricsKeys,
-} from './gen'
+} from './base'
 
 export type Granularity = 'raw' | 'hour' | 'day'
 

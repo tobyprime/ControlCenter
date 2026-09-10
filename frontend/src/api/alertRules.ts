@@ -5,7 +5,7 @@ import {
   getApiAlertRulesTypes,
   postApiAlertRules,
   putApiAlertRules,
-} from './gen'
+} from './base'
 import type { MetricValueType } from './metrics'
 
 export type RuleTypeId = 'threshold_above' | 'threshold_below' | 'no_data' | 'state_mismatch'

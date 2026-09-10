@@ -5,7 +5,7 @@ import {
   postApiAgents,
   postApiAgentsToken,
   putApiAgentsLabels,
-} from './gen'
+} from './base'
 
 /** Agent 台账（三期模块2）：连接身份与能力声明的宿主；capabilities 为 null 表示未声明（旧版 agent 兼容）。 */
 export interface Agent {

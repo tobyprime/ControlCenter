@@ -9,7 +9,7 @@ import {
   postApiCollectorsToken,
   putApiCollectors,
   putApiCollectorsPull,
-} from './gen'
+} from './base'
 import type { MetricValueType } from './metrics'
 
 /** 采集模式：push = agent 周期上报；pull = 面板侧轮询（无需 agent）。模式由后端推导，前端只读展示。 */

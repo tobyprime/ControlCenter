@@ -1,5 +1,5 @@
 // TOB-401：实现由 openapi-ts 生成客户端承载（契约见 src/api/gen/），本模块只保留视图层消费的类型与函数签名。
-import { getApiCollectorsControllers, getApiControlsLogs, getApiControlsTypes, postApiCollectorsControllersInvoke } from './gen'
+import { getApiCollectorsControllers, getApiControlsLogs, getApiControlsTypes, postApiCollectorsControllersInvoke } from './base'
 
 /** 控制类型注册表条目（后端 ControlTypeCatalog 清单：新增类型 = 注册 IControlType 后自动出现）。 */
 export interface ControlTypeInfo {

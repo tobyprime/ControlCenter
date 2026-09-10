@@ -1,5 +1,5 @@
 // TOB-401：实现由 openapi-ts 生成客户端承载（契约见 src/api/gen/），本模块只保留视图层消费的类型与函数签名。
-import { getApiCollectorsLogsServices, getApiCollectorsLogsTail } from './gen'
+import { getApiCollectorsLogsServices, getApiCollectorsLogsTail } from './base'
 
 export type LogKind = 'systemd' | 'docker'
 

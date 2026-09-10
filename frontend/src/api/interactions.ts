@@ -1,5 +1,5 @@
 // TOB-401：实现由 openapi-ts 生成客户端承载（契约见 src/api/gen/），本模块只保留视图层消费的类型与函数签名。
-import { getApiDevicesInteractionModes, getApiInteractionsModes } from './gen'
+import { getApiDevicesInteractionModes, getApiInteractionsModes } from './base'
 
 // 交互模式（约束 C）：核心按目标声明的模式渲染入口，不绑定「控制台」单一形态
 export interface InteractionModeInfo {

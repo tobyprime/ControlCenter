@@ -1,5 +1,5 @@
 // TOB-401：实现由 openapi-ts 生成客户端承载（契约见 src/api/gen/），本模块只保留视图层消费的类型与函数签名。
-import { getApiDashboardLayout, putApiDashboardLayout } from './gen'
+import { getApiDashboardLayout, putApiDashboardLayout } from './base'
 
 // 布局契约（TOB-366）：单用户单套，整份布局读写；
 // 卡片条目含 id、类型、排序、显隐与 config（config 后端只透传不解释语义）。

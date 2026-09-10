@@ -45,3 +45,7 @@ client.interceptors.error.use((error, response) => {
   normalized.status = response.status
   return normalized
 })
+
+// 统一出口：业务模块一律经本文件引入生成客户端，确保适配层配置（凭据/基址/错误归一）
+// 在任何请求发出前生效；直接 import './gen' 会绕过本适配层。
+export * from './gen'

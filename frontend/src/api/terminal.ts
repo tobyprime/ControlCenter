@@ -1,5 +1,5 @@
 // TOB-401：留痕查询走生成客户端；WebSocket 入口保持手写薄封装（WS 不生成）。
-import { getApiTerminalSessions, getApiTerminalSessionsRecords } from './gen'
+import { getApiTerminalSessions, getApiTerminalSessionsRecords } from './base'
 import { wsUrl } from './base'
 
 export interface TerminalSessionInfo {
