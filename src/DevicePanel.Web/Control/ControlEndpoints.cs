@@ -9,6 +9,17 @@ namespace DevicePanel.Web.Control;
 /// 控制 API（三期模块4）：类型清单（注册表表面）、按采集器读控制器声明、下发并即时回执、控制留痕查询。
 /// 下发结果映射：成功 200；离线 409；agent 报错 502；超时 504（与日志按需查询同套语义）。
 /// </summary>
+// 以下为文档化响应类型标注（TOB-401）：JSON 形状与原匿名对象逐一对应（camelCase 策略统一）
+public sealed record ControlTypeInfoResponse(string Key, string DisplayName);
+
+public sealed record ControlTypesResponse(IReadOnlyList<ControlTypeInfoResponse> Types);
+
+public sealed record ControlLogsResponse(IReadOnlyList<ControlLogEntry> Logs);
+
+public sealed record ControlControllersResponse(IReadOnlyList<ControllerDeclaration> Controllers);
+
+public sealed record ControlInvokeResponse(string Status, string? Message);
+
 public static class ControlEndpoints
 {
     public const int DefaultLogLimit = 200;
@@ -20,7 +31,9 @@ public static class ControlEndpoints
 
         // 控制类型注册表清单（验收4 的对外表面）：新增类型 = 注册 IControlType，清单自动纳入
         controls.MapGet("/types", (ControlTypeCatalog catalog) =>
-            Results.Ok(new { types = catalog.List().Select(t => new { t.Key, t.DisplayName }) }));
+            Results.Ok(new ControlTypesResponse(
+                catalog.List().Select(t => new ControlTypeInfoResponse(t.Key, t.DisplayName)).ToList())))
+            .Produces<ControlTypesResponse>();
 
         // 控制留痕查询：按控制器/时间筛选（验收3）
         controls.MapGet("/logs", (
@@ -33,8 +46,8 @@ public static class ControlEndpoints
         {
             var entries = logs.Query(collectorId, string.IsNullOrWhiteSpace(controllerKey) ? null : controllerKey.Trim(),
                 from, to, Math.Clamp(limit ?? DefaultLogLimit, 1, MaxLogLimit));
-            return Results.Ok(new { logs = entries });
-        });
+            return Results.Ok(new ControlLogsResponse(entries));
+        }).Produces<ControlLogsResponse>();
 
         var collectors = endpoints.MapGroup("/api/collectors/{collectorId:long}");
 
@@ -49,8 +62,8 @@ public static class ControlEndpoints
             var controllers = collector.AgentId is { } agentId
                 ? agents.Get(agentId)?.Controllers ?? []
                 : [];
-            return Results.Ok(new { controllers });
-        });
+            return Results.Ok(new ControlControllersResponse(controllers));
+        }).Produces<ControlControllersResponse>();
 
         // 下发控制：{ params } 即时回执（成功/失败/超时/离线），每次真实下发全量留痕
         collectors.MapPost("/controllers/{key}/invoke", async (
@@ -77,7 +90,7 @@ public static class ControlEndpoints
                 var outcome = await service.InvokeAsync(collector, key, body?.Params ?? JsonSerializer.SerializeToElement(new { }),
                     operatorName, cancellationToken).ConfigureAwait(false);
                 return outcome.Success
-                    ? Results.Ok(new { status = outcome.Status, message = outcome.Message })
+                    ? Results.Ok(new ControlInvokeResponse(outcome.Status, outcome.Message))
                     : Results.Json(new { error = outcome.Message ?? "控制下发失败", status = outcome.Status },
                         statusCode: MapStatus(outcome));
             }
@@ -89,7 +102,7 @@ public static class ControlEndpoints
             {
                 return Results.BadRequest(new { error = ex.Message });
             }
-        });
+        }).Produces<ControlInvokeResponse>();
 
         return endpoints;
     }

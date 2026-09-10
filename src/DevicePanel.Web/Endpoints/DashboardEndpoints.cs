@@ -5,6 +5,11 @@ using Microsoft.AspNetCore.Mvc;
 
 namespace DevicePanel.Web.Endpoints;
 
+// 以下为文档化响应类型标注（TOB-401）：JSON 形状与原匿名对象逐一对应（camelCase 策略统一）
+public sealed record DashboardCardResponse(string Id, string Type, int Sort, bool Visible, JsonElement Config);
+
+public sealed record DashboardLayoutResponse(IReadOnlyList<DashboardCardResponse> Cards);
+
 /// <summary>主页布局读写 API（TOB-366，前端 TOB-367 依赖本契约）：
 /// GET /api/dashboard/layout 返回当前布局，未配置时返回服务端默认布局；
 /// PUT 整份替换保存，载荷 { cards: [{ id, type, sort, visible, config }] }。
@@ -23,7 +28,7 @@ public static class DashboardEndpoints
         {
             var layout = store.GetLayout() ?? DashboardDefaultLayout.Create();
             return Results.Ok(ToResponse(layout));
-        });
+        }).Produces<DashboardLayoutResponse>();
 
         dashboard.MapPut("/layout", ([FromBody] JsonElement body, IDashboardLayoutStore store) =>
         {
@@ -34,22 +39,18 @@ public static class DashboardEndpoints
 
             store.SaveLayout(layout);
             return Results.NoContent();
-        });
+        }).Produces(StatusCodes.Status204NoContent);
 
         return endpoints;
     }
 
-    private static object ToResponse(DashboardLayout layout) => new
-    {
-        cards = layout.Cards.OrderBy(c => c.Sort).Select(c => new
-        {
-            id = c.Id,
-            type = c.Type,
-            sort = c.Sort,
-            visible = c.Visible,
-            config = c.Config,
-        }).ToArray(),
-    };
+    private static DashboardLayoutResponse ToResponse(DashboardLayout layout) => new(
+        layout.Cards.OrderBy(c => c.Sort).Select(c => new DashboardCardResponse(
+            c.Id,
+            c.Type,
+            c.Sort,
+            c.Visible,
+            c.Config)).ToArray());
 
     private static bool TryParseLayout(JsonElement body, out DashboardLayout layout, [NotNullWhen(false)] out string? error)
     {

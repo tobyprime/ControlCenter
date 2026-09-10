@@ -38,6 +38,9 @@ public sealed record UpdateCollectorRequest(string? Name, IReadOnlyList<string>?
 
 public sealed record TokenResetResponse(string AgentToken);
 
+/// <summary>GET /data-types 元素（文档化响应类型标注，JSON 形状与原匿名对象一致）。</summary>
+public sealed record CollectorDataTypeResponse(string Key, string DisplayName);
+
 /// <summary>
 /// 统一采集器 API（三期模块3）：push 与 pull 同一模型，无分栏。
 /// 创建模式由请求推导：带 pull 配置 = pull 采集器（面板侧轮询）；否则 = push 采集器（建 agent、token 只发一次）。
@@ -51,10 +54,12 @@ public static class CollectorEndpoints
 
         // 数据类型清单（验收8）：DI 收集的 ICollectorDataType 全集；新增数据类型 = 注册实现，核心管道零改动
         collectors.MapGet("/data-types", (CollectorDataTypeCatalog catalog) =>
-            Results.Ok(catalog.List().Select(t => new { key = t.Key, displayName = t.DisplayName })));
+            Results.Ok(catalog.List().Select(t => new CollectorDataTypeResponse(t.Key, t.DisplayName))))
+            .Produces<CollectorDataTypeResponse[]>();
 
         collectors.MapGet("/", (ICollectorRegistry registry, IAgentRegistry agents, AgentOptions options, TimeProvider clock, IMetricsStore metrics) =>
-            Results.Ok(registry.List().Select(c => ToResponse(c, agents, options, clock, metrics))));
+            Results.Ok(registry.List().Select(c => ToResponse(c, agents, options, clock, metrics))))
+            .Produces<CollectorResponse[]>();
 
         collectors.MapPost("/", (
             [FromBody] CreateCollectorRequest request,
@@ -113,7 +118,7 @@ public static class CollectorEndpoints
             }
 
             return Results.Json(ToCreatedResponse(collector, agentToken), statusCode: StatusCodes.Status201Created);
-        });
+        }).Produces<CollectorCreatedResponse>(StatusCodes.Status201Created);
 
         collectors.MapPut("/{id:long}", (
             long id,
@@ -141,7 +146,7 @@ public static class CollectorEndpoints
             return updated is null
                 ? Results.NotFound(new { error = "采集器不存在" })
                 : Results.Ok(ToResponse(updated, agents, options, clock, metrics));
-        });
+        }).Produces<CollectorResponse>();
 
         collectors.MapDelete("/{id:long}", (
             long id,
@@ -164,7 +169,7 @@ public static class CollectorEndpoints
 
             connections.TryDisconnect(id, WebSocketCloseCodes.DeviceDeleted, "采集器已删除");
             return Results.NoContent();
-        });
+        }).Produces(StatusCodes.Status204NoContent);
 
         collectors.MapPost("/{id:long}/token", (
             long id,
@@ -193,7 +198,7 @@ public static class CollectorEndpoints
             // 旧 token 立即失效：断开用旧 token 建立的在线连接，重连即被拒
             connections.TryDisconnect(id, WebSocketCloseCodes.TokenReset, "token 已重置");
             return Results.Ok(new TokenResetResponse(token));
-        });
+        }).Produces<TokenResetResponse>();
 
         return endpoints;
     }

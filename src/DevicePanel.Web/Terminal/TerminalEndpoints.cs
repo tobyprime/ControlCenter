@@ -65,7 +65,7 @@ public static class TerminalEndpoints
             sessions.TryAdd(relay);
             await relay.RunAsync();
             return Results.Empty;
-        });
+        }).ExcludeFromDescription();
 
         var terminal = endpoints.MapGroup("/api/terminal");
 
@@ -97,7 +97,7 @@ public static class TerminalEndpoints
                     s.CloseReason))
                 .ToList();
             return Results.Ok(list);
-        });
+        }).Produces<TerminalSessionResponse[]>();
 
         terminal.MapGet("/sessions/{sessionId}/records", (string sessionId, ITerminalStore store) =>
         {
@@ -112,7 +112,7 @@ public static class TerminalEndpoints
                 e.Direction,
                 e.Data,
                 FormatUtc(e.RecordedAtUtc))).ToList());
-        });
+        }).Produces<TerminalEntryResponse[]>();
 
         return endpoints;
     }

@@ -23,6 +23,46 @@ public sealed record UpdateAlertRuleRequest(
     int? RepeatMinutes,
     bool? Enabled);
 
+// 以下为文档化响应类型标注（TOB-401）：JSON 形状与原匿名对象逐一对应（camelCase 策略统一）
+public sealed record NapcatSettingsResponse(string? BaseUrl, bool TokenSet, string? TargetType, string? TargetId);
+
+public sealed record AlertSettingsResponse(NapcatSettingsResponse Napcat);
+
+public sealed record AlertQueueItemResponse(
+    long Id,
+    DateTimeOffset CreatedAtUtc,
+    string Channel,
+    string Title,
+    string Content,
+    int Attempts,
+    string? LastError);
+
+public sealed record AlertQueueResponse(int Count, IReadOnlyList<AlertQueueItemResponse> Items);
+
+public sealed record ActiveAlertCountResponse(int Count);
+
+public sealed record AlertRuleTypeResponse(
+    string TypeId,
+    string DisplayName,
+    string AlertTitle,
+    string Description,
+    IReadOnlyList<string> SupportedValueTypes,
+    bool SampleDriven);
+
+public sealed record AlertRuleResponse(
+    long Id,
+    long? TargetId,
+    string TargetName,
+    string MetricKey,
+    string MetricDisplayName,
+    string RuleType,
+    bool Enabled,
+    JsonElement Parameters,
+    int SustainSeconds,
+    int RepeatMinutes,
+    DateTimeOffset CreatedAtUtc,
+    DateTimeOffset UpdatedAtUtc);
+
 public static class AlertEndpoints
 {
     private const int MaxSustainSeconds = 24 * 3600;
@@ -35,18 +75,13 @@ public static class AlertEndpoints
         alerts.MapGet("/settings", (IAlertSettingsStore settings) =>
         {
             var current = settings.Get();
-            return Results.Ok(new
-            {
-                napcat = new
-                {
-                    baseUrl = current.NapcatBaseUrl,
-                    // token 只回传"是否已设置"，明文永不离开库（面板留空即保持原值）
-                    tokenSet = !string.IsNullOrEmpty(current.NapcatToken),
-                    targetType = current.NapcatTargetType,
-                    targetId = current.NapcatTargetId,
-                },
-            });
-        });
+            return Results.Ok(new AlertSettingsResponse(new NapcatSettingsResponse(
+                current.NapcatBaseUrl,
+                // token 只回传"是否已设置"，明文永不离开库（面板留空即保持原值）
+                !string.IsNullOrEmpty(current.NapcatToken),
+                current.NapcatTargetType,
+                current.NapcatTargetId)));
+        }).Produces<AlertSettingsResponse>();
 
         alerts.MapPut("/settings", ([FromBody] SaveAlertSettingsRequest request, IAlertSettingsStore settings) =>
         {
@@ -88,51 +123,47 @@ public static class AlertEndpoints
                 targetType,
                 targetId));
             return Results.NoContent();
-        });
+        }).Produces(StatusCodes.Status204NoContent);
 
         alerts.MapGet("/queue", (IAlertOutboxStore outbox) =>
         {
             var entries = outbox.List();
-            return Results.Ok(new
-            {
-                count = entries.Count,
-                items = entries.Select(e => new
-                {
-                    id = e.Id,
-                    createdAtUtc = e.CreatedAtUtc,
-                    channel = e.Channel,
-                    title = e.Message.Title,
-                    content = e.Message.Content,
-                    attempts = e.Attempts,
-                    lastError = e.LastError,
-                }).ToList(),
-            });
-        });
+            return Results.Ok(new AlertQueueResponse(
+                entries.Count,
+                entries.Select(e => new AlertQueueItemResponse(
+                    e.Id,
+                    e.CreatedAtUtc,
+                    e.Channel,
+                    e.Message.Title,
+                    e.Message.Content,
+                    e.Attempts,
+                    e.LastError)).ToList()));
+        }).Produces<AlertQueueResponse>();
 
         // 首页「活跃告警」概览卡数据源：已触发且未恢复的事件数（防抖等待中不算）
         alerts.MapGet("/active-count", (IAlertStateStore states) =>
-            Results.Ok(new { count = states.CountActive() }));
+            Results.Ok(new ActiveAlertCountResponse(states.CountActive())))
+            .Produces<ActiveAlertCountResponse>();
 
         var rules = endpoints.MapGroup("/api/alert-rules");
 
         // 规则类型目录（可插拔扩展点的 UI 发现入口）
         rules.MapGet("/types", (IEnumerable<IAlertRuleType> ruleTypes) =>
-            Results.Ok(ruleTypes.Select(t => new
-            {
-                typeId = t.TypeId,
-                displayName = t.DisplayName,
-                alertTitle = t.AlertTitle,
-                description = t.Description,
-                supportedValueTypes = t.SupportedValueTypes.Select(v => v.ToStorage()).ToList(),
-                sampleDriven = t.SampleDriven,
-            })));
+            Results.Ok(ruleTypes.Select(t => new AlertRuleTypeResponse(
+                t.TypeId,
+                t.DisplayName,
+                t.AlertTitle,
+                t.Description,
+                t.SupportedValueTypes.Select(v => v.ToStorage()).ToList(),
+                t.SampleDriven)).ToList()))
+            .Produces<AlertRuleTypeResponse[]>();
 
         rules.MapGet("/", (IAlertRuleStore store, ICollectorRegistry targets, IMetricKeyRegistry metricKeys,
             [FromQuery] long? targetId, [FromQuery] string? metricKey) =>
         {
             var names = targets.List().ToDictionary(t => t.Id, t => t.Name);
-            return Results.Ok(store.List(targetId, metricKey).Select(r => ToResponse(r, names, metricKeys)));
-        });
+            return Results.Ok(store.List(targetId, metricKey).Select(r => ToResponse(r, names, metricKeys)).ToList());
+        }).Produces<AlertRuleResponse[]>();
 
         rules.MapPost("/", (
             [FromBody] CreateAlertRuleRequest request,
@@ -198,7 +229,7 @@ public static class AlertEndpoints
             {
                 return Results.BadRequest(new { error = ex.Message });
             }
-        });
+        }).Produces<AlertRuleResponse>(StatusCodes.Status201Created);
 
         rules.MapPut("/{id:long}", (
             long id,
@@ -245,7 +276,7 @@ public static class AlertEndpoints
             engine.ResetState(id);
             var names = targets.List().ToDictionary(t => t.Id, t => t.Name);
             return Results.Ok(ToResponse(updated, names, metricKeys));
-        });
+        }).Produces<AlertRuleResponse>();
 
         rules.MapDelete("/{id:long}", (long id, IAlertRuleStore store, IAlertRuleEngine engine) =>
         {
@@ -256,29 +287,27 @@ public static class AlertEndpoints
 
             engine.ResetState(id);
             return Results.NoContent();
-        });
+        }).Produces(StatusCodes.Status204NoContent);
 
         return endpoints;
     }
 
-    private static object ToResponse(AlertRule rule, IReadOnlyDictionary<long, string> targetNames, IMetricKeyRegistry metricKeys)
+    private static AlertRuleResponse ToResponse(AlertRule rule, IReadOnlyDictionary<long, string> targetNames, IMetricKeyRegistry metricKeys)
     {
         var metric = metricKeys.Get(rule.MetricKey);
-        return new
-        {
-            id = rule.Id,
-            targetId = rule.TargetId,
-            targetName = rule.TargetId is { } tid ? targetNames.GetValueOrDefault(tid, $"目标 {tid}") : "（全局）",
-            metricKey = rule.MetricKey,
-            metricDisplayName = metric?.DisplayName ?? rule.MetricKey,
-            ruleType = rule.RuleType,
-            enabled = rule.Enabled,
-            parameters = JsonDocument.Parse(rule.ParametersJson).RootElement,
-            sustainSeconds = rule.SustainSeconds,
-            repeatMinutes = rule.RepeatMinutes,
-            createdAtUtc = rule.CreatedAtUtc,
-            updatedAtUtc = rule.UpdatedAtUtc,
-        };
+        return new AlertRuleResponse(
+            rule.Id,
+            rule.TargetId,
+            rule.TargetId is { } tid ? targetNames.GetValueOrDefault(tid, $"目标 {tid}") : "（全局）",
+            rule.MetricKey,
+            metric?.DisplayName ?? rule.MetricKey,
+            rule.RuleType,
+            rule.Enabled,
+            JsonDocument.Parse(rule.ParametersJson).RootElement,
+            rule.SustainSeconds,
+            rule.RepeatMinutes,
+            rule.CreatedAtUtc,
+            rule.UpdatedAtUtc);
     }
 
     private static bool TryNormalizeParameters(JsonElement? parameters, IAlertRuleType ruleType, out string parametersJson, out string error)

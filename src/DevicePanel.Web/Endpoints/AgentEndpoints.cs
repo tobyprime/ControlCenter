@@ -34,7 +34,8 @@ public static class AgentEndpoints
         var agents = endpoints.MapGroup("/api/agents");
 
         agents.MapGet("/", (IAgentRegistry registry, AgentOptions options, TimeProvider clock, string? label) =>
-            Results.Ok(registry.List(label).Select(a => ToResponse(a, options, clock))));
+            Results.Ok(registry.List(label).Select(a => ToResponse(a, options, clock))))
+            .Produces<AgentResponse[]>();
 
         agents.MapPost("/", ([FromBody] CreateAgentRequest request, IAgentRegistry registry) =>
         {
@@ -52,7 +53,7 @@ public static class AgentEndpoints
             // token 明文只在创建响应出现一次
             var created = registry.Create(name, request.Labels ?? []);
             return Results.Json(ToCreatedResponse(created), statusCode: StatusCodes.Status201Created);
-        });
+        }).Produces<AgentCreatedResponse>(StatusCodes.Status201Created);
 
         agents.MapPut("/{id:long}/labels", (
             long id,
@@ -65,7 +66,7 @@ public static class AgentEndpoints
             return updated is null
                 ? Results.NotFound(new { error = "Agent 不存在" })
                 : Results.Ok(ToResponse(updated, options, clock));
-        });
+        }).Produces<AgentResponse>();
 
         agents.MapPost("/{id:long}/token", (long id, IAgentRegistry registry, AgentConnectionRegistry connections) =>
         {
@@ -79,7 +80,7 @@ public static class AgentEndpoints
             var targetId = registry.FindCollectorIdByAgentId(id);
             connections.TryDisconnect(targetId ?? -id, WebSocketCloseCodes.TokenReset, "token 已重置");
             return Results.Ok(new TokenResetResponse(token));
-        });
+        }).Produces<TokenResetResponse>();
 
         agents.MapDelete("/{id:long}", (long id, IAgentRegistry registry, AgentConnectionRegistry connections) =>
         {
@@ -96,7 +97,7 @@ public static class AgentEndpoints
 
             connections.TryDisconnect(-id, WebSocketCloseCodes.DeviceDeleted, "Agent 已删除");
             return Results.NoContent();
-        });
+        }).Produces(StatusCodes.Status204NoContent);
 
         return endpoints;
     }
