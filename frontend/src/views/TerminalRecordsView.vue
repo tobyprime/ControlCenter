@@ -23,7 +23,7 @@ const rangeOptions = [
 const closeReasonLabels: Record<string, string> = {
   operator: '操作者关闭',
   'agent-exit': 'shell 退出',
-  'connection-lost': '设备离线',
+  'connection-lost': '采集器离线',
   error: '异常结束',
 }
 
@@ -87,17 +87,17 @@ onMounted(async () => {
     <div class="records-header">
       <div>
         <h1 class="records-title">终端留痕</h1>
-        <p class="records-description">回答「何时在哪台设备执行过什么」：会话元数据 + 命令与输出留档。注意：键盘输入逐字入档，口令类输入也会以明文留痕，请留意敏感操作。</p>
+        <p class="records-description">回答「何时在哪台采集器执行过什么」：会话元数据 + 命令与输出留档。注意：键盘输入逐字入档，口令类输入也会以明文留痕，请留意敏感操作。</p>
       </div>
       <div class="records-controls">
         <select v-model.number="selectedDeviceId" class="control-select">
-          <option value="all">全部设备</option>
+          <option value="all">全部采集器</option>
           <option v-for="device in devices" :key="device.id" :value="device.id">{{ device.name }}</option>
         </select>
         <select v-model.number="rangeDays" class="control-select">
           <option v-for="option in rangeOptions" :key="option.days" :value="option.days">{{ option.label }}</option>
         </select>
-        <button type="button" class="ghost-button" @click="refresh()">刷新</button>
+        <button type="button" class="ghost-button dp-btn dp-btn-ghost" @click="refresh()">刷新</button>
       </div>
     </div>
 
@@ -173,6 +173,7 @@ onMounted(async () => {
 
 .ghost-button {
   padding: 8px 14px;
+  white-space: nowrap;
   border: 1px solid var(--color-border);
   border-radius: 8px;
   background: transparent;

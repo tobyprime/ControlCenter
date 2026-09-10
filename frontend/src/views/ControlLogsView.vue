@@ -69,11 +69,11 @@ onMounted(async () => {
     <div class="logs-header">
       <div>
         <h1 class="logs-title">控制留痕</h1>
-        <p class="logs-description">每次真实下发（含失败与超时）全量留档：何时、对哪台设备的哪个控制器、带了什么参数、结果如何。</p>
+        <p class="logs-description">每次真实下发（含失败与超时）全量留档：何时、对哪个采集器的哪个控制器、带了什么参数、结果如何。</p>
       </div>
       <div class="logs-controls">
         <select v-model.number="selectedDeviceId" class="control-select">
-          <option value="all">全部设备</option>
+          <option value="all">全部采集器</option>
           <option v-for="device in devices" :key="device.id" :value="device.id">{{ device.name }}</option>
         </select>
         <input
@@ -86,7 +86,7 @@ onMounted(async () => {
         <select v-model.number="rangeDays" class="control-select">
           <option v-for="option in rangeOptions" :key="option.days" :value="option.days">{{ option.label }}</option>
         </select>
-        <button type="button" class="ghost-button" @click="refresh()">刷新</button>
+        <button type="button" class="ghost-button dp-btn dp-btn-ghost" @click="refresh()">刷新</button>
       </div>
     </div>
 
@@ -94,11 +94,11 @@ onMounted(async () => {
 
     <div v-if="loading" class="empty-state">加载中…</div>
     <div v-else-if="logs.length === 0" class="empty-state">该范围内没有控制留痕。</div>
-    <table v-else class="log-table">
+    <table v-else class="log-table dp-table">
       <thead>
         <tr>
           <th>时间</th>
-          <th>设备</th>
+          <th>采集器</th>
           <th>控制器</th>
           <th>类型</th>
           <th>参数</th>

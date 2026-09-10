@@ -114,7 +114,7 @@ function missingDeclaration(row: ConfigRow): boolean {
     </div>
     <p v-if="rows.length === 0" class="config-hint">尚未组合控制器，点击「添加控制器」开始</p>
     <p v-if="rows.some((row) => missingDeclaration(row))" class="config-hint">
-      部分设备未声明控制器或清单加载失败，请换设备或稍后重试
+      部分采集器未声明控制器或清单加载失败，请换一个采集器或稍后重试
     </p>
     <button type="button" class="add-row" @click="addRow">添加控制器</button>
   </div>

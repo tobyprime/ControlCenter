@@ -1,0 +1,1 @@
+import{Z as e,$ as n,a0 as s,a1 as i,a2 as r}from"./index-CyRvF6-x.js";async function u(){const{data:t}=await n({});return t}async function A(t){await i({body:t})}async function o(){const{data:t}=await s({});return t}async function f(){const{data:t}=await e({});return t}async function l(t={}){const{data:a}=await r({query:t});return a}export{u as a,o as b,l as c,f,A as s};

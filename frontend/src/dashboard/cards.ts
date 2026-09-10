@@ -11,14 +11,14 @@ export interface DashboardCardDef {
 // 内置卡片目录：一期概览卡（类型名与 TOB-366 服务端默认布局一致）
 // 与 TOB-368 三类指标卡（来源/时间窗配置见 dashboard/cardConfig.ts）
 export const BUILTIN_CARD_DEFS: DashboardCardDef[] = [
-  { type: 'overview-total-devices', label: '设备总数', hint: '去设备管理页查看' },
-  { type: 'overview-online-devices', label: '在线设备', hint: '每 15 秒自动刷新' },
+  { type: 'overview-total-devices', label: '采集器总数', hint: '去采集器页查看' },
+  { type: 'overview-online-devices', label: '在线采集器', hint: '每 15 秒自动刷新' },
   { type: 'overview-active-alerts', label: '活跃告警', hint: '已触发且未恢复的事件数' },
   { type: 'metric-value', label: '数值卡', hint: '指标最新值与单位', multiple: true },
   { type: 'metric-status', label: '状态卡', hint: '指标当前状态', multiple: true },
   { type: 'metric-chart', label: '曲线卡', hint: '指标按时间窗的序列', multiple: true },
   // 三期模块4 控制卡：按设备组合控制器，操作即时回执（类型契约见 dashboard/controlCardConfig.ts）
-  { type: 'control-card', label: '控制卡', hint: '按设备组合控制器，操作即时回执', multiple: true },
+  { type: 'control-card', label: '控制卡', hint: '按采集器组合控制器，操作即时回执', multiple: true },
 ]
 
 export function cardDef(type: string): DashboardCardDef | undefined {

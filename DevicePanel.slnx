@@ -6,5 +6,6 @@
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/DevicePanel.Web.Tests/DevicePanel.Web.Tests.csproj" />
+    <Project Path="tests/DevicePanel.Agent.Tests/DevicePanel.Agent.Tests.csproj" />
   </Folder>
 </Solution>

@@ -102,7 +102,7 @@ async function submitForm() {
 }
 
 async function onResetToken(agent: Agent) {
-  if (!window.confirm(`确定重置「${agent.name}」的 token？旧 token 将立即失效，在线连接会被断开，需用新 token 更新该设备上的 agent。`)) {
+  if (!window.confirm(`确定重置「${agent.name}」的 token？旧 token 将立即失效，在线连接会被断开，需用新 token 更新该采集器所在机器上的 agent。`)) {
     return
   }
   try {
@@ -229,9 +229,9 @@ onBeforeUnmount(() => {
           </div>
         </dl>
         <div class="agent-actions">
-          <button type="button" class="ghost-button" @click="openEdit(agent)">编辑标签</button>
-          <button type="button" class="ghost-button" @click="onResetToken(agent)">重置 Token</button>
-          <button type="button" class="danger-button" @click="onDelete(agent)">删除</button>
+          <button type="button" class="ghost-button dp-btn dp-btn-ghost dp-touch" @click="openEdit(agent)">编辑标签</button>
+          <button type="button" class="ghost-button dp-btn dp-btn-ghost dp-touch" @click="onResetToken(agent)">重置 Token</button>
+          <button type="button" class="danger-button dp-touch" @click="onDelete(agent)">删除</button>
         </div>
       </div>
     </div>
@@ -264,7 +264,7 @@ onBeforeUnmount(() => {
         <p class="token-warning">token 仅在创建/重置时显示一次，请立即复制保存。泄露或更换时可在本页重置。</p>
         <code class="token-value">{{ tokenDialog.token }}</code>
         <p class="token-hint">
-          在目标设备上启动 agent：<code>devicepanel-agent --url wss://面板地址/agent/ws --token &lt;上面的 token&gt;</code>
+          在目标机上启动 agent：<code>devicepanel-agent --url wss://面板地址/agent/ws --token &lt;上面的 token&gt;</code>
         </p>
         <div class="dialog-actions">
           <button type="button" class="primary-button" @click="copyToken">{{ tokenCopied ? '已复制' : '复制 token' }}</button>
