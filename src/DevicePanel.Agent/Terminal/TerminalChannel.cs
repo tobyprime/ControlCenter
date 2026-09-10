@@ -210,6 +210,9 @@ internal sealed class TerminalChannel : ITerminalChannel
         // 同步执行阻塞 Read，令牌节拍与 term.opened 确认全部停摆
         await Task.Yield();
         var buffer = new byte[4096];
+        // F8（TOB-403）：PTY 内 stderr 与 stdout 同流，无法按流区分——只在会话开头过滤
+        // 已知良性警告行（bash 启动两行警告），首段正常输出后过滤器即永久失效
+        var noiseFilter = new TerminalStartupNoiseFilter();
         try
         {
             while (_downlink.IsOpen)
@@ -221,7 +224,13 @@ internal sealed class TerminalChannel : ITerminalChannel
                     break; // EOF：shell 退出
                 }
 
-                await _downlink.SendOutputAsync(sessionId, buffer.AsMemory(0, read), CancellationToken.None)
+                var output = noiseFilter.Feed(buffer.AsSpan(0, read));
+                if (output.Length == 0)
+                {
+                    continue;
+                }
+
+                await _downlink.SendOutputAsync(sessionId, output, CancellationToken.None)
                     .ConfigureAwait(false);
             }
         }
@@ -231,6 +240,14 @@ internal sealed class TerminalChannel : ITerminalChannel
         }
         finally
         {
+            // 过滤器若仍在缓存白名单前缀（异常路径下未透传），收尾补发避免吞字
+            var tail = noiseFilter.FlushPending();
+            if (tail.Length > 0)
+            {
+                await _downlink.SendOutputAsync(sessionId, tail, CancellationToken.None)
+                    .ConfigureAwait(false);
+            }
+
             lock (_lock)
             {
                 if (_sessions.TryGetValue(sessionId, out var state) && ReferenceEquals(state.Pty, pty))

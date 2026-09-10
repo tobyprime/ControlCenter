@@ -19,7 +19,7 @@ INSERT INTO metric_keys(key, value_type, display_name, unit, built_in, created_a
     ('disk',   'number', '磁盘使用率',   '%',   1, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     ('net_rx', 'number', '网络接收速率', 'B/s', 1, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
     ('net_tx', 'number', '网络发送速率', 'B/s', 1, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
-    ('online', 'bool',   '设备在线状态', '',    1, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), strftime('%Y-%m-%dT%H:%M:%SZ', 'now'));
+    ('online', 'bool',   '采集器在线状态', '',    1, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), strftime('%Y-%m-%dT%H:%M:%SZ', 'now'));
 
 -- 明细窄表：number 存 value_num，enum/string/bool 存 value_text（bool 同时存 value_num 0/1 便于查询）
 CREATE TABLE metric_samples_v2 (

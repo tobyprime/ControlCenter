@@ -549,7 +549,7 @@ onBeforeUnmount(() => {
       <button type="button" class="link-back" @click="router.push('/collectors')">← 返回采集器列表</button>
       <div v-if="collector" class="detail-title-row">
         <h1 class="detail-title">{{ collector.name }}</h1>
-        <span class="tag">{{ collector.mode === 'pull' ? '服务' : '设备' }}</span>
+        <span class="tag">{{ collector.mode === 'pull' ? '服务' : '采集器' }}</span>
         <span class="status-badge" :class="collectorStatusInfo(collector).cls">
           <span class="status-dot"></span>
           {{ collectorStatusInfo(collector).label }}

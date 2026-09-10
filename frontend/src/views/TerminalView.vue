@@ -16,13 +16,15 @@ const devices = ref<Device[]>([])
 const connectableDevices = computed(() => devices.value.filter((device) => device.mode === 'push'))
 const selectedDeviceId = ref<number | null>(null)
 const sessionState = ref<SessionState>('idle')
-const statusText = ref('选择一台在线设备，点击「打开终端」。')
+const statusText = ref('选择一台在线采集器，点击「打开终端」。')
 const errorMessage = ref('')
 const loading = ref(true)
 
 // 交互入口按目标声明的模式渲染（约束 C）：仅目标声明 shell 时提供终端入口
 const declaredModes = ref<InteractionModeInfo[]>([])
 const hasShellMode = computed(() => declaredModes.value.some((mode) => mode.key === 'shell'))
+// F9（TOB-403）：无在线采集器时禁用打开并给空态占位，避免选中离线项后才报错
+const hasOnlineDevice = computed(() => connectableDevices.value.some((device) => device.online))
 
 const termHost = ref<HTMLElement | null>(null)
 let term: Terminal | null = null
@@ -30,7 +32,7 @@ let fitAddon: FitAddon | null = null
 let socket: WebSocket | null = null
 
 function deviceName(id: number | null): string {
-  return devices.value.find((d) => d.id === id)?.name ?? '未知设备'
+  return devices.value.find((d) => d.id === id)?.name ?? '未知采集器'
 }
 
 async function refresh(showError = true) {
@@ -39,7 +41,7 @@ async function refresh(showError = true) {
     errorMessage.value = ''
   } catch (e) {
     if (showError) {
-      errorMessage.value = e instanceof Error ? e.message : '设备列表加载失败'
+      errorMessage.value = e instanceof Error ? e.message : '采集器列表加载失败'
     }
   } finally {
     loading.value = false
@@ -60,7 +62,7 @@ async function loadDeclaredModes(deviceId: number | null) {
         setStatus('idle', `「${deviceName(deviceId)}」未声明可用的交互模式。`)
       }
     } else if (sessionState.value === 'idle') {
-      setStatus('idle', '选择一台在线设备，点击「打开终端」。')
+      setStatus('idle', '选择一台在线采集器，点击「打开终端」。')
     }
   } catch (e) {
     errorMessage.value = e instanceof Error ? e.message : '交互模式加载失败'
@@ -98,7 +100,7 @@ async function openTerminal() {
 
   const device = devices.value.find((d) => d.id === deviceId)
   if (!device?.online) {
-    errorMessage.value = '设备离线，无法打开终端'
+    errorMessage.value = '采集器离线，无法打开终端'
     return
   }
 
@@ -168,7 +170,7 @@ async function openTerminal() {
 
   socket.onerror = () => {
     if (sessionState.value === 'connecting') {
-      setStatus('error', '终端连接失败：请确认设备在线后重试。')
+      setStatus('error', '终端连接失败：请确认采集器在线后重试。')
     }
   }
 
@@ -224,7 +226,7 @@ onBeforeUnmount(() => {
     <div class="terminal-header">
       <div>
         <h1 class="terminal-title">Web 终端</h1>
-        <p class="terminal-description">经面板与 agent 回连通道直达目标设备 shell，目标设备无需开放任何入站端口。</p>
+        <p class="terminal-description">经面板与 agent 回连通道直达目标机 shell，目标机无需开放任何入站端口。</p>
       </div>
       <div class="terminal-controls">
         <select v-model.number="selectedDeviceId" class="device-select" :disabled="sessionState === 'open'">
@@ -235,13 +237,13 @@ onBeforeUnmount(() => {
         <button
           v-if="sessionState !== 'open' && sessionState !== 'connecting' && hasShellMode"
           type="button"
-          class="primary-button"
-          :disabled="selectedDeviceId === null"
+          class="primary-button dp-btn dp-btn-primary"
+          :disabled="selectedDeviceId === null || !hasOnlineDevice"
           @click="openTerminal"
         >
           打开终端
         </button>
-        <button v-else-if="sessionState === 'open' || sessionState === 'connecting'" type="button" class="ghost-button" @click="closeTerminal">关闭终端</button>
+        <button v-else-if="sessionState === 'open' || sessionState === 'connecting'" type="button" class="ghost-button dp-btn dp-btn-ghost" @click="closeTerminal">关闭终端</button>
       </div>
     </div>
 
@@ -255,8 +257,11 @@ onBeforeUnmount(() => {
     <div v-show="termHost && (sessionState === 'connecting' || sessionState === 'open')" ref="termHost" class="term-host"></div>
 
     <div v-if="loading" class="empty-state">加载中…</div>
-    <div v-else-if="connectableDevices.length === 0" class="empty-state">
-      还没有可连接的设备。先在「设备管理」登记设备并接入 agent。
+    <div v-else-if="connectableDevices.length === 0" class="empty-state dp-empty">
+      还没有可连接的采集器。先在「采集器」页登记并接入 agent。
+    </div>
+    <div v-else-if="!hasOnlineDevice" class="empty-state dp-empty">
+      暂无在线采集器，请先在「采集器」页启动对应 agent，再打开终端。
     </div>
     <div v-else-if="sessionState === 'idle' || sessionState === 'closed' || sessionState === 'error'" class="empty-state">
       {{ statusText }}

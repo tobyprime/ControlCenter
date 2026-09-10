@@ -79,7 +79,7 @@ async function resolveRows() {
       uid: `${ref.collectorId}:${ref.key}`,
       collectorId: ref.collectorId,
       key: ref.key,
-      targetName: target?.name ?? '已删除设备',
+      targetName: target?.name ?? '已删除采集器',
       targetOnline: target?.online ?? false,
       declaration,
       busy: false,
@@ -207,10 +207,10 @@ function resultText(kind: ControlResult['kind']): string {
           <span class="controller-device">
             {{ row.targetName }} · {{ controlTypeLabel(row.declaration?.type ?? '') }}
           </span>
-          <span v-if="!row.targetOnline" class="offline-badge">设备离线</span>
+          <span v-if="!row.targetOnline" class="offline-badge">采集器离线</span>
         </div>
 
-        <span v-if="!row.declaration" class="control-state">设备未声明控制器「{{ row.key }}」</span>
+        <span v-if="!row.declaration" class="control-state">采集器未声明控制器「{{ row.key }}」</span>
 
         <!-- 按钮：声明 items 清单，点哪个发哪个 -->
         <div v-else-if="row.declaration.type === 'button'" class="controller-body">

@@ -18,6 +18,9 @@ const loading = ref(true)
 const errorMessage = ref('')
 let refreshTimer: number | undefined
 
+// F3（TOB-403）：内置 type:* 标签渲染层隐藏（采集器/服务类别已由卡片徽标表达），筛选仍按原始标签匹配
+const displayTags = (tags: string[]) => tags.filter((tag) => !tag.toLowerCase().startsWith('type:'))
+
 // 标签筛选（验收1：统一列表无分栏）：对标签做包含匹配，内置 type:* 标签同样可筛
 const tagFilter = ref('')
 const filteredCollectors = computed(() => {
@@ -140,7 +143,7 @@ async function submitForm() {
 }
 
 async function onResetToken(collector: Collector) {
-  if (!window.confirm(`确定重置「${collector.name}」的 agent token？旧 token 将立即失效，需要用新 token 更新该设备上的 agent。`)) {
+  if (!window.confirm(`确定重置「${collector.name}」的 agent token？旧 token 将立即失效，需要用新 token 更新该采集器所在机器上的 agent。`)) {
     return
   }
   try {
@@ -198,9 +201,9 @@ onBeforeUnmount(() => {
     <div class="collectors-header">
       <div>
         <h1 class="collectors-title">采集器</h1>
-        <p class="collectors-description">设备（agent 上报）与服务（面板轮询）统一台账，状态每 15 秒自动刷新。</p>
+        <p class="collectors-description">采集器（agent 上报）与服务（面板轮询）统一台账，状态每 15 秒自动刷新。</p>
       </div>
-      <button type="button" class="primary-button" @click="openCreate">新建采集器</button>
+      <button type="button" class="primary-button dp-btn dp-btn-primary" @click="openCreate">新建采集器</button>
     </div>
 
     <p v-if="errorMessage" class="error-banner">{{ errorMessage }}</p>
@@ -217,7 +220,7 @@ onBeforeUnmount(() => {
 
     <div v-if="loading" class="empty-state">加载中…</div>
     <div v-else-if="collectors.length === 0" class="empty-state">
-      还没有采集器。点击「新建采集器」登记第一台设备，然后用签发的 token 在目标机上启动 agent 即可接入；服务类采集器填写轮询地址由面板侧探测。
+      还没有采集器。点击「新建采集器」登记第一台采集器，然后用签发的 token 在目标机上启动 agent 即可接入；服务类采集器填写轮询地址由面板侧探测。
     </div>
     <div v-else-if="filteredCollectors.length === 0" class="empty-state">没有标签匹配「{{ tagFilter }}」的采集器。</div>
 
@@ -231,9 +234,9 @@ onBeforeUnmount(() => {
           </span>
         </div>
         <div class="collector-tags">
-          <span class="tag type-tag">{{ collector.mode === 'pull' ? '服务' : '设备' }}</span>
-          <span v-for="tag in collector.tags" :key="tag" class="tag">{{ tag }}</span>
-          <span v-if="collector.tags.length === 0" class="no-tags">无标签</span>
+          <span class="tag type-tag">{{ collector.mode === 'pull' ? '服务' : '采集器' }}</span>
+          <span v-for="tag in displayTags(collector.tags)" :key="tag" class="tag">{{ tag }}</span>
+          <span v-if="displayTags(collector.tags).length === 0" class="no-tags">无标签</span>
         </div>
         <dl class="collector-meta">
           <div>
@@ -246,10 +249,10 @@ onBeforeUnmount(() => {
           </div>
         </dl>
         <div class="collector-actions">
-          <button type="button" class="ghost-button" @click="router.push(`/collectors/${collector.id}`)">详情</button>
-          <button type="button" class="ghost-button" @click="openEdit(collector)">编辑</button>
-          <button v-if="collector.mode === 'push'" type="button" class="ghost-button" @click="onResetToken(collector)">重置 Token</button>
-          <button type="button" class="danger-button" @click="onDelete(collector)">删除</button>
+          <button type="button" class="ghost-button dp-btn dp-btn-ghost dp-touch" @click="router.push(`/collectors/${collector.id}`)">详情</button>
+          <button type="button" class="ghost-button dp-btn dp-btn-ghost dp-touch" @click="openEdit(collector)">编辑</button>
+          <button v-if="collector.mode === 'push'" type="button" class="ghost-button dp-btn dp-btn-ghost dp-touch" @click="onResetToken(collector)">重置 Token</button>
+          <button type="button" class="danger-button dp-touch" @click="onDelete(collector)">删除</button>
         </div>
       </div>
     </div>
@@ -313,7 +316,7 @@ onBeforeUnmount(() => {
         <p class="token-warning">token 仅在创建/重置时显示一次，请立即复制保存。泄露或更换时可在采集器列表中重置。</p>
         <code class="token-value">{{ tokenDialog.token }}</code>
         <p class="token-hint">
-          在目标设备上启动 agent：<code>devicepanel-agent --url wss://面板地址/agent/ws --token &lt;上面的 token&gt;</code>
+          在目标机上启动 agent：<code>devicepanel-agent --url wss://面板地址/agent/ws --token &lt;上面的 token&gt;</code>
         </p>
         <div class="dialog-actions">
           <button type="button" class="primary-button" @click="copyToken">{{ tokenCopied ? '已复制' : '复制 token' }}</button>

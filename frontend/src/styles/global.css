@@ -3,12 +3,29 @@
   --color-primary-dark: #1d4ed8;
   --color-danger: #dc2626;
   --color-text: #1f2937;
-  --color-text-light: #6b7280;
+  --color-text-light: #4b5563;
+  --color-danger: #dc2626;
+  --color-success: #16a34a;
+  --color-warning: #d97706;
   --color-border: #e5e7eb;
   --color-bg: #f3f4f6;
   --color-surface: #ffffff;
   --sidebar-width: 220px;
   --topbar-height: 56px;
+  /* 设计令牌（TOB-403）：间距 / 圆角 / 字号阶梯 */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --font-size-sm: 0.85rem;
+  --font-size-md: 0.9rem;
+  --font-size-lg: 1rem;
+  --font-size-xl: 1.25rem;
   font-size: 16px;
 }
 
@@ -50,4 +67,109 @@ input,
 select,
 textarea {
   font-family: inherit;
+}
+
+/* ---------- 公共样式类（TOB-403）：按钮 / 输入 / 表格 / 空态 / 加载 + 焦点环 ---------- */
+
+/* F5：全局显式焦点指示（键盘可见），触摸/鼠标点击不触发 */
+:where(a, button, input, select, textarea, [tabindex]):focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+/* 按钮 */
+.dp-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 36px;
+  padding: var(--space-2) var(--space-4);
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-sm);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.dp-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.dp-btn-primary {
+  background: var(--color-primary);
+  color: #fff;
+}
+
+.dp-btn-primary:hover:not(:disabled) {
+  background: var(--color-primary-dark);
+}
+
+.dp-btn-ghost {
+  background: transparent;
+  border-color: var(--color-border);
+  color: var(--color-text);
+}
+
+.dp-btn-ghost:hover:not(:disabled) {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+}
+
+/* 输入 */
+.dp-input,
+.dp-select {
+  padding: var(--space-2) 10px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-size: var(--font-size-sm);
+}
+
+/* 表格 */
+.dp-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--font-size-sm);
+}
+
+.dp-table th,
+.dp-table td {
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--color-border);
+  text-align: left;
+}
+
+.dp-table th {
+  color: var(--color-text-light);
+  font-weight: 600;
+}
+
+/* 空态 / 加载 */
+.dp-empty {
+  padding: var(--space-8) var(--space-4);
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  color: var(--color-text-light);
+  text-align: center;
+}
+
+.dp-loading {
+  padding: var(--space-8);
+  color: var(--color-text-light);
+  text-align: center;
+}
+
+/* F7：行内操作热区扩展——视觉尺寸不变，命中区四周各扩 6px */
+.dp-touch {
+  position: relative;
+}
+
+.dp-touch::before {
+  content: '';
+  position: absolute;
+  inset: -6px;
 }

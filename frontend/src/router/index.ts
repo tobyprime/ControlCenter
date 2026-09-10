@@ -29,7 +29,7 @@ const router = createRouter({
       path: '/login',
       name: 'login',
       component: () => import('@/views/LoginView.vue'),
-      meta: { public: true },
+      meta: { title: '登录', public: true },
     },
     {
       path: '/',
@@ -96,6 +96,12 @@ const router = createRouter({
       redirect: '/',
     },
   ],
+})
+
+// F6（TOB-403）：页面级 document.title；品牌段为产品名，不在 F1 术语迁移范围
+router.afterEach((to) => {
+  const page = to.meta.title as string | undefined
+  document.title = page ? `${page} · 设备与环境统一管理面板` : '设备与环境统一管理面板'
 })
 
 router.beforeEach(async (to) => {

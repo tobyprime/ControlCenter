@@ -1,0 +1,1 @@
+import{Z as a,$ as e,a0 as s,a1 as n}from"./index-CfRjq8Ox.js";async function r(){const{data:t}=await e({});return t}async function c(t){await n({body:t})}async function u(){const{data:t}=await s({});return t}async function A(){const{data:t}=await a({});return t}export{r as a,u as b,A as f,c as s};

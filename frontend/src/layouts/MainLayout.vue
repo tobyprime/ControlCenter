@@ -108,8 +108,8 @@ async function onLogout() {
   flex-direction: column;
   justify-content: center;
   gap: 4px;
-  width: 36px;
-  height: 36px;
+  width: 40px;
+  height: 40px;
   padding: 8px;
   border: 1px solid var(--color-border);
   border-radius: 6px;

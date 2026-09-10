@@ -352,7 +352,7 @@ onBeforeUnmount(() => {
         <h1 class="home-title">欢迎，{{ username || '管理员' }}</h1>
         <p class="home-description">采集器接入、日志查看、终端交互、告警通知均已上线；主页概览支持自定义卡片布局与指标卡。</p>
       </div>
-      <button v-if="!editing" type="button" class="primary-button" @click="enterEdit">
+      <button v-if="!editing" type="button" class="primary-button dp-btn dp-btn-primary" @click="enterEdit">
         进入编辑
       </button>
     </div>
@@ -365,15 +365,15 @@ onBeforeUnmount(() => {
             v-for="def in addableDefs"
             :key="def.type"
             type="button"
-            class="ghost-button"
+            class="ghost-button dp-btn dp-btn-ghost"
             @click="addCard(def.type)"
           >
             添加「{{ def.label }}」
           </button>
         </div>
         <div class="card-actions">
-          <button type="button" class="primary-button" @click="persistLayout">保存布局</button>
-          <button type="button" class="ghost-button" @click="cancelEdit">取消</button>
+          <button type="button" class="primary-button dp-btn dp-btn-primary" @click="persistLayout">保存布局</button>
+          <button type="button" class="ghost-button dp-btn dp-btn-ghost" @click="cancelEdit">取消</button>
         </div>
       </div>
       <p v-if="saveError" class="error-banner" role="alert">{{ saveError }}</p>
@@ -396,10 +396,10 @@ onBeforeUnmount(() => {
           <span v-if="card.visible" class="card-edit-hint">拖拽排序</span>
           <span v-else class="card-hidden-badge">已隐藏</span>
           <span class="card-edit-spacer"></span>
-          <button type="button" class="ghost-button" @click="toggleVisible(card)">
+          <button type="button" class="ghost-button dp-btn dp-btn-ghost dp-touch" @click="toggleVisible(card)">
             {{ card.visible ? '隐藏' : '显示' }}
           </button>
-          <button type="button" class="danger-button" @click="removeCard(index)">删除</button>
+          <button type="button" class="danger-button dp-touch" @click="removeCard(index)">删除</button>
         </div>
 
         <!-- 控制卡（三期模块4）：编辑态组合控制器，查看态直接操作并即时回执 -->
