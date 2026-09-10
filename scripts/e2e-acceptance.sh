@@ -148,14 +148,14 @@ else
 fi
 
 # ---------- 验收 1：登录门禁 ----------
-CODE_UNAUTH=$(http_code "$PANEL_BASE/api/devices")
+CODE_UNAUTH=$(http_code "$PANEL_BASE/api/collectors")
 [ "$CODE_UNAUTH" = "401" ] || [ "$CODE_UNAUTH" = "302" ] \
-  || die "验收1 失败：未登录访问 /api/devices 返回 $CODE_UNAUTH（期望 401/302）"
+  || die "验收1 失败：未登录访问 /api/collectors 返回 $CODE_UNAUTH（期望 401/302）"
 CODE_LOGIN=$(http_code -c "$COOKIE" -H 'Content-Type: application/json' \
   -d "{\"username\":\"$ADMIN_USER\",\"password\":\"$ADMIN_PASS\"}" "$PANEL_BASE/api/auth/login")
 [ "$CODE_LOGIN" = "200" ] || die "验收1 失败：登录返回 $CODE_LOGIN"
-CODE_AUTH=$(http_code -b "$COOKIE" "$PANEL_BASE/api/devices")
-[ "$CODE_AUTH" = "200" ] || die "验收1 失败：登录后访问 /api/devices 返回 $CODE_AUTH"
+CODE_AUTH=$(http_code -b "$COOKIE" "$PANEL_BASE/api/collectors")
+[ "$CODE_AUTH" = "200" ] || die "验收1 失败：登录后访问 /api/collectors 返回 $CODE_AUTH"
 record "1-登录门禁" "PASS" "未登录 $CODE_UNAUTH，登录后 $CODE_AUTH（面板 $PANEL_BASE）"
 
 # ---------- 准备：渠道配置 + 设备 + agent ----------
@@ -167,19 +167,19 @@ if [ -n "${AGENT_TOKEN:-}" ]; then
   # 远程/附加模式：复用已登记设备（不新建设备、不重置 token）
   DEV_ID="${DEVICE_ID:-}"
   [ -n "$DEV_ID" ] || die "远程模式需同时提供 DEVICE_ID 与 AGENT_TOKEN"
-  DEV_NAME=$(curl -sf -b "$COOKIE" "$PANEL_BASE/api/devices" \
+  DEV_NAME=$(curl -sf -b "$COOKIE" "$PANEL_BASE/api/collectors" \
     | DEV_ID="$DEV_ID" python3 -c 'import os,sys,json;print([d["name"] for d in json.load(sys.stdin) if d["id"]==int(os.environ["DEV_ID"])][0])') \
     || die "远程模式未找到设备 $DEV_ID"
 else
   DEV_NAME="验收机-$(date +%s)"
   DEV_JSON=$(curl -sf -b "$COOKIE" -H 'Content-Type: application/json' \
-    -d "{\"name\":\"$DEV_NAME\",\"tags\":[\"验收\"]}" "$PANEL_BASE/api/devices") || die "创建设备失败"
+    -d "{\"name\":\"$DEV_NAME\",\"tags\":[\"验收\"]}" "$PANEL_BASE/api/collectors") || die "创建设备失败"
   DEV_ID=$(printf '%s' "$DEV_JSON" | json_get "['id']")
   AGENT_TOKEN=$(printf '%s' "$DEV_JSON" | json_get "['agentToken']")
 fi
 
 start_agent "$AGENT_TOKEN"
-poll_until 35 "设备上线" bash -c "curl -sf -b '$COOKIE' '$PANEL_BASE/api/devices' | python3 -c 'import sys,json;ds=json.load(sys.stdin);print(any(d[\"id\"]==$DEV_ID and d[\"online\"] for d in ds))' | grep -q True" \
+poll_until 35 "设备上线" bash -c "curl -sf -b '$COOKIE' '$PANEL_BASE/api/collectors' | python3 -c 'import sys,json;ds=json.load(sys.stdin);print(any(d[\"id\"]==$DEV_ID and d[\"online\"] for d in ds))' | grep -q True" \
   || die "验收3 失败：35s 内设备未上线"
 record "3-设备接入(在线)" "PASS" "登记设备「$DEV_NAME」并启动 agent，35s 内面板显示在线"
 
@@ -190,19 +190,23 @@ if [ "$SKIP_METRICS" != "1" ]; then
   FROM=$(date -u -d '20 minutes ago' +%Y-%m-%dT%H:%M:%SZ)
   TO=$(date -u +%Y-%m-%dT%H:%M:%SZ)
   METRICS=$(curl -sf -b "$COOKIE" --get "$PANEL_BASE/api/metrics/$DEV_ID/series" \
-    --data-urlencode "granularity=raw" --data-urlencode "from=$FROM" --data-urlencode "to=$TO") \
+    --data-urlencode "keys=cpu,mem,disk" --data-urlencode "granularity=raw" \
+    --data-urlencode "from=$FROM" --data-urlencode "to=$TO") \
     || die "指标查询失败"
   python3 - "$METRICS" <<'PYEOF' || die "验收3 指标断言失败"
 import json, sys
 from datetime import datetime
-series = json.loads(sys.argv[1])
-points = series["points"]
-assert len(points) >= 2, f"预期至少 2 个指标点，实际 {len(points)}"
+doc = json.loads(sys.argv[1])
+by_key = {s["key"]: s["points"] for s in doc["series"]}
+assert set(by_key) >= {"cpu", "mem", "disk"}, f"缺指标序列: {list(by_key)}"
 parse = lambda t: datetime.fromisoformat(t.replace("Z", "+00:00"))
-spacings = [round((parse(b["t"]) - parse(a["t"])).total_seconds()) for a, b in zip(points, points[1:])]
-assert all(15 <= s <= 45 for s in spacings), f"点间隔应约 30s，实际 {spacings}"
-assert all(0 <= p["cpu"] <= 100 and 0 <= p["mem"] <= 100 and 0 <= p["disk"] <= 100 for p in points), "百分比越界"
-print(f"  指标点 {len(points)} 个，间隔 {spacings}s，cpu/mem/disk 数值正常")
+for key in ("cpu", "mem", "disk"):
+    points = by_key[key]
+    assert len(points) >= 2, f"{key} 预期至少 2 个指标点，实际 {len(points)}"
+    spacings = [round((parse(b["t"]) - parse(a["t"])).total_seconds()) for a, b in zip(points, points[1:])]
+    assert all(15 <= s <= 45 for s in spacings), f"{key} 点间隔应约 30s，实际 {spacings}"
+    assert all(0 <= p["v"] <= 100 for p in points), f"{key} 百分比越界"
+print(f"  指标点 cpu/mem/disk 各 {len(by_key['cpu'])} 个，间隔正常，数值正常")
 PYEOF
   record "3-指标曲线" "PASS" "真实 agent 30s 周期上报，曲线点可见且间隔正常"
 else
@@ -210,14 +214,14 @@ else
 fi
 
 # ---------- 验收 7：日志通道（服务清单 + 尾部拉取） ----------
-SERVICES_JSON=$(curl -sf -b "$COOKIE" "$PANEL_BASE/api/devices/$DEV_ID/logs/services" || echo '{"services":[]}')
+SERVICES_JSON=$(curl -sf -b "$COOKIE" "$PANEL_BASE/api/collectors/$DEV_ID/logs/services" || echo '{"services":[]}')
 SERVICE_COUNT=$(printf '%s' "$SERVICES_JSON" | json_get "['services'].__len__()" 2>/dev/null || echo 0)
 if [ "$SERVICE_COUNT" = "0" ] || [ "$SERVICE_COUNT" = "None" ]; then
   record "7-日志查看" "SKIP" "目标机无 systemd/docker 日志源可列（用户环境按 checklist 执行）"
 else
   SVC=$(printf '%s' "$SERVICES_JSON" | json_get "['services'][0]['name']")
   SVC_KIND=$(printf '%s' "$SERVICES_JSON" | json_get "['services'][0]['kind']")
-  TAIL=$(curl -sf -b "$COOKIE" --get "$PANEL_BASE/api/devices/$DEV_ID/logs/tail" \
+  TAIL=$(curl -sf -b "$COOKIE" --get "$PANEL_BASE/api/collectors/$DEV_ID/logs/tail" \
     --data-urlencode "service=$SVC" --data-urlencode "kind=$SVC_KIND" --data-urlencode "lines=5")
   printf '%s' "$TAIL" | python3 -c 'import sys,json;lines=json.load(sys.stdin)["lines"];assert isinstance(lines,list) and len(lines)>=1, lines' \
     || die "验收7 尾部拉取失败"
@@ -245,13 +249,23 @@ if [ "$NAPCAT_OBSERVABLE" != "1" ]; then
 else
   start_spinners
   # 记录验收前的全局 CPU 阈值：验收 5 结束后还原，避免静默改变用户环境的告警灵敏度
-  ORIG_CPU_THR=$(curl -sf -b "$COOKIE" "$PANEL_BASE/api/alerts/thresholds" \
-    | python3 -c 'import sys,json;print(json.load(sys.stdin)["global"]["cpu"])') \
-    || { stop_spinners; die "读取当前全局 CPU 阈值失败"; }
+  # 复用既有全局 CPU 越限规则（迁移 009 已内置阈值 90 全局规则）：临时调到 5%，结束后还原
+  RULES_JSON=$(curl -sf -b "$COOKIE" --get "$PANEL_BASE/api/alert-rules" \
+    --data-urlencode "metricKey=cpu") || { stop_spinners; die "读取告警规则失败"; }
+  RULE_ID=$(printf '%s' "$RULES_JSON" | DEV_NAME="$DEV_NAME" python3 -c '
+import json, os, sys
+rules = json.loads(sys.stdin.read())
+ids = [r["id"] for r in rules if r["targetId"] is None and r["metricKey"] == "cpu" and r["ruleType"] == "threshold_above"]
+assert len(ids) == 1, f"预期恰有一个全局 CPU 越限规则，实际 {len(ids)}"
+print(ids[0])') || { stop_spinners; die "未找到全局 CPU 越限规则"; }
+  ORIG_PARAMS=$(printf '%s' "$RULES_JSON" | python3 -c "
+import json, sys
+rules = json.loads(sys.stdin.read())
+print(json.dumps(next(r['parameters'] for r in rules if r['id'] == int('$RULE_ID'))))")
   curl -sf -b "$COOKIE" -X PUT -H 'Content-Type: application/json' \
-    -d '{"metric":"cpu","value":5}' "$PANEL_BASE/api/alerts/thresholds/global" >/dev/null \
-    || { stop_spinners; die "设置全局 CPU 阈值失败"; }
-  echo "== 全局 CPU 阈值已设为 5%，等待持续越限告警（≤${CPU_WAIT}s）…"
+    -d '{"parameters":{"threshold":5}}' "$PANEL_BASE/api/alert-rules/$RULE_ID" >/dev/null \
+    || { stop_spinners; die "调整全局 CPU 越限规则阈值失败"; }
+  echo "== 全局 CPU 越限规则阈值已临时调至 5%，等待持续越限告警（≤${CPU_WAIT}s）…"
   if poll_until "$CPU_WAIT" "napcat 收到指标越限告警" grep -q "指标越限告警" "$NAPCAT_LOG"; then
     ALERT_CPU=$(grep "指标越限告警" "$NAPCAT_LOG" | head -1)
     printf '%s' "$ALERT_CPU" | python3 -c '
@@ -267,23 +281,24 @@ print(f"  napcat 收到：{text}")
   fi
   stop_spinners
   curl -sf -b "$COOKIE" -X PUT -H 'Content-Type: application/json' \
-    -d "{\"metric\":\"cpu\",\"value\":$ORIG_CPU_THR}" "$PANEL_BASE/api/alerts/thresholds/global" >/dev/null
+    -d "{\"parameters\":$ORIG_PARAMS}" "$PANEL_BASE/api/alert-rules/$RULE_ID" >/dev/null \
+    || echo "!! 全局 CPU 越限规则阈值还原失败（id=$RULE_ID，原参数 $ORIG_PARAMS），请手动还原"
 fi
 
 # ---------- 验收 4：agent 停止 → 离线 + QQ 离线告警（napcat 正常，直发） ----------
 KILL_AT=$(date +%s)
 stop_agent
-poll_until 120 "设备判定离线" bash -c "curl -sf -b '$COOKIE' '$PANEL_BASE/api/devices' | python3 -c 'import sys,json;ds=json.load(sys.stdin);print(any(d[\"id\"]==$DEV_ID and not d[\"online\"] for d in ds))' | grep -q True" \
+poll_until 120 "设备判定离线" bash -c "curl -sf -b '$COOKIE' '$PANEL_BASE/api/collectors' | python3 -c 'import sys,json;ds=json.load(sys.stdin);print(any(d[\"id\"]==$DEV_ID and not d[\"online\"] for d in ds))' | grep -q True" \
   || die "验收4 失败：120s 内未判定离线"
 OFFLINE_AT=$(date +%s)
 if [ "$NAPCAT_OBSERVABLE" = "1" ]; then
-  poll_until 90 "napcat 收到离线告警" grep -q "设备离线告警" "$NAPCAT_LOG" \
+  poll_until 90 "napcat 收到离线告警" grep -q "目标状态告警" "$NAPCAT_LOG" \
     || die "验收4 失败：未收到离线告警"
-  grep "设备离线告警" "$NAPCAT_LOG" | head -1 | python3 -c '
+  grep "目标状态告警" "$NAPCAT_LOG" | head -1 | python3 -c '
 import sys, json
 entry = json.loads(sys.stdin.read())
 text = " ".join(m["data"]["text"] for m in entry["payload"]["message"] if m["type"] == "text")
-assert "离线" in text, text
+assert "在线状态" in text and "false" in text, text
 print(f"  napcat 收到：{text}")
 ' || die "验收4 失败：离线告警内容异常"
   record "4-离线判定与告警" "PASS" "停 agent 后 $((OFFLINE_AT - KILL_AT))s 内离线，QQ 渠道收到含设备名的离线告警"
@@ -303,9 +318,12 @@ else
   LINES_BEFORE=$(wc -l <"$NAPCAT_LOG")
   echo "== 假 napcat 已停止；重启 agent 等待恢复在线后再次制造离线事件…"
   start_agent "$AGENT_TOKEN"
-  poll_until 40 "设备恢复在线（离线事件关闭）" bash -c "curl -sf -b '$COOKIE' '$PANEL_BASE/api/devices' | python3 -c 'import sys,json;ds=json.load(sys.stdin);print(any(d[\"id\"]==$DEV_ID and d[\"online\"] for d in ds))' | grep -q True" \
+  poll_until 40 "设备恢复在线（离线事件关闭）" bash -c "curl -sf -b '$COOKIE' '$PANEL_BASE/api/collectors' | python3 -c 'import sys,json;ds=json.load(sys.stdin);print(any(d[\"id\"]==$DEV_ID and d[\"online\"] for d in ds))' | grep -q True" \
     || die "验收9 失败：agent 重启后未恢复在线"
-  sleep 20  # 等离线扫描（15s 周期）确认恢复、关闭上一事件，再制造新离线
+  # 上一离线事件的关闭由心跳写入的 online=true 样本驱动（心跳周期 30s，WS 连接本身不产生样本）；
+  # 必须等事件真正恢复再制造新离线，否则 repeat=0 的语义会压制第二条告警（引擎按设计只发一次）
+  poll_until 90 "上一离线事件恢复关闭（等待重启后首个心跳，周期 30s）" bash -c "curl -sf -b '$COOKIE' '$PANEL_BASE/api/alerts/active-count' | python3 -c 'import sys,json;print(json.load(sys.stdin)[\"count\"]==0)' | grep -q True" \
+    || die "验收9 失败：agent 重启后上一离线事件未恢复关闭"
   stop_agent
   poll_until 120 "离线告警进入待发队列（napcat 不可达）" bash -c \
     "curl -sf -b '$COOKIE' '$PANEL_BASE/api/alerts/queue' | python3 -c 'import sys,json;q=json.load(sys.stdin);print(q[\"count\"]>=1)' | grep -q True" \
