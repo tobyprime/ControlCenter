@@ -1,4 +1,6 @@
-import { apiFetch, wsUrl } from './base'
+// TOB-401：留痕查询走生成客户端；WebSocket 入口保持手写薄封装（WS 不生成）。
+import { getApiTerminalSessions, getApiTerminalSessionsRecords } from './gen'
+import { wsUrl } from './base'
 
 export interface TerminalSessionInfo {
   id: string
@@ -23,48 +25,23 @@ export async function listTerminalSessions(
   fromIso?: string,
   toIso?: string,
 ): Promise<TerminalSessionInfo[]> {
-  const query = new URLSearchParams()
+  const query: Record<string, string | number> = {}
   if (deviceId !== undefined) {
-    query.set('deviceId', String(deviceId))
+    query.deviceId = deviceId
   }
   if (fromIso) {
-    query.set('from', fromIso)
+    query.from = fromIso
   }
   if (toIso) {
-    query.set('to', toIso)
+    query.to = toIso
   }
-  const suffix = query.size > 0 ? `?${query.toString()}` : ''
-  const response = await apiFetch(`/api/terminal/sessions${suffix}`)
-  if (!response.ok) {
-    let message = `请求失败（${response.status}）`
-    try {
-      const body = (await response.json()) as { error?: string }
-      if (body.error) {
-        message = body.error
-      }
-    } catch {
-      // 忽略非 JSON 响应体
-    }
-    throw new Error(message)
-  }
-  return (await response.json()) as TerminalSessionInfo[]
+  const { data } = await getApiTerminalSessions<true>({ query })
+  return data as TerminalSessionInfo[]
 }
 
 export async function listTerminalRecords(sessionId: string): Promise<TerminalRecordInfo[]> {
-  const response = await apiFetch(`/api/terminal/sessions/${encodeURIComponent(sessionId)}/records`)
-  if (!response.ok) {
-    let message = `请求失败（${response.status}）`
-    try {
-      const body = (await response.json()) as { error?: string }
-      if (body.error) {
-        message = body.error
-      }
-    } catch {
-      // 忽略非 JSON 响应体
-    }
-    throw new Error(message)
-  }
-  return (await response.json()) as TerminalRecordInfo[]
+  const { data } = await getApiTerminalSessionsRecords<true>({ path: { sessionId } })
+  return data as TerminalRecordInfo[]
 }
 
 // 浏览器终端 WebSocket 地址（同源或绝对地址，会话 Cookie 随请求携带）

@@ -1,4 +1,13 @@
-import { apiFetch } from './base'
+// TOB-401：实现由 openapi-ts 生成客户端承载（契约见 src/api/gen/），本模块只保留视图层消费的类型与函数签名。
+import {
+  deleteApiMetricsKeys,
+  getApiMetricsAvailable,
+  getApiMetricsKeys,
+  getApiMetricsOverview,
+  getApiMetricsSeries,
+  postApiMetricsKeys,
+  putApiMetricsKeys,
+} from './gen'
 
 export type Granularity = 'raw' | 'hour' | 'day'
 
@@ -43,63 +52,39 @@ export interface MetricOverviewItem {
   latestValueText: string | null
 }
 
-async function request<T>(input: string, init?: RequestInit): Promise<T> {
-  const response = await apiFetch(input, {
-    headers: { 'Content-Type': 'application/json' },
-    ...init,
-  })
-  if (!response.ok) {
-    let message = `请求失败（${response.status}）`
-    try {
-      const body = (await response.json()) as { error?: string }
-      if (body.error) {
-        message = body.error
-      }
-    } catch {
-      // 忽略非 JSON 响应体
-    }
-    throw new Error(message)
-  }
-  if (response.status === 204) {
-    return undefined as T
-  }
-  return (await response.json()) as T
+export async function listMetricKeys(): Promise<MetricKeyInfo[]> {
+  const { data } = await getApiMetricsKeys<true>({})
+  return data as MetricKeyInfo[]
 }
 
-export function listMetricKeys(): Promise<MetricKeyInfo[]> {
-  return request<MetricKeyInfo[]>('/api/metrics/keys')
-}
-
-export function registerMetricKey(input: {
+export async function registerMetricKey(input: {
   key: string
   valueType: MetricValueType
   displayName: string
   unit?: string
 }): Promise<MetricKeyInfo> {
-  return request<MetricKeyInfo>('/api/metrics/keys', {
-    method: 'POST',
-    body: JSON.stringify(input),
-  })
+  const { data } = await postApiMetricsKeys<true>({ body: input })
+  return data as MetricKeyInfo
 }
 
-export function updateMetricKey(key: string, displayName: string, unit: string): Promise<MetricKeyInfo> {
-  return request<MetricKeyInfo>(`/api/metrics/keys/${encodeURIComponent(key)}`, {
-    method: 'PUT',
-    body: JSON.stringify({ displayName, unit }),
-  })
+export async function updateMetricKey(key: string, displayName: string, unit: string): Promise<MetricKeyInfo> {
+  const { data } = await putApiMetricsKeys<true>({ path: { key }, body: { displayName, unit } })
+  return data as MetricKeyInfo
 }
 
-export function deleteMetricKey(key: string): Promise<void> {
-  return request<void>(`/api/metrics/keys/${encodeURIComponent(key)}`, { method: 'DELETE' })
+export async function deleteMetricKey(key: string): Promise<void> {
+  await deleteApiMetricsKeys<true>({ path: { key } })
 }
 
-export function fetchTargetOverview(targetId: number): Promise<MetricOverviewItem[]> {
-  return request<MetricOverviewItem[]>(`/api/metrics/${targetId}/overview`)
+export async function fetchTargetOverview(targetId: number): Promise<MetricOverviewItem[]> {
+  const { data } = await getApiMetricsOverview<true>({ path: { collectorId: targetId } })
+  return data as MetricOverviewItem[]
 }
 
 /** 按来源可用指标（TOB-374 ①）：优先该来源已上报的 key，无上报数据回退到按类型的内置 key。 */
-export function fetchTargetAvailableMetrics(targetId: number): Promise<MetricKeyInfo[]> {
-  return request<MetricKeyInfo[]>(`/api/metrics/${targetId}/available`)
+export async function fetchTargetAvailableMetrics(targetId: number): Promise<MetricKeyInfo[]> {
+  const { data } = await getApiMetricsAvailable<true>({ path: { collectorId: targetId } })
+  return data as MetricKeyInfo[]
 }
 
 export async function fetchTargetSeries(
@@ -109,6 +94,9 @@ export async function fetchTargetSeries(
   toIso: string,
   granularity: 'auto' | Granularity = 'auto',
 ): Promise<TargetSeries> {
-  const query = new URLSearchParams({ keys: keys.join(','), from: fromIso, to: toIso, granularity })
-  return request<TargetSeries>(`/api/metrics/${targetId}/series?${query.toString()}`)
+  const { data } = await getApiMetricsSeries<true>({
+    path: { collectorId: targetId },
+    query: { keys: keys.join(','), from: fromIso, to: toIso, granularity },
+  })
+  return data as TargetSeries
 }

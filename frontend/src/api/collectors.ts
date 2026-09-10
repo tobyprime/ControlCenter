@@ -1,4 +1,15 @@
-import { apiFetch } from './base'
+// TOB-401：实现由 openapi-ts 生成客户端承载（契约见 src/api/gen/），本模块只保留视图层消费的类型与函数签名。
+import {
+  deleteApiCollectors,
+  getApiCollectors,
+  getApiCollectorsDataTypes,
+  getApiCollectorsMetricsLatest,
+  getApiCollectorsPull,
+  postApiCollectors,
+  postApiCollectorsToken,
+  putApiCollectors,
+  putApiCollectorsPull,
+} from './gen'
 import type { MetricValueType } from './metrics'
 
 /** 采集模式：push = agent 周期上报；pull = 面板侧轮询（无需 agent）。模式由后端推导，前端只读展示。 */
@@ -72,85 +83,55 @@ export interface CollectorLatestSample {
   valueText: string | null
 }
 
-async function request<T>(input: string, init?: RequestInit): Promise<T> {
-  const response = await apiFetch(input, {
-    headers: { 'Content-Type': 'application/json' },
-    ...init,
-  })
-  if (!response.ok) {
-    let message = `请求失败（${response.status}）`
-    try {
-      const body = (await response.json()) as { error?: string }
-      if (body.error) {
-        message = body.error
-      }
-    } catch {
-      // 忽略非 JSON 响应体
-    }
-    const error = new Error(message) as Error & { status?: number }
-    error.status = response.status
-    throw error
-  }
-  if (response.status === 204) {
-    return undefined as T
-  }
-  return (await response.json()) as T
-}
-
-export function listCollectors(): Promise<Collector[]> {
-  return request<Collector[]>('/api/collectors')
+export async function listCollectors(): Promise<Collector[]> {
+  const { data } = await getApiCollectors<true>({})
+  return data as Collector[]
 }
 
 /** 创建采集器：带 pull 配置 = pull 采集器；否则 = push 采集器（返回一次性的 agent token）。 */
-export function createCollector(input: {
+export async function createCollector(input: {
   name: string
   tags: string[]
   pull?: PullUpsertInput
 }): Promise<CollectorCreated> {
-  return request<CollectorCreated>('/api/collectors', {
-    method: 'POST',
-    body: JSON.stringify(input),
-  })
+  const { data } = await postApiCollectors<true>({ body: input })
+  return data as CollectorCreated
 }
 
-export function updateCollector(id: number, name: string, tags: string[]): Promise<Collector> {
-  return request<Collector>(`/api/collectors/${id}`, {
-    method: 'PUT',
-    body: JSON.stringify({ name, tags }),
-  })
+export async function updateCollector(id: number, name: string, tags: string[]): Promise<Collector> {
+  const { data } = await putApiCollectors<true>({ path: { id }, body: { name, tags } })
+  return data as Collector
 }
 
-export function deleteCollector(id: number): Promise<void> {
-  return request<void>(`/api/collectors/${id}`, { method: 'DELETE' })
+export async function deleteCollector(id: number): Promise<void> {
+  await deleteApiCollectors<true>({ path: { id } })
 }
 
 /** 重置 push 采集器的 agent token；pull 采集器无 token，后端返回 400。 */
-export function resetCollectorToken(id: number): Promise<{ agentToken: string }> {
-  return request<{ agentToken: string }>(`/api/collectors/${id}/token`, {
-    method: 'POST',
-    body: JSON.stringify({}),
-  })
+export async function resetCollectorToken(id: number): Promise<{ agentToken: string }> {
+  const { data } = await postApiCollectorsToken<true>({ path: { id } })
+  return data as { agentToken: string }
 }
 
 /** 读取 pull 采集器轮询配置；未配置（204）返回 null。 */
 export async function getPullConfig(id: number): Promise<PullConfig | null> {
-  const config = await request<PullConfig | null>(`/api/collectors/${id}/pull`)
-  return config ?? null
+  const { data } = await getApiCollectorsPull<true>({ path: { id } })
+  return (data ?? null) as PullConfig | null
 }
 
-export function updatePullConfig(id: number, input: PullUpsertInput): Promise<PullConfig> {
-  return request<PullConfig>(`/api/collectors/${id}/pull`, {
-    method: 'PUT',
-    body: JSON.stringify(input),
-  })
+export async function updatePullConfig(id: number, input: PullUpsertInput): Promise<PullConfig> {
+  const { data } = await putApiCollectorsPull<true>({ path: { id }, body: input })
+  return data as PullConfig
 }
 
 /** 采集器数据类型清单（验收8）：后端经 DI 收集的注册类型全集。 */
-export function listCollectorDataTypes(): Promise<CollectorDataType[]> {
-  return request<CollectorDataType[]>('/api/collectors/data-types')
+export async function listCollectorDataTypes(): Promise<CollectorDataType[]> {
+  const { data } = await getApiCollectorsDataTypes<true>({})
+  return data as CollectorDataType[]
 }
 
 /** 按需查询最新值：push 经 agent 即时采样（离线 409/超时 504），pull 直读面板侧最新样本。 */
-export function fetchLatestValues(id: number): Promise<{ samples: CollectorLatestSample[] }> {
-  return request<{ samples: CollectorLatestSample[] }>(`/api/collectors/${id}/metrics/latest`)
+export async function fetchLatestValues(id: number): Promise<{ samples: CollectorLatestSample[] }> {
+  const { data } = await getApiCollectorsMetricsLatest<true>({ path: { collectorId: id } })
+  return data as { samples: CollectorLatestSample[] }
 }

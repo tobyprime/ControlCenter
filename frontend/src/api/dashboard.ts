@@ -1,4 +1,5 @@
-import { apiFetch } from './base'
+// TOB-401：实现由 openapi-ts 生成客户端承载（契约见 src/api/gen/），本模块只保留视图层消费的类型与函数签名。
+import { getApiDashboardLayout, putApiDashboardLayout } from './gen'
 
 // 布局契约（TOB-366）：单用户单套，整份布局读写；
 // 卡片条目含 id、类型、排序、显隐与 config（config 后端只透传不解释语义）。
@@ -33,41 +34,14 @@ function cardToWireCard(card: DashboardCard): DashboardCardWire {
   return { ...rest, sort: order }
 }
 
-async function request<T>(input: string, init?: RequestInit): Promise<T> {
-  const response = await apiFetch(input, {
-    headers: { 'Content-Type': 'application/json' },
-    ...init,
-  })
-  if (!response.ok) {
-    let message = `请求失败（${response.status}）`
-    try {
-      const body = (await response.json()) as { error?: string }
-      if (body.error) {
-        message = body.error
-      }
-    } catch {
-      // 忽略非 JSON 响应体
-    }
-    const error = new Error(message) as Error & { status?: number }
-    error.status = response.status
-    throw error
-  }
-  if (response.status === 204) {
-    return undefined as T
-  }
-  return (await response.json()) as T
-}
-
 // 无记录时服务端返回默认布局；前端对失败/空结果另行回退，见 dashboard/cards.ts
 export async function fetchDashboardLayout(): Promise<DashboardLayout> {
-  const layout = await request<{ cards: DashboardCardWire[] }>('/api/dashboard/layout')
+  const { data } = await getApiDashboardLayout<true>({})
+  const layout = data as { cards: DashboardCardWire[] }
   return { cards: layout.cards.map(wireCardToCard) }
 }
 
 // 后端整份替换保存，成功返回 204 无响应体
 export async function saveDashboardLayout(cards: DashboardCard[]): Promise<void> {
-  await request<void>('/api/dashboard/layout', {
-    method: 'PUT',
-    body: JSON.stringify({ cards: cards.map(cardToWireCard) }),
-  })
+  await putApiDashboardLayout<true>({ body: { cards: cards.map(cardToWireCard) } })
 }

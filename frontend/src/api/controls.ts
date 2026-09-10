@@ -1,4 +1,5 @@
-import { apiFetch } from './base'
+// TOB-401：实现由 openapi-ts 生成客户端承载（契约见 src/api/gen/），本模块只保留视图层消费的类型与函数签名。
+import { getApiCollectorsControllers, getApiControlsLogs, getApiControlsTypes, postApiCollectorsControllersInvoke } from './gen'
 
 /** 控制类型注册表条目（后端 ControlTypeCatalog 清单：新增类型 = 注册 IControlType 后自动出现）。 */
 export interface ControlTypeInfo {
@@ -58,47 +59,25 @@ export function controlTypeLabel(type: string): string {
   return CONTROL_TYPE_LABELS[type] ?? type
 }
 
-async function request<T>(input: string, init?: RequestInit): Promise<T> {
-  const response = await apiFetch(input, {
-    headers: { 'Content-Type': 'application/json' },
-    ...init,
-  })
-  if (!response.ok) {
-    let message = `请求失败（${response.status}）`
-    try {
-      const body = (await response.json()) as { error?: string }
-      if (body.error) {
-        message = body.error
-      }
-    } catch {
-      // 忽略非 JSON 响应体
-    }
-    const error = new Error(message) as Error & { status?: number }
-    error.status = response.status
-    throw error
-  }
-  if (response.status === 204) {
-    return undefined as T
-  }
-  return (await response.json()) as T
-}
-
 /** 控制类型注册表清单（验收4 的对外表面）。 */
-export function listControlTypes(): Promise<{ types: ControlTypeInfo[] }> {
-  return request<{ types: ControlTypeInfo[] }>('/api/controls/types')
+export async function listControlTypes(): Promise<{ types: ControlTypeInfo[] }> {
+  const { data } = await getApiControlsTypes<true>({})
+  return data as { types: ControlTypeInfo[] }
 }
 
 /** 采集器已声明的控制器实体（来自 agent 能力上报）。 */
-export function listCollectorControllers(id: number): Promise<{ controllers: ControllerDeclaration[] }> {
-  return request<{ controllers: ControllerDeclaration[] }>(`/api/collectors/${id}/controllers`)
+export async function listCollectorControllers(id: number): Promise<{ controllers: ControllerDeclaration[] }> {
+  const { data } = await getApiCollectorsControllers<true>({ path: { collectorId: id } })
+  return data as { controllers: ControllerDeclaration[] }
 }
 
 /** 下发一次控制并即时取回结论；失败语义：离线 409 / agent 报错 502 / 超时 504，错误体为 { error, status }。 */
-export function invokeController(id: number, key: string, params: unknown): Promise<ControlInvokeOutcome> {
-  return request<ControlInvokeOutcome>(`/api/collectors/${id}/controllers/${encodeURIComponent(key)}/invoke`, {
-    method: 'POST',
-    body: JSON.stringify({ params }),
+export async function invokeController(id: number, key: string, params: unknown): Promise<ControlInvokeOutcome> {
+  const { data } = await postApiCollectorsControllersInvoke<true>({
+    path: { collectorId: id, key },
+    body: { params },
   })
+  return data as ControlInvokeOutcome
 }
 
 export interface ControlLogQuery {
@@ -110,23 +89,23 @@ export interface ControlLogQuery {
 }
 
 /** 控制留痕查询：按控制器/时间筛选，最新在前。 */
-export function listControlLogs(query: ControlLogQuery = {}): Promise<{ logs: ControlLogEntry[] }> {
-  const search = new URLSearchParams()
+export async function listControlLogs(query: ControlLogQuery = {}): Promise<{ logs: ControlLogEntry[] }> {
+  const search: Record<string, string | number> = {}
   if (query.collectorId !== undefined) {
-    search.set('collectorId', String(query.collectorId))
+    search.collectorId = query.collectorId
   }
   if (query.controllerKey) {
-    search.set('controllerKey', query.controllerKey)
+    search.controllerKey = query.controllerKey
   }
   if (query.fromUtc) {
-    search.set('from', query.fromUtc)
+    search.from = query.fromUtc
   }
   if (query.toUtc) {
-    search.set('to', query.toUtc)
+    search.to = query.toUtc
   }
   if (query.limit !== undefined) {
-    search.set('limit', String(query.limit))
+    search.limit = query.limit
   }
-  const qs = search.toString()
-  return request<{ logs: ControlLogEntry[] }>(`/api/controls/logs${qs ? `?${qs}` : ''}`)
+  const { data } = await getApiControlsLogs<true>({ query: search })
+  return data as { logs: ControlLogEntry[] }
 }
