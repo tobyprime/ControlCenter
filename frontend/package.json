@@ -8,7 +8,8 @@
     "build": "vite build",
     "build:pages": "vite build --mode pages --outDir dist",
     "typecheck": "vue-tsc --noEmit",
-    "gen:api": "openapi-ts"
+    "gen:api": "openapi-ts",
+    "check:api-drift": "bash scripts/check-api-drift.sh"
   },
   "dependencies": {
     "@xterm/addon-fit": "^0.11.0",
