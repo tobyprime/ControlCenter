@@ -12,9 +12,11 @@ import {
   type AlertRuleTypeInfo,
 } from '@/api/alertRules'
 import {
+  fetchAlertEvents,
   fetchAlertQueue,
   fetchAlertSettings,
   saveAlertSettings,
+  type AlertEvent,
   type AlertQueue,
   type NapcatSettings,
 } from '@/api/alerts'
@@ -354,9 +356,42 @@ function parameterText(rule: AlertRule): string {
   return JSON.stringify(rule.parameters)
 }
 
+// 告警事件历史（TOB-403 F2）：按目标与起始时间筛选，倒序展示触发/恢复与 QQ 投递结果
+const history = ref<AlertEvent[]>([])
+const historyLoading = ref(false)
+const historyError = ref('')
+const historyTargetId = ref<number | null>(null)
+const historyFrom = ref('')
+
+const kindLabels: Record<string, string> = { trigger: '触发', recover: '恢复' }
+const deliveryLabels: Record<string, string> = { pending: '待发送', delivered: '已投递', failed: '投递失败' }
+
+function sampleText(event: AlertEvent): string {
+  if (!event.sample) return '—'
+  if (event.sample.valueText !== null) return event.sample.valueText
+  if (event.sample.valueNum !== null) return String(event.sample.valueNum)
+  return '—'
+}
+
+async function loadHistory(): Promise<void> {
+  historyLoading.value = true
+  historyError.value = ''
+  try {
+    const fromUtc = historyFrom.value ? new Date(historyFrom.value).toISOString() : null
+    const result = await fetchAlertEvents({ targetId: historyTargetId.value, fromUtc, limit: 200 })
+    history.value = result.items
+  } catch (e) {
+    historyError.value = e instanceof Error ? e.message : '告警历史获取失败'
+  } finally {
+    historyLoading.value = false
+  }
+}
+
+watch(historyTargetId, () => loadHistory())
+
 onMounted(async () => {
   try {
-    await Promise.all([loadSettings(), loadQueue(), listRuleTypes().then((types) => (ruleTypes.value = types))])
+    await Promise.all([loadSettings(), loadQueue(), loadHistory(), listRuleTypes().then((types) => (ruleTypes.value = types))])
     const [targetList, keys, ruleList] = await Promise.all([listCollectors(), listMetricKeys(), listAlertRules()])
     targets.value = targetList
     metricKeys.value = keys
@@ -588,6 +623,64 @@ onMounted(async () => {
       </table>
       <p v-else class="card-note">队列空闲：napcat 正常或暂无待补发的告警。</p>
     </section>
+
+    <section class="card">
+      <h2 class="card-title">
+        告警历史
+        <span class="queue-count">{{ history.length }} 条</span>
+        <button type="button" class="link-button" :disabled="historyLoading" @click="loadHistory">
+          {{ historyLoading ? '刷新中…' : '刷新' }}
+        </button>
+      </h2>
+      <div class="history-filters">
+        <label class="history-filter">
+          <span class="history-filter-label">目标</span>
+          <select v-model.number="historyTargetId" class="control-select history-filter-control">
+            <option :value="null">全部目标</option>
+            <option v-for="target in targets" :key="target.id" :value="target.id">{{ target.name }}</option>
+          </select>
+        </label>
+        <label class="history-filter">
+          <span class="history-filter-label">起始时间</span>
+          <input v-model="historyFrom" type="datetime-local" class="control-input history-filter-control" @change="loadHistory" />
+        </label>
+      </div>
+      <span v-if="historyError" class="error-note">{{ historyError }}</span>
+      <table v-if="history.length > 0" class="override-table">
+        <thead>
+          <tr>
+            <th>时间</th>
+            <th>类型</th>
+            <th>目标</th>
+            <th>指标</th>
+            <th>当时值</th>
+            <th>内容</th>
+            <th>QQ 投递</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="event in history" :key="event.id">
+            <td class="history-time">{{ new Date(event.createdAtUtc).toLocaleString() }}</td>
+            <td>
+              <span class="history-kind" :class="event.kind === 'trigger' ? 'kind-trigger' : 'kind-recover'">
+                {{ kindLabels[event.kind] ?? event.kind }}
+              </span>
+            </td>
+            <td>{{ event.targetName }}</td>
+            <td>{{ event.metricDisplayName }}</td>
+            <td>{{ sampleText(event) }}</td>
+            <td class="history-content">{{ event.title }}：{{ event.content }}</td>
+            <td>
+              <span class="history-delivery" :class="`delivery-${event.deliveryStatus}`">
+                {{ deliveryLabels[event.deliveryStatus] ?? event.deliveryStatus }}
+              </span>
+              <div v-if="event.deliveryError" class="history-delivery-error">{{ event.deliveryError }}</div>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+      <p v-else-if="!historyLoading" class="card-note">暂无告警记录：触发或恢复后这里会保留事件快照（规则、目标、当时值与投递结果）。</p>
+    </section>
   </section>
 </template>
 
@@ -775,6 +868,79 @@ onMounted(async () => {
 .queue-error {
   color: var(--color-danger);
   max-width: 240px;
+  word-break: break-all;
+}
+
+.history-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  margin-bottom: 12px;
+}
+
+.history-filter {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.history-filter-label {
+  font-size: 0.75rem;
+  color: var(--color-text-light);
+}
+
+.history-filter-control {
+  min-width: 200px;
+}
+
+.history-time {
+  white-space: nowrap;
+}
+
+.history-kind {
+  display: inline-block;
+  padding: 2px 10px;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  white-space: nowrap;
+}
+
+.history-kind.kind-trigger {
+  background: #fef2f2;
+  color: #b91c1c;
+}
+
+.history-kind.kind-recover {
+  background: #ecfdf5;
+  color: #047857;
+}
+
+.history-content {
+  max-width: 380px;
+  word-break: break-all;
+}
+
+.history-delivery {
+  font-size: 0.78rem;
+  white-space: nowrap;
+}
+
+.history-delivery.delivery-pending {
+  color: #b45309;
+}
+
+.history-delivery.delivery-delivered {
+  color: #16a34a;
+}
+
+.history-delivery.delivery-failed {
+  color: var(--color-danger);
+}
+
+.history-delivery-error {
+  font-size: 0.72rem;
+  color: var(--color-danger);
+  max-width: 200px;
   word-break: break-all;
 }
 

@@ -19,6 +19,7 @@ public class AlertRuleEngineTests : IDisposable
     private readonly AlertRuleStore _rules;
     private readonly MetricKeyRegistry _metricKeys;
     private readonly AlertOutboxStore _outbox;
+    private readonly AlertEventStore _events;
     private readonly AlertRuleEngine _engine;
     private readonly long _targetId;
     private readonly string _targetName = "压测机甲";
@@ -30,6 +31,7 @@ public class AlertRuleEngineTests : IDisposable
         _rules = new AlertRuleStore(_db.Factory, _clock);
         _metricKeys = new MetricKeyRegistry(_db.Factory, _clock);
         _outbox = new AlertOutboxStore(_db.Factory);
+        _events = new AlertEventStore(_db.Factory);
         _engine = CreateEngine();
         _targetId = _targets.Create(_targetName, ["机房A", CollectorBuiltinTags.Device]).Id;
 
@@ -46,6 +48,7 @@ public class AlertRuleEngineTests : IDisposable
         new(_rules, _metricKeys, _metrics, _targets,
             [new ThresholdAboveRuleType(), new ThresholdBelowRuleType(), new NoDataRuleType(), new StateMismatchRuleType()],
             new AlertStateStore(_db.Factory),
+            _events,
             new AlertDispatcher(_outbox, [new StubNotifier()]),
             _clock,
             Microsoft.Extensions.Logging.Abstractions.NullLogger<AlertRuleEngine>.Instance);
@@ -190,6 +193,95 @@ public class AlertRuleEngineTests : IDisposable
         Report(MetricKeys.Cpu, 50);
 
         Assert.Single(_outbox.List());
+    }
+
+    // —— 事件历史（TOB-403 F2）：触发/恢复各记一行，防抖等待与未触达告警不记 ——
+
+    [Fact]
+    public void Sustained_Violation_Appends_Trigger_Event_With_Snapshot()
+    {
+        var rule = CreateRule(null, MetricKeys.Cpu, ThresholdAboveRuleType.TypeIdValue, """{"threshold":90}""");
+
+        Report(MetricKeys.Cpu, 95.5);
+        _clock.Advance(TimeSpan.FromSeconds(30));
+        Report(MetricKeys.Cpu, 97);
+        _clock.Advance(TimeSpan.FromSeconds(31));
+        Report(MetricKeys.Cpu, 97);
+
+        var row = Assert.Single(_events.List(null, null, null, 100));
+        Assert.Equal(rule.Id, row.RuleId);
+        Assert.Equal(AlertEventKinds.Trigger, row.Kind);
+        Assert.Equal(_targetId, row.TargetId);
+        Assert.Equal(_targetName, row.TargetName);
+        Assert.Equal("cpu", row.MetricKey);
+        Assert.Equal(new ThresholdAboveRuleType().AlertTitle, row.Title);
+        Assert.Contains("97.0", row.Content);
+        Assert.NotNull(row.Sample);
+        Assert.Equal(97, row.Sample!.ValueNum);
+        // 事件与待发队列行关联：投递结果可回写
+        var entry = _outbox.PeekOldest()!;
+        Assert.Equal(row.Id, entry.AlertEventId);
+        Assert.Equal(AlertDeliveryStatuses.Pending, row.DeliveryStatus);
+    }
+
+    [Fact]
+    public void Debounce_Wait_Does_Not_Append_Event()
+    {
+        CreateRule(null, MetricKeys.Cpu, ThresholdAboveRuleType.TypeIdValue, """{"threshold":90}""");
+
+        Report(MetricKeys.Cpu, 95);
+        _clock.Advance(TimeSpan.FromSeconds(30));
+        Report(MetricKeys.Cpu, 95);
+
+        Assert.Empty(_outbox.List());
+        Assert.Empty(_events.List(null, null, null, 100));
+    }
+
+    [Fact]
+    public void Recovery_After_Trigger_Appends_Recover_Event_With_Delivery()
+    {
+        CreateRule(null, MetricKeys.Cpu, ThresholdAboveRuleType.TypeIdValue, """{"threshold":90}""");
+
+        Report(MetricKeys.Cpu, 95);
+        _clock.Advance(TimeSpan.FromSeconds(61));
+        Report(MetricKeys.Cpu, 95);
+        Report(MetricKeys.Cpu, 50);
+
+        var rows = _events.List(null, null, null, 100);
+        Assert.Equal(2, rows.Count);
+        Assert.Equal(AlertEventKinds.Recover, rows[0].Kind);
+        Assert.Equal(AlertRuleEngine.RecoveryAlertTitle, rows[0].Title);
+        Assert.Equal(AlertEventKinds.Trigger, rows[1].Kind);
+        // 恢复通知同样入队且携带事件 id
+        Assert.All(_outbox.List(), e => Assert.NotNull(e.AlertEventId));
+    }
+
+    [Fact]
+    public void Recovery_Without_Triggered_Alert_Appends_Nothing()
+    {
+        CreateRule(null, MetricKeys.Cpu, ThresholdAboveRuleType.TypeIdValue, """{"threshold":90}""");
+
+        // 越限未满持续窗口即回落：从未触发，无事件记录
+        Report(MetricKeys.Cpu, 95);
+        _clock.Advance(TimeSpan.FromSeconds(30));
+        Report(MetricKeys.Cpu, 50);
+
+        Assert.Empty(_events.List(null, null, null, 100));
+    }
+
+    [Fact]
+    public void Repeat_Notify_Appends_Additional_Trigger_Events()
+    {
+        CreateRule(null, MetricKeys.Cpu, ThresholdAboveRuleType.TypeIdValue, """{"threshold":90}""", sustain: 60, repeat: 5);
+
+        Report(MetricKeys.Cpu, 95);
+        _clock.Advance(TimeSpan.FromSeconds(61));
+        Report(MetricKeys.Cpu, 95);
+        _clock.Advance(TimeSpan.FromMinutes(6));
+        Report(MetricKeys.Cpu, 96);
+
+        Assert.Equal(2, _outbox.List().Count());
+        Assert.Equal(2, _events.List(null, null, null, 100).Count(e => e.Kind == AlertEventKinds.Trigger));
     }
 
     [Fact]

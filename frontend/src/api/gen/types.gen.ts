@@ -238,6 +238,35 @@ export type ActiveAlertCountResponse = {
     count?: number;
 };
 
+export type AlertEventListResponse = {
+    count?: number;
+    items?: Array<AlertEventResponse>;
+};
+
+export type AlertEventResponse = {
+    id?: number;
+    createdAtUtc?: string;
+    ruleId?: number | null;
+    ruleType?: string;
+    targetId?: number | null;
+    targetName?: string;
+    metricKey?: string;
+    metricDisplayName?: string;
+    kind?: string;
+    title?: string;
+    content?: string;
+    sample?: AlertEventSampleResponse | null;
+    deliveryStatus?: string;
+    deliveredAtUtc?: string | null;
+    deliveryError?: string | null;
+};
+
+export type AlertEventSampleResponse = {
+    timeUtc?: string;
+    valueNum?: number | null;
+    valueText?: string | null;
+};
+
 export type AlertRuleTypeResponse = {
     typeId?: string;
     displayName?: string;
@@ -818,6 +847,24 @@ export type GetApiAlertsActiveCountResponses = {
 };
 
 export type GetApiAlertsActiveCountResponse = GetApiAlertsActiveCountResponses[keyof GetApiAlertsActiveCountResponses];
+
+export type GetApiAlertEventsData = {
+    body?: never;
+    path?: never;
+    query?: {
+        targetId?: number | null;
+        fromUtc?: string | null;
+        toUtc?: string | null;
+        limit?: number | null;
+    };
+    url: '/api/alert-events';
+};
+
+export type GetApiAlertEventsResponses = {
+    200: AlertEventListResponse;
+};
+
+export type GetApiAlertEventsResponse = GetApiAlertEventsResponses[keyof GetApiAlertEventsResponses];
 
 export type GetApiAlertRulesTypesData = {
     body?: never;
