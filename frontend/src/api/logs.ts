@@ -1,4 +1,5 @@
-import { apiFetch } from './base'
+// TOB-401：实现由 openapi-ts 生成客户端承载（契约见 src/api/gen/），本模块只保留视图层消费的类型与函数签名。
+import { getApiCollectorsLogsServices, getApiCollectorsLogsTail } from './base'
 
 export type LogKind = 'systemd' | 'docker'
 
@@ -16,27 +17,10 @@ export interface LogLineInfo {
   message: string
 }
 
-async function request<T>(path: string): Promise<T> {
-  const response = await apiFetch(path)
-  if (!response.ok) {
-    let message = `请求失败（${response.status}）`
-    try {
-      const body = (await response.json()) as { error?: string }
-      if (body.error) {
-        message = body.error
-      }
-    } catch {
-      // 忽略非 JSON 响应体
-    }
-    throw new Error(message)
-  }
-  return (await response.json()) as T
-}
-
 /** 日志归并为采集器数据类型（三期模块3）：查询按采集器定位，经 agent 只读拉取。 */
 export async function listLogServices(collectorId: number): Promise<LogServiceInfo[]> {
-  const payload = await request<{ services: LogServiceInfo[] }>(`/api/collectors/${collectorId}/logs/services`)
-  return payload.services
+  const { data } = await getApiCollectorsLogsServices<true>({ path: { collectorId } })
+  return (data as { services: LogServiceInfo[] }).services
 }
 
 export async function fetchLogTail(
@@ -45,7 +29,9 @@ export async function fetchLogTail(
   kind: LogKind,
   lines: number,
 ): Promise<LogLineInfo[]> {
-  const query = new URLSearchParams({ service, kind, lines: String(lines) })
-  const payload = await request<{ lines: LogLineInfo[] }>(`/api/collectors/${collectorId}/logs/tail?${query.toString()}`)
-  return payload.lines
+  const { data } = await getApiCollectorsLogsTail<true>({
+    path: { collectorId },
+    query: { service, kind, lines },
+  })
+  return (data as { lines: LogLineInfo[] }).lines
 }

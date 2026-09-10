@@ -151,7 +151,7 @@ public static class PullCollectorEndpoints
 
             var config = configs.Get(id);
             return config is null ? Results.NoContent() : Results.Ok(PullCollectorRequests.ToResponse(config));
-        });
+        }).Produces<PullConfigResponse>().Produces(StatusCodes.Status204NoContent);
 
         pulls.MapPut("/", (
             long id,
@@ -180,7 +180,7 @@ public static class PullCollectorEndpoints
 
             var saved = configs.Save(id, url, interval, mappings);
             return Results.Ok(PullCollectorRequests.ToResponse(saved));
-        });
+        }).Produces<PullConfigResponse>();
 
         return endpoints;
     }

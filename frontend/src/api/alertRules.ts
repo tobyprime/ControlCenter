@@ -1,4 +1,11 @@
-import { apiFetch } from './base'
+// TOB-401：实现由 openapi-ts 生成客户端承载（契约见 src/api/gen/），本模块只保留视图层消费的类型与函数签名。
+import {
+  deleteApiAlertRules,
+  getApiAlertRules,
+  getApiAlertRulesTypes,
+  postApiAlertRules,
+  putApiAlertRules,
+} from './base'
 import type { MetricValueType } from './metrics'
 
 export type RuleTypeId = 'threshold_above' | 'threshold_below' | 'no_data' | 'state_mismatch'
@@ -44,59 +51,33 @@ export interface AlertRuleUpdate {
   enabled?: boolean
 }
 
-async function request<T>(input: string, init?: RequestInit): Promise<T> {
-  const response = await apiFetch(input, {
-    headers: { 'Content-Type': 'application/json' },
-    ...init,
-  })
-  if (!response.ok) {
-    let message = `请求失败（${response.status}）`
-    try {
-      const body = (await response.json()) as { error?: string }
-      if (body.error) {
-        message = body.error
-      }
-    } catch {
-      // 忽略非 JSON 响应体
-    }
-    throw new Error(message)
-  }
-  if (response.status === 204) {
-    return undefined as T
-  }
-  return (await response.json()) as T
+export async function listRuleTypes(): Promise<AlertRuleTypeInfo[]> {
+  const { data } = await getApiAlertRulesTypes<true>({})
+  return data as AlertRuleTypeInfo[]
 }
 
-export function listRuleTypes(): Promise<AlertRuleTypeInfo[]> {
-  return request<AlertRuleTypeInfo[]>('/api/alert-rules/types')
-}
-
-export function listAlertRules(filter?: { targetId?: number; metricKey?: string }): Promise<AlertRule[]> {
-  const query = new URLSearchParams()
+export async function listAlertRules(filter?: { targetId?: number; metricKey?: string }): Promise<AlertRule[]> {
+  const query: { targetId?: number; metricKey?: string } = {}
   if (filter?.targetId !== undefined) {
-    query.set('targetId', String(filter.targetId))
+    query.targetId = filter.targetId
   }
   if (filter?.metricKey) {
-    query.set('metricKey', filter.metricKey)
+    query.metricKey = filter.metricKey
   }
-  const suffix = query.size > 0 ? `?${query.toString()}` : ''
-  return request<AlertRule[]>(`/api/alert-rules${suffix}`)
+  const { data } = await getApiAlertRules<true>({ query })
+  return data as AlertRule[]
 }
 
-export function createAlertRule(input: AlertRuleInput): Promise<AlertRule> {
-  return request<AlertRule>('/api/alert-rules', {
-    method: 'POST',
-    body: JSON.stringify(input),
-  })
+export async function createAlertRule(input: AlertRuleInput): Promise<AlertRule> {
+  const { data } = await postApiAlertRules<true>({ body: input })
+  return data as AlertRule
 }
 
-export function updateAlertRule(id: number, input: AlertRuleUpdate): Promise<AlertRule> {
-  return request<AlertRule>(`/api/alert-rules/${id}`, {
-    method: 'PUT',
-    body: JSON.stringify(input),
-  })
+export async function updateAlertRule(id: number, input: AlertRuleUpdate): Promise<AlertRule> {
+  const { data } = await putApiAlertRules<true>({ path: { id }, body: input })
+  return data as AlertRule
 }
 
-export function deleteAlertRule(id: number): Promise<void> {
-  return request<void>(`/api/alert-rules/${id}`, { method: 'DELETE' })
+export async function deleteAlertRule(id: number): Promise<void> {
+  await deleteApiAlertRules<true>({ path: { id } })
 }

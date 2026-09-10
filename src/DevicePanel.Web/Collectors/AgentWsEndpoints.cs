@@ -34,7 +34,7 @@ public static class AgentWsEndpoints
             // （TestServer/部分代理如此），不能作为通道断开依据；断开由 ReceiveAsync 的关闭帧/异常驱动。
             await session.RunAsync();
             return Results.Empty;
-        });
+        }).ExcludeFromDescription();
 
         return endpoints;
     }

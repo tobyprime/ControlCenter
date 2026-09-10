@@ -1,46 +1,21 @@
-import { apiFetch } from './base'
+// TOB-401：实现由 openapi-ts 生成客户端承载（契约见 src/api/gen/），本模块只保留视图层消费的类型与函数签名。
+import { getApiAuthMe, postApiAuthLogin, postApiAuthLogout } from './base'
 
 export interface SessionInfo {
   username: string
   expiresAtUtc?: string
 }
 
-async function request<T>(input: string, init?: RequestInit): Promise<T> {
-  const response = await apiFetch(input, {
-    headers: { 'Content-Type': 'application/json' },
-    ...init,
-  })
-  if (!response.ok) {
-    let message = `请求失败（${response.status}）`
-    try {
-      const body = (await response.json()) as { error?: string }
-      if (body.error) {
-        message = body.error
-      }
-    } catch {
-      // 忽略非 JSON 响应体
-    }
-    const error = new Error(message) as Error & { status?: number }
-    error.status = response.status
-    throw error
-  }
-  if (response.status === 204) {
-    return undefined as T
-  }
-  return (await response.json()) as T
+export async function login(username: string, password: string): Promise<SessionInfo> {
+  const { data } = await postApiAuthLogin<true>({ body: { username, password } })
+  return data as SessionInfo
 }
 
-export function login(username: string, password: string): Promise<SessionInfo> {
-  return request<SessionInfo>('/api/auth/login', {
-    method: 'POST',
-    body: JSON.stringify({ username, password }),
-  })
+export async function logout(): Promise<void> {
+  await postApiAuthLogout<true>({})
 }
 
-export function logout(): Promise<void> {
-  return request<void>('/api/auth/logout', { method: 'POST' })
-}
-
-export function me(): Promise<SessionInfo> {
-  return request<SessionInfo>('/api/auth/me')
+export async function me(): Promise<SessionInfo> {
+  const { data } = await getApiAuthMe<true>({})
+  return data as SessionInfo
 }

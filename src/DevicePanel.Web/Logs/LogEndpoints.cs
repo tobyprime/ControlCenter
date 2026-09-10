@@ -4,6 +4,11 @@ using Microsoft.AspNetCore.Mvc;
 
 namespace DevicePanel.Web.Logs;
 
+// 以下为文档化响应类型标注（TOB-401）：JSON 形状与原匿名对象逐一对应（camelCase 策略统一）
+public sealed record LogServicesResponse(IReadOnlyList<LogServiceInfo> Services);
+
+public sealed record LogTailResponse(IReadOnlyList<LogLineInfo> Lines);
+
 /// <summary>日志 API（三期模块3 归并为采集器数据类型）：按采集器列出可查看服务 / 按需拉取尾部日志（只读，面板不落库）。</summary>
 public static partial class LogEndpoints
 {
@@ -34,13 +39,13 @@ public static partial class LogEndpoints
             try
             {
                 var services = await queries.ListServicesAsync(collectorId, cancellationToken).ConfigureAwait(false);
-                return Results.Ok(new { services });
+                return Results.Ok(new LogServicesResponse(services));
             }
             catch (Exception ex) when (MapFailure(ex, out var status, out var message))
             {
                 return Results.Json(new { error = message }, statusCode: status);
             }
-        });
+        }).Produces<LogServicesResponse>();
 
         logs.MapGet("/tail", async (
             long collectorId,
@@ -76,13 +81,13 @@ public static partial class LogEndpoints
                 var result = await queries
                     .TailAsync(collectorId, service, kind, Math.Clamp(lines ?? DefaultLines, 1, MaxLines), cancellationToken)
                     .ConfigureAwait(false);
-                return Results.Ok(new { lines = result });
+                return Results.Ok(new LogTailResponse(result));
             }
             catch (Exception ex) when (MapFailure(ex, out var status, out var message))
             {
                 return Results.Json(new { error = message }, statusCode: status);
             }
-        });
+        }).Produces<LogTailResponse>();
 
         return endpoints;
     }

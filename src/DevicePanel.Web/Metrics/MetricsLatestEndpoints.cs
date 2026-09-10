@@ -8,6 +8,11 @@ namespace DevicePanel.Web.Metrics;
 /// 采集器按需查询 API（三期模块3）：GET /api/collectors/{id}/metrics/latest。
 /// push 在线 → agent 即时采样（只读不落库）；pull → 面板侧最新样本；离线明确 409 报错不悬挂，超时 504，agent 错误 502。
 /// </summary>
+/// <summary>GET /metrics/latest 响应体（文档化响应类型标注，JSON 形状与原匿名对象一致）。</summary>
+public sealed record MetricsSampleResponse(string Key, DateTimeOffset TimeUtc, double? ValueNum, string? ValueText);
+
+public sealed record MetricsLatestResponse(IReadOnlyList<MetricsSampleResponse> Samples);
+
 public static class MetricsLatestEndpoints
 {
     public static IEndpointRouteBuilder MapMetricsLatestEndpoints(this IEndpointRouteBuilder endpoints)
@@ -36,22 +41,14 @@ public static class MetricsLatestEndpoints
                     samples = samples.Where(s => requested.Contains(s.Key, StringComparer.Ordinal)).ToList();
                 }
 
-                return Results.Ok(new
-                {
-                    samples = samples.Select(s => new
-                    {
-                        key = s.Key,
-                        timeUtc = s.TimeUtc,
-                        valueNum = s.ValueNum,
-                        valueText = s.ValueText,
-                    }),
-                });
+                return Results.Ok(new MetricsLatestResponse(
+                    samples.Select(s => new MetricsSampleResponse(s.Key, s.TimeUtc, s.ValueNum, s.ValueText)).ToList()));
             }
             catch (Exception ex) when (MapFailure(ex, out var status, out var message))
             {
                 return Results.Json(new { error = message }, statusCode: status);
             }
-        });
+        }).Produces<MetricsLatestResponse>();
 
         return endpoints;
     }

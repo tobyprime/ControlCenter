@@ -31,6 +31,16 @@ public sealed record RegisterMetricKeyRequest(string? Key, string? ValueType, st
 
 public sealed record UpdateMetricKeyRequest(string? DisplayName, string? Unit);
 
+/// <summary>MetricKey 注册表元素（文档化响应类型标注，JSON 形状与原匿名对象一致）。</summary>
+public sealed record MetricKeyResponse(
+    string Key,
+    string ValueType,
+    string DisplayName,
+    string Unit,
+    bool BuiltIn,
+    DateTimeOffset CreatedAtUtc,
+    DateTimeOffset UpdatedAtUtc);
+
 public static class MetricsEndpoints
 {
     public const string Raw = "raw";
@@ -57,7 +67,8 @@ public static class MetricsEndpoints
         var metrics = endpoints.MapGroup("/api/metrics");
 
         // MetricKey 注册表（约束 A）：新增一种指标 = 注册 key + 类型
-        metrics.MapGet("/keys", (IMetricKeyRegistry registry) => Results.Ok(registry.List().Select(ToKeyResponse)));
+        metrics.MapGet("/keys", (IMetricKeyRegistry registry) => Results.Ok(registry.List().Select(ToKeyResponse)))
+            .Produces<MetricKeyResponse[]>();
 
         metrics.MapPost("/keys", ([FromBody] RegisterMetricKeyRequest request, IMetricKeyRegistry registry) =>
         {
@@ -90,7 +101,7 @@ public static class MetricsEndpoints
 
             var registered = registry.Register(key, valueType, displayName, unit);
             return Results.Json(ToKeyResponse(registered), statusCode: StatusCodes.Status201Created);
-        });
+        }).Produces<MetricKeyResponse>(StatusCodes.Status201Created);
 
         metrics.MapPut("/keys/{**key}", (string key, [FromBody] UpdateMetricKeyRequest request, IMetricKeyRegistry registry) =>
         {
@@ -113,7 +124,7 @@ public static class MetricsEndpoints
 
             var updated = registry.UpdateDisplay(normalized, displayName, unit);
             return updated is null ? Results.NotFound(new { error = "指标不存在" }) : Results.Ok(ToKeyResponse(updated));
-        });
+        }).Produces<MetricKeyResponse>();
 
         metrics.MapDelete("/keys/{**key}", (
             string key,
@@ -143,7 +154,7 @@ public static class MetricsEndpoints
             }
 
             return registry.Delete(normalized) ? Results.NoContent() : Results.NotFound(new { error = "指标不存在" });
-        });
+        }).Produces(StatusCodes.Status204NoContent);
 
         // 采集器已上报指标总览（最新值 + 注册元数据），供采集器详情与规则创建使用
         metrics.MapGet("/{collectorId:long}/overview", (long collectorId, IMetricsStore store, IMetricKeyRegistry registry, ICollectorRegistry collectors) =>
@@ -170,7 +181,7 @@ public static class MetricsEndpoints
                 })
                 .ToList();
             return Results.Ok(items);
-        });
+        }).Produces<MetricOverviewItem[]>();
 
         // 按来源可用指标（TOB-374 ①）：优先该来源已上报且已注册的 key；无上报数据时按内置标签回退到内置 key
         metrics.MapGet("/{collectorId:long}/available", (long collectorId, IMetricsStore store, IMetricKeyRegistry registry, ICollectorRegistry collectors) =>
@@ -186,7 +197,7 @@ public static class MetricsEndpoints
                 ? reported
                 : MetricKeys.ForCollector(collector.Tags).Where(key => registry.Get(key) is not null).ToList();
             return Results.Ok(keys.Select(key => ToKeyResponse(registry.Get(key)!)));
-        });
+        }).Produces<MetricKeyResponse[]>();
 
         metrics.MapGet("/{collectorId:long}/series", (
             long collectorId,
@@ -254,21 +265,19 @@ public static class MetricsEndpoints
                 FormatUtc(fromUtc),
                 FormatUtc(toUtc),
                 series.ToList()));
-        });
+        }).Produces<SeriesResponse>();
 
         return endpoints;
     }
 
-    private static object ToKeyResponse(MetricKeyInfo info) => new
-    {
-        key = info.Key,
-        valueType = info.ValueType.ToStorage(),
-        displayName = info.DisplayName,
-        unit = info.Unit,
-        builtIn = info.BuiltIn,
-        createdAtUtc = info.CreatedAtUtc,
-        updatedAtUtc = info.UpdatedAtUtc,
-    };
+    private static MetricKeyResponse ToKeyResponse(MetricKeyInfo info) => new(
+        info.Key,
+        info.ValueType.ToStorage(),
+        info.DisplayName,
+        info.Unit,
+        info.BuiltIn,
+        info.CreatedAtUtc,
+        info.UpdatedAtUtc);
 
     private static bool TryNormalizeDisplay(string? displayName, out string normalized, out string error)
     {

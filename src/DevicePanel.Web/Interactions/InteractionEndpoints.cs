@@ -10,7 +10,8 @@ public static class InteractionEndpoints
     public static IEndpointRouteBuilder MapInteractionEndpoints(this IEndpointRouteBuilder endpoints)
     {
         endpoints.MapGet("/api/interactions/modes", (InteractionModeRegistry registry) =>
-            Results.Ok(registry.Modes.Select(ToResponse).ToList()));
+            Results.Ok(registry.Modes.Select(ToResponse).ToList()))
+            .Produces<InteractionModeResponse[]>();
 
         endpoints.MapGet("/api/devices/{deviceId:long}/interaction-modes", (
             long deviceId,
@@ -29,7 +30,7 @@ public static class InteractionEndpoints
                 .Select(mode => ToResponse(mode!))
                 .ToList();
             return Results.Ok(modes);
-        });
+        }).Produces<InteractionModeResponse[]>();
 
         return endpoints;
     }

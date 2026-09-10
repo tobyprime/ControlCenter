@@ -11,6 +11,7 @@ using DevicePanel.Web.Metrics;
 using DevicePanel.Web.Probing;
 using DevicePanel.Web.Collectors;
 using DevicePanel.Web.Terminal;
+using NSwag;
 
 // wwwroot 双候选解析：发布产物从仓库根目录运行时，静态文件回退到应用目录自带的 wwwroot。
 // 解析不到时保持宿主默认探测（如 WebApplicationFactory 场景）；ContentRoot 一律不覆盖。
@@ -174,6 +175,17 @@ builder.Services.AddHostedService(sp => sp.GetRequiredService<PullCollectorWorke
 // 清理任务依赖迁移完成后的表结构：必须排在 DatabaseInitializer 之后启动
 builder.Services.AddSingleton<MetricsRetentionService>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<MetricsRetentionService>());
+
+// OpenAPI 文档源（TOB-401）：仅服务于构建期文档生成（Microsoft.Extensions.ApiDescription.Server），
+// 运行时不挂任何文档/Swagger 端点——生产不增加暴露面。
+builder.Services.AddEndpointsApiExplorer();
+builder.Services.AddOpenApiDocument(settings =>
+{
+    settings.DocumentName = "openapi";
+    settings.Title = "DevicePanel API";
+    settings.Description = "设备与环境统一管理面板 HTTP API（构建期自动生成）";
+    settings.Version = "1.0.0";
+});
 
 var app = builder.Build();
 

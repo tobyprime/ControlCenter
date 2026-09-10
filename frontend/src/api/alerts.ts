@@ -1,4 +1,5 @@
-import { apiFetch } from './base'
+// TOB-401：实现由 openapi-ts 生成客户端承载（契约见 src/api/gen/），本模块只保留视图层消费的类型与函数签名。
+import { getApiAlertsActiveCount, getApiAlertsQueue, getApiAlertsSettings, putApiAlertsSettings } from './base'
 
 export interface NapcatSettings {
   baseUrl: string | null
@@ -33,48 +34,25 @@ export interface AlertQueue {
   items: QueueItem[]
 }
 
-async function request<T>(input: string, init?: RequestInit): Promise<T> {
-  const response = await apiFetch(input, {
-    headers: { 'Content-Type': 'application/json' },
-    ...init,
-  })
-  if (!response.ok) {
-    let message = `请求失败（${response.status}）`
-    try {
-      const body = (await response.json()) as { error?: string }
-      if (body.error) {
-        message = body.error
-      }
-    } catch {
-      // 忽略非 JSON 响应体
-    }
-    throw new Error(message)
-  }
-  if (response.status === 204) {
-    return undefined as T
-  }
-  return (await response.json()) as T
+export async function fetchAlertSettings(): Promise<AlertSettings> {
+  const { data } = await getApiAlertsSettings<true>({})
+  return data as AlertSettings
 }
 
-export function fetchAlertSettings(): Promise<AlertSettings> {
-  return request<AlertSettings>('/api/alerts/settings')
+export async function saveAlertSettings(input: AlertSettingsInput): Promise<void> {
+  await putApiAlertsSettings<true>({ body: input })
 }
 
-export function saveAlertSettings(input: AlertSettingsInput): Promise<void> {
-  return request<void>('/api/alerts/settings', {
-    method: 'PUT',
-    body: JSON.stringify(input),
-  })
-}
-
-export function fetchAlertQueue(): Promise<AlertQueue> {
-  return request<AlertQueue>('/api/alerts/queue')
+export async function fetchAlertQueue(): Promise<AlertQueue> {
+  const { data } = await getApiAlertsQueue<true>({})
+  return data as AlertQueue
 }
 
 export interface ActiveAlertCount {
   count: number
 }
 
-export function fetchActiveAlertCount(): Promise<ActiveAlertCount> {
-  return request<ActiveAlertCount>('/api/alerts/active-count')
+export async function fetchActiveAlertCount(): Promise<ActiveAlertCount> {
+  const { data } = await getApiAlertsActiveCount<true>({})
+  return data as ActiveAlertCount
 }

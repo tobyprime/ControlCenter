@@ -5,6 +5,12 @@ namespace DevicePanel.Web.Auth;
 
 public sealed record LoginRequest(string Username, string Password);
 
+/// <summary>POST /login 成功响应体（文档化响应类型标注，JSON 形状与原匿名对象一致）。</summary>
+public sealed record LoginResponse(string Username);
+
+/// <summary>GET /me 成功响应体（文档化响应类型标注，JSON 形状与原匿名对象一致）。</summary>
+public sealed record SessionInfoResponse(string Username, DateTimeOffset ExpiresAtUtc);
+
 public static class AuthEndpoints
 {
     public static IEndpointRouteBuilder MapAuthEndpoints(this IEndpointRouteBuilder endpoints)
@@ -54,8 +60,8 @@ public static class AuthEndpoints
                 IsEssential = true,
                 Expires = expiresUtc,
             });
-            return Results.Ok(new { username });
-        });
+            return Results.Ok(new LoginResponse(username));
+        }).Produces<LoginResponse>();
 
         auth.MapPost("/logout", (ISessionService sessions, AuthOptions options, HttpContext http) =>
         {
@@ -74,7 +80,7 @@ public static class AuthEndpoints
                 IsEssential = true,
             });
             return Results.NoContent();
-        });
+        }).Produces(StatusCodes.Status204NoContent);
 
         auth.MapGet("/me", (ISessionService sessions, AuthOptions options, HttpContext http) =>
         {
@@ -85,8 +91,8 @@ public static class AuthEndpoints
                 return Results.Json(new { error = "未登录" }, statusCode: StatusCodes.Status401Unauthorized);
             }
 
-            return Results.Ok(new { username = session.Username, expiresAtUtc = session.ExpiresAtUtc });
-        });
+            return Results.Ok(new SessionInfoResponse(session.Username, session.ExpiresAtUtc));
+        }).Produces<SessionInfoResponse>();
 
         return endpoints;
     }
