@@ -1,5 +1,5 @@
 // TOB-401：实现由 openapi-ts 生成客户端承载（契约见 src/api/gen/），本模块只保留视图层消费的类型与函数签名。
-import { getApiAlertsActiveCount, getApiAlertsQueue, getApiAlertsSettings, putApiAlertsSettings } from './base'
+import { getApiAlertEvents, getApiAlertsActiveCount, getApiAlertsQueue, getApiAlertsSettings, putApiAlertsSettings } from './base'
 
 export interface NapcatSettings {
   baseUrl: string | null
@@ -55,4 +55,46 @@ export interface ActiveAlertCount {
 export async function fetchActiveAlertCount(): Promise<ActiveAlertCount> {
   const { data } = await getApiAlertsActiveCount<true>({})
   return data as ActiveAlertCount
+}
+
+// 告警事件历史（TOB-403 F2）：触发/恢复记录，规则与目标为写入时快照
+export interface AlertEventSample {
+  timeUtc: string
+  valueNum: number | null
+  valueText: string | null
+}
+
+export interface AlertEvent {
+  id: number
+  createdAtUtc: string
+  ruleId: number | null
+  ruleType: string
+  targetId: number | null
+  targetName: string
+  metricKey: string
+  metricDisplayName: string
+  kind: 'trigger' | 'recover' | string
+  title: string
+  content: string
+  sample: AlertEventSample | null
+  deliveryStatus: 'pending' | 'delivered' | 'failed' | string
+  deliveredAtUtc: string | null
+  deliveryError: string | null
+}
+
+export interface AlertEventList {
+  count: number
+  items: AlertEvent[]
+}
+
+export interface AlertEventFilter {
+  targetId?: number | null
+  fromUtc?: string | null
+  toUtc?: string | null
+  limit?: number | null
+}
+
+export async function fetchAlertEvents(filter: AlertEventFilter = {}): Promise<AlertEventList> {
+  const { data } = await getApiAlertEvents<true>({ query: filter })
+  return data as AlertEventList
 }

@@ -18,20 +18,86 @@ public class AlertDispatchWorkerTests : IDisposable
 
     public void Dispose() => _db.Dispose();
 
-    private AlertDispatchWorker CreateWorker(AlertOutboxStore outbox, params INotifier[] notifiers) =>
+    private AlertDispatchWorker CreateWorker(AlertOutboxStore outbox, AlertEventStore events, params INotifier[] notifiers) =>
         new(
             outbox,
+            events ?? new AlertEventStore(_db.Factory),
             notifiers,
             new AlertOptions { PollSeconds = 1, RetrySeconds = 2 },
             _clock,
             Microsoft.Extensions.Logging.Abstractions.NullLogger<AlertDispatchWorker>.Instance);
+
+    // —— 事件历史投递回写（TOB-403 F2）：分发结果同步到关联的告警事件 ——
+
+    [Fact]
+    public async Task Dispatch_Success_Marks_Correlated_Event_Delivered()
+    {
+        var outbox = new AlertOutboxStore(_db.Factory);
+        var events = new AlertEventStore(_db.Factory);
+        var notifier = new ProgrammableNotifier();
+        var worker = CreateWorker(outbox, events, notifier);
+
+        var eventId = events.Append(EventDraft(), _clock.GetUtcNow());
+        outbox.Enqueue(notifier.ChannelName, new AlertMessage("指标越限告警", "内容"), _clock.GetUtcNow(), eventId);
+
+        ShouldBe(await worker.ProcessOnceAsync(CancellationToken.None), HadPending: true, Success: true);
+
+        var row = Assert.Single(events.List(null, null, null, 100));
+        Assert.Equal(AlertDeliveryStatuses.Delivered, row.DeliveryStatus);
+        Assert.Equal(_clock.GetUtcNow(), row.DeliveredAtUtc);
+        Assert.Null(row.DeliveryError);
+    }
+
+    [Fact]
+    public async Task Dispatch_Failure_Records_Delivery_Error_On_Event()
+    {
+        var outbox = new AlertOutboxStore(_db.Factory);
+        var events = new AlertEventStore(_db.Factory);
+        var notifier = new ProgrammableNotifier { Available = false };
+        var worker = CreateWorker(outbox, events, notifier);
+
+        var eventId = events.Append(EventDraft(), _clock.GetUtcNow());
+        outbox.Enqueue(notifier.ChannelName, new AlertMessage("指标越限告警", "内容"), _clock.GetUtcNow(), eventId);
+
+        ShouldBe(await worker.ProcessOnceAsync(CancellationToken.None), HadPending: true, Success: false);
+
+        var row = Assert.Single(events.List(null, null, null, 100));
+        Assert.Equal(AlertDeliveryStatuses.Failed, row.DeliveryStatus);
+        Assert.Null(row.DeliveredAtUtc);
+        Assert.False(string.IsNullOrEmpty(row.DeliveryError));
+
+        // 重试成功后翻转为已投递
+        _clock.Advance(TimeSpan.FromSeconds(2));
+        notifier.Available = true;
+        ShouldBe(await worker.ProcessOnceAsync(CancellationToken.None), HadPending: true, Success: true);
+        Assert.Equal(AlertDeliveryStatuses.Delivered, Assert.Single(events.List(null, null, null, 100)).DeliveryStatus);
+    }
+
+    [Fact]
+    public async Task Dispatch_Without_Correlated_Event_Leaves_History_Untouched()
+    {
+        var outbox = new AlertOutboxStore(_db.Factory);
+        var events = new AlertEventStore(_db.Factory);
+        var notifier = new ProgrammableNotifier();
+        var worker = CreateWorker(outbox, events, notifier);
+
+        // 历史机制上线前的在队消息（无关联事件）：正常分发，不写事件表
+        outbox.Enqueue(notifier.ChannelName, new AlertMessage("旧告警", "内容"), _clock.GetUtcNow());
+        ShouldBe(await worker.ProcessOnceAsync(CancellationToken.None), HadPending: true, Success: true);
+
+        Assert.Empty(events.List(null, null, null, 100));
+    }
+
+    private AlertEventDraft EventDraft() =>
+        new(1, "threshold_above", 7, "压测机甲", "cpu", "CPU 使用率", AlertEventKinds.Trigger,
+            "指标越限告警", "目标「压测机甲」CPU 使用率 95.0%", new AlertEventSample(_clock.GetUtcNow(), 95, null));
 
     [Fact]
     public async Task Worker_Drains_Queue_In_Fifo_Order_And_Empties_It()
     {
         var outbox = new AlertOutboxStore(_db.Factory);
         var notifier = new ProgrammableNotifier();
-        var worker = CreateWorker(outbox, notifier);
+        var worker = CreateWorker(outbox, new AlertEventStore(_db.Factory), notifier);
 
         outbox.Enqueue(notifier.ChannelName, new AlertMessage("告警一", "第一条"), _clock.GetUtcNow());
         outbox.Enqueue(notifier.ChannelName, new AlertMessage("告警二", "第二条"), _clock.GetUtcNow());
@@ -49,7 +115,7 @@ public class AlertDispatchWorkerTests : IDisposable
     {
         var outbox = new AlertOutboxStore(_db.Factory);
         var notifier = new ProgrammableNotifier { Available = false };
-        var worker = CreateWorker(outbox, notifier);
+        var worker = CreateWorker(outbox, new AlertEventStore(_db.Factory), notifier);
 
         outbox.Enqueue(notifier.ChannelName, new AlertMessage("停机期间", "告警"), _clock.GetUtcNow());
         ShouldBe(await worker.ProcessOnceAsync(CancellationToken.None), HadPending: true, Success: false);
@@ -69,7 +135,7 @@ public class AlertDispatchWorkerTests : IDisposable
         // 未配置 napcat 时入队的告警：配置补上后照常补发（配置即生效）
         var outbox = new AlertOutboxStore(_db.Factory);
         var settings = new AlertSettingsStore(_db.Factory);
-        var worker = CreateWorker(outbox, new NapcatNotifier(settings, new HttpClient(new FakeAlwaysFailingHandler())));
+        var worker = CreateWorker(outbox, new AlertEventStore(_db.Factory), new NapcatNotifier(settings, new HttpClient(new FakeAlwaysFailingHandler())));
 
         outbox.Enqueue(NapcatNotifier.ChannelNameValue, new AlertMessage("离线告警", "设备「a」已离线"), _clock.GetUtcNow());
         ShouldBe(await worker.ProcessOnceAsync(CancellationToken.None), HadPending: true, Success: false);
@@ -90,7 +156,7 @@ public class AlertDispatchWorkerTests : IDisposable
             settings,
             new HttpClient(new SocketsHttpHandler { UseProxy = false }) { Timeout = TimeSpan.FromSeconds(5) });
         var dispatcher = new AlertDispatcher(outbox, [notifier]);
-        var worker = CreateWorker(outbox, notifier);
+        var worker = CreateWorker(outbox, new AlertEventStore(_db.Factory), notifier);
 
         // napcat 停止（返回 500）：期间触发 ≥2 条告警 → 全部落入本地队列且队列可见
         napcat.Status = HttpStatusCode.InternalServerError;
@@ -128,13 +194,13 @@ public class AlertDispatchWorkerTests : IDisposable
     {
         var outbox = new AlertOutboxStore(_db.Factory);
         var notifier = new ProgrammableNotifier { Available = false };
-        var firstWorker = CreateWorker(outbox, notifier);
+        var firstWorker = CreateWorker(outbox, new AlertEventStore(_db.Factory), notifier);
         outbox.Enqueue(notifier.ChannelName, new AlertMessage("停机告警", "内容"), _clock.GetUtcNow());
         ShouldBe(await firstWorker.ProcessOnceAsync(CancellationToken.None), HadPending: true, Success: false);
 
         // 面板重启：新 worker 实例（同库）接手补发
         notifier.Available = true;
-        var restarted = CreateWorker(new AlertOutboxStore(_db.Factory), notifier);
+        var restarted = CreateWorker(new AlertOutboxStore(_db.Factory), new AlertEventStore(_db.Factory), notifier);
         ShouldBe(await restarted.ProcessOnceAsync(CancellationToken.None), HadPending: true, Success: true);
         Assert.Equal("停机告警", Assert.Single(notifier.Sent).Title);
         Assert.Empty(outbox.List());

@@ -287,6 +287,38 @@ public class AlertApiTests : IDisposable
         return client;
     }
 
+    // —— 告警事件历史（TOB-403 F2）：只读查询 + 目标/时间筛选 ——
+
+    [Fact]
+    public async Task Alert_Events_Endpoint_Lists_History_With_Target_And_Time_Filters()
+    {
+        var store = _factory.Services.GetRequiredService<IAlertEventStore>();
+        var now = DateTimeOffset.UtcNow;
+        store.Append(new AlertEventDraft(1, "threshold_above", 11, "甲机", "cpu", "CPU 使用率",
+            AlertEventKinds.Trigger, "指标越限告警", "目标「甲机」CPU 使用率 95.0%", new AlertEventSample(now.AddMinutes(-10), 95, null)), now.AddMinutes(-10));
+        store.Append(new AlertEventDraft(1, "threshold_above", 22, "乙机", "mem", "内存使用率",
+            AlertEventKinds.Recover, "告警恢复通知", "目标「乙机」内存使用率已恢复正常", null), now);
+
+        var client = await AuthenticatedAsync();
+
+        var all = await client.GetFromJsonAsync<JsonElement>("/api/alert-events");
+        Assert.Equal(2, all.GetProperty("count").GetInt32());
+        // 列表按时间倒序：最新（恢复事件）在前
+        Assert.Equal(AlertEventKinds.Recover, all.GetProperty("items")[0].GetProperty("kind").GetString());
+        Assert.Equal("乙机", all.GetProperty("items")[0].GetProperty("targetName").GetString());
+        Assert.Equal(AlertDeliveryStatuses.Pending, all.GetProperty("items")[0].GetProperty("deliveryStatus").GetString());
+
+        var byTarget = await client.GetFromJsonAsync<JsonElement>("/api/alert-events?targetId=11");
+        Assert.Equal(1, byTarget.GetProperty("count").GetInt32());
+        Assert.Equal("甲机", byTarget.GetProperty("items")[0].GetProperty("targetName").GetString());
+        Assert.Equal(95, byTarget.GetProperty("items")[0].GetProperty("sample").GetProperty("valueNum").GetDouble());
+
+        var from = Uri.EscapeDataString(now.AddMinutes(-5).ToString("O"));
+        var recent = await client.GetFromJsonAsync<JsonElement>($"/api/alert-events?fromUtc={from}");
+        Assert.Equal(1, recent.GetProperty("count").GetInt32());
+        Assert.Equal(AlertEventKinds.Recover, recent.GetProperty("items")[0].GetProperty("kind").GetString());
+    }
+
     public sealed class Factory : TestAppFactory
     {
         public Factory()

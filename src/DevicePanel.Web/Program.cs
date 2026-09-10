@@ -99,6 +99,7 @@ builder.Services.AddSingleton(napcatSeedOptions);
 builder.Services.AddSingleton<IAlertOutboxStore, AlertOutboxStore>();
 builder.Services.AddSingleton<IAlertSettingsStore, AlertSettingsStore>();
 builder.Services.AddSingleton<IAlertStateStore, AlertStateStore>();
+builder.Services.AddSingleton<IAlertEventStore, AlertEventStore>();
 builder.Services.AddSingleton<IAlertRuleStore, AlertRuleStore>();
 builder.Services.AddSingleton<IAlertRuleType, ThresholdAboveRuleType>();
 builder.Services.AddSingleton<IAlertRuleType, ThresholdBelowRuleType>();

@@ -13,6 +13,7 @@ public sealed record DispatchOutcome(bool HadPending, bool Success);
 public sealed class AlertDispatchWorker : BackgroundService
 {
     private readonly IAlertOutboxStore _outbox;
+    private readonly IAlertEventStore _events;
     private readonly IReadOnlyList<INotifier> _notifiers;
     private readonly AlertOptions _options;
     private readonly TimeProvider _clock;
@@ -20,12 +21,14 @@ public sealed class AlertDispatchWorker : BackgroundService
 
     public AlertDispatchWorker(
         IAlertOutboxStore outbox,
+        IAlertEventStore events,
         IEnumerable<INotifier> notifiers,
         AlertOptions options,
         TimeProvider clock,
         ILogger<AlertDispatchWorker> logger)
     {
         _outbox = outbox;
+        _events = events;
         _notifiers = notifiers.ToList();
         _options = options;
         _clock = clock;
@@ -82,6 +85,7 @@ public sealed class AlertDispatchWorker : BackgroundService
         if (notifier is null)
         {
             _outbox.RecordFailure(entry.Id, $"渠道 {entry.Channel} 未注册", _clock.GetUtcNow());
+            UpdateEventDelivery(entry.AlertEventId, delivered: false, $"渠道 {entry.Channel} 未注册");
             return new DispatchOutcome(HadPending: true, Success: false);
         }
 
@@ -89,6 +93,7 @@ public sealed class AlertDispatchWorker : BackgroundService
         {
             await notifier.NotifyAsync(entry.Message, cancellationToken).ConfigureAwait(false);
             _outbox.MarkSent(entry.Id);
+            UpdateEventDelivery(entry.AlertEventId, delivered: true, null);
             if (entry.Attempts > 0)
             {
                 _logger.LogInformation("告警 #{Id} 经 {Attempts} 次尝试后补发成功（{Channel}）", entry.Id, entry.Attempts + 1, entry.Channel);
@@ -104,8 +109,35 @@ public sealed class AlertDispatchWorker : BackgroundService
         {
             // 渠道不可用：留队记账，按退避节奏重试，直至补发成功（无丢失契约）
             _outbox.RecordFailure(entry.Id, ex.Message, _clock.GetUtcNow());
+            UpdateEventDelivery(entry.AlertEventId, delivered: false, ex.Message);
             _logger.LogWarning("告警 #{Id} 发送失败（第 {Attempt} 次），已留在待发队列：{Error}", entry.Id, entry.Attempts + 1, ex.Message);
             return new DispatchOutcome(HadPending: true, Success: false);
+        }
+    }
+
+    /// <summary>投递结果回写事件历史（TOB-403 F2）；历史机制上线前的在队消息无关联事件，跳过。</summary>
+    private void UpdateEventDelivery(long? eventId, bool delivered, string? error)
+    {
+        if (eventId is not { } id)
+        {
+            return;
+        }
+
+        try
+        {
+            if (delivered)
+            {
+                _events.MarkDelivered(id, _clock.GetUtcNow());
+            }
+            else
+            {
+                _events.RecordDeliveryFailure(id, error ?? "投递失败", _clock.GetUtcNow());
+            }
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // 记账失败不影响分发主链路：消息已按队列自身记账处理
+            _logger.LogWarning(ex, "告警事件 {EventId} 投递状态回写失败", id);
         }
     }
 }

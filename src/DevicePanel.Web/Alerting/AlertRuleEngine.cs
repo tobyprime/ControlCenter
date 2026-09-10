@@ -35,6 +35,7 @@ public sealed class AlertRuleEngine : IAlertRuleEngine
     private readonly ICollectorRegistry _targets;
     private readonly IReadOnlyDictionary<string, IAlertRuleType> _ruleTypes;
     private readonly IAlertStateStore _states;
+    private readonly IAlertEventStore _events;
     private readonly AlertDispatcher _dispatcher;
     private readonly TimeProvider _clock;
     private readonly ILogger<AlertRuleEngine> _logger;
@@ -46,6 +47,7 @@ public sealed class AlertRuleEngine : IAlertRuleEngine
         ICollectorRegistry targets,
         IEnumerable<IAlertRuleType> ruleTypes,
         IAlertStateStore states,
+        IAlertEventStore events,
         AlertDispatcher dispatcher,
         TimeProvider clock,
         ILogger<AlertRuleEngine> logger)
@@ -56,6 +58,7 @@ public sealed class AlertRuleEngine : IAlertRuleEngine
         _targets = targets;
         _ruleTypes = ruleTypes.ToDictionary(t => t.TypeId, StringComparer.Ordinal);
         _states = states;
+        _events = events;
         _dispatcher = dispatcher;
         _clock = clock;
         _logger = logger;
@@ -167,7 +170,11 @@ public sealed class AlertRuleEngine : IAlertRuleEngine
         var metric = _metricKeys.Get(rule.MetricKey);
         var sustained = nowUtc - state.FirstSeenUtc;
         var content = $"目标「{targetName}」{metric?.DisplayName ?? rule.MetricKey} {type.DescribeViolation(rule.ParametersJson, sample, metric?.Unit ?? string.Empty, sustained)}";
-        _dispatcher.Enqueue(new AlertMessage(type.AlertTitle, content), nowUtc);
+        // 事件历史与投递同链路记账（TOB-403 F2）：先落事件行，再携 id 入队，投递结果由分发 worker 回写；
+        // 历史写入故障只丢记账，不影响告警分发（与评估容错同口径）
+        var eventId = TryAppendEvent(rule, targetId, targetName, metric?.DisplayName ?? rule.MetricKey,
+            AlertEventKinds.Trigger, type.AlertTitle, content, sample, nowUtc);
+        _dispatcher.Enqueue(new AlertMessage(type.AlertTitle, content), nowUtc, eventId);
         _states.Set(stateKey, Serialize(state with { LastAlertedUtc = nowUtc }), nowUtc);
         _logger.LogInformation("规则 {RuleId}（{RuleType}）触发告警：目标 {TargetId} 指标 {MetricKey}", rule.Id, rule.RuleType, rule.TargetId, rule.MetricKey);
     }
@@ -192,7 +199,9 @@ public sealed class AlertRuleEngine : IAlertRuleEngine
             var metric = _metricKeys.Get(rule.MetricKey);
             var sustained = FormatSustained(nowUtc - state.FirstSeenUtc);
             var content = $"目标「{targetName}」{metric?.DisplayName ?? rule.MetricKey} 已恢复正常（本次异常持续 {sustained}）";
-            _dispatcher.Enqueue(new AlertMessage(RecoveryAlertTitle, content), nowUtc);
+            var eventId = TryAppendEvent(rule, targetId, targetName, metric?.DisplayName ?? rule.MetricKey,
+                AlertEventKinds.Recover, RecoveryAlertTitle, content, null, nowUtc);
+            _dispatcher.Enqueue(new AlertMessage(RecoveryAlertTitle, content), nowUtc, eventId);
             _logger.LogInformation("规则 {RuleId}（{RuleType}）事件恢复并发恢复通知：目标 {TargetId} 指标 {MetricKey}", rule.Id, rule.RuleType, targetId, rule.MetricKey);
         }
 
@@ -201,6 +210,24 @@ public sealed class AlertRuleEngine : IAlertRuleEngine
 
     private static string FormatSustained(TimeSpan sustained) =>
         sustained >= TimeSpan.FromMinutes(1) ? $"{sustained.TotalMinutes:F0} 分钟" : $"{sustained.TotalSeconds:F0} 秒";
+
+    /// <summary>事件历史记账（TOB-403 F2）：失败只丢记账不阻断分发；返回事件 id 供投递结果回写。</summary>
+    private long? TryAppendEvent(AlertRule rule, long targetId, string targetName, string metricDisplayName,
+        string kind, string title, string content, MetricSample? sample, DateTimeOffset nowUtc)
+    {
+        try
+        {
+            return _events.Append(new AlertEventDraft(
+                rule.Id, rule.RuleType, targetId, targetName, rule.MetricKey, metricDisplayName,
+                kind, title, content,
+                sample is null ? null : new AlertEventSample(sample.TimeUtc, sample.ValueNum, sample.ValueText)), nowUtc);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex, "告警事件历史写入失败（规则 {RuleId} 目标 {TargetId}），本条不入历史", rule.Id, targetId);
+            return null;
+        }
+    }
 
     private static int ReadMinutes(string parametersJson)
     {

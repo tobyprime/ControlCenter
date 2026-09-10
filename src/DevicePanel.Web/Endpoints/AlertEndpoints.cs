@@ -41,6 +41,28 @@ public sealed record AlertQueueResponse(int Count, IReadOnlyList<AlertQueueItemR
 
 public sealed record ActiveAlertCountResponse(int Count);
 
+// 告警事件历史（TOB-403 F2）：只读查询，规则/目标信息为写入时快照
+public sealed record AlertEventSampleResponse(DateTimeOffset TimeUtc, double? ValueNum, string? ValueText);
+
+public sealed record AlertEventResponse(
+    long Id,
+    DateTimeOffset CreatedAtUtc,
+    long? RuleId,
+    string RuleType,
+    long? TargetId,
+    string TargetName,
+    string MetricKey,
+    string MetricDisplayName,
+    string Kind,
+    string Title,
+    string Content,
+    AlertEventSampleResponse? Sample,
+    string DeliveryStatus,
+    DateTimeOffset? DeliveredAtUtc,
+    string? DeliveryError);
+
+public sealed record AlertEventListResponse(int Count, IReadOnlyList<AlertEventResponse> Items);
+
 public sealed record AlertRuleTypeResponse(
     string TypeId,
     string DisplayName,
@@ -67,6 +89,8 @@ public static class AlertEndpoints
 {
     private const int MaxSustainSeconds = 24 * 3600;
     private const int MaxRepeatMinutes = 24 * 60;
+    private const int DefaultEventLimit = 100;
+    private const int MaxEventLimit = 500;
 
     public static IEndpointRouteBuilder MapAlertEndpoints(this IEndpointRouteBuilder endpoints)
     {
@@ -144,6 +168,22 @@ public static class AlertEndpoints
         alerts.MapGet("/active-count", (IAlertStateStore states) =>
             Results.Ok(new ActiveAlertCountResponse(states.CountActive())))
             .Produces<ActiveAlertCountResponse>();
+
+        // 告警事件历史（TOB-403 F2）：触发/恢复时间、规则快照、当时值与投递结果；按目标与时间窗口筛选
+        var alertEvents = endpoints.MapGroup("/api/alert-events");
+        alertEvents.MapGet("/", (
+            IAlertEventStore store,
+            [FromQuery] long? targetId,
+            [FromQuery] DateTimeOffset? fromUtc,
+            [FromQuery] DateTimeOffset? toUtc,
+            [FromQuery] int? limit) =>
+        {
+            var boundedLimit = limit is { } requested && requested > 0 ? Math.Min(requested, MaxEventLimit) : DefaultEventLimit;
+            var events = store.List(targetId, fromUtc, toUtc, boundedLimit);
+            return Results.Ok(new AlertEventListResponse(
+                events.Count,
+                events.Select(ToResponse).ToList()));
+        }).Produces<AlertEventListResponse>();
 
         var rules = endpoints.MapGroup("/api/alert-rules");
 
@@ -291,6 +331,24 @@ public static class AlertEndpoints
 
         return endpoints;
     }
+
+    private static AlertEventResponse ToResponse(AlertEvent e) =>
+        new(
+            e.Id,
+            e.CreatedAtUtc,
+            e.RuleId,
+            e.RuleType,
+            e.TargetId,
+            e.TargetName,
+            e.MetricKey,
+            e.MetricDisplayName,
+            e.Kind,
+            e.Title,
+            e.Content,
+            e.Sample is null ? null : new AlertEventSampleResponse(e.Sample.TimeUtc, e.Sample.ValueNum, e.Sample.ValueText),
+            e.DeliveryStatus,
+            e.DeliveredAtUtc,
+            e.DeliveryError);
 
     private static AlertRuleResponse ToResponse(AlertRule rule, IReadOnlyDictionary<long, string> targetNames, IMetricKeyRegistry metricKeys)
     {

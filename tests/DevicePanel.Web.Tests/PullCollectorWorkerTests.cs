@@ -42,6 +42,7 @@ public class PullCollectorWorkerTests : IDisposable
             _rules, _metricKeys, _metrics, _collectors,
             [new ThresholdAboveRuleType(), new ThresholdBelowRuleType(), new NoDataRuleType(), new StateMismatchRuleType()],
             new AlertStateStore(_db.Factory),
+            new AlertEventStore(_db.Factory),
             new AlertDispatcher(_outbox, [new StubNotifier()]),
             _clock,
             Microsoft.Extensions.Logging.Abstractions.NullLogger<AlertRuleEngine>.Instance);
