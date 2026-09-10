@@ -16,7 +16,7 @@ export interface DashboardLayout {
   cards: DashboardCard[]
 }
 
-interface DashboardCardWire {
+export interface DashboardCardWire {
   id: string
   type: string
   visible: boolean

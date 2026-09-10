@@ -21,7 +21,9 @@ export interface Agent {
   collectorId?: number | null
 }
 
-export interface AgentCreated extends Agent {
+// 创建响应只含台账基础字段 + 一次性 token（契约 AgentCreatedResponse 不含时间戳/在线状态，
+// 镜像须忠实于 wire，见 type-consistency.ts 的一致性断言）。
+export interface AgentCreated extends Pick<Agent, 'id' | 'name' | 'labels' | 'capabilities'> {
   agentToken: string
 }
 

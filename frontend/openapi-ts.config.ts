@@ -7,7 +7,7 @@ export default defineConfig({
   input: '../artifacts/openapi/DevicePanel.Web_openapi.json',
   output: 'src/api/gen',
   plugins: [
-    // 运行时客户端：自定义 fetch 适配层（credentials/{error} 解析在 src/api/client.ts 统一接管）
+    // 运行时客户端：自定义 fetch 适配层（credentials/{error} 解析在 src/api/base.ts 统一接管）
     '@hey-api/client-fetch',
     '@hey-api/typescript',
     {

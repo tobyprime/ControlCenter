@@ -2,10 +2,6 @@
 // Cloudflare Pages 等独立域部署时以 VITE_API_BASE_URL 构建期注入绝对地址（如 https://api.example.com）
 const rawBase = (import.meta.env.VITE_API_BASE_URL ?? '').trim().replace(/\/+$/, '')
 
-export function apiUrl(path: string): string {
-  return `${rawBase}${path}`
-}
-
 export function wsUrl(path: string): string {
   if (rawBase) {
     return `${rawBase.replace(/^http/, 'ws')}${path}`
