@@ -4,18 +4,20 @@ using Microsoft.Data.Sqlite;
 
 namespace DevicePanel.Web.Alerting;
 
-/// <summary>待发队列中的一行：按渠道排队，失败记账（attempts/last_error）后仍在队列等待补发。</summary>
+/// <summary>待发队列中的一行：按渠道排队，失败记账（attempts/last_error）后仍在队列等待补发。
+/// AlertEventId 为可空关联（TOB-403 F2）：指向告警事件历史行，分发结果回写其投递状态。</summary>
 public sealed record AlertOutboxEntry(
     long Id,
     DateTimeOffset CreatedAtUtc,
     string Channel,
     AlertMessage Message,
     int Attempts,
-    string? LastError);
+    string? LastError,
+    long? AlertEventId = null);
 
 public interface IAlertOutboxStore
 {
-    void Enqueue(string channel, AlertMessage message, DateTimeOffset nowUtc);
+    void Enqueue(string channel, AlertMessage message, DateTimeOffset nowUtc, long? alertEventId = null);
 
     /// <summary>最老的一条待发消息（FIFO 队头）；队列为空返回 null。</summary>
     AlertOutboxEntry? PeekOldest();
@@ -42,21 +44,22 @@ public sealed class AlertOutboxStore : IAlertOutboxStore
         _connectionFactory = connectionFactory;
     }
 
-    public void Enqueue(string channel, AlertMessage message, DateTimeOffset nowUtc)
+    public void Enqueue(string channel, AlertMessage message, DateTimeOffset nowUtc, long? alertEventId = null)
     {
         using var connection = _connectionFactory.CreateOpenConnection();
         using var command = connection.CreateCommand();
         command.CommandText = """
-            INSERT INTO alert_outbox(created_at_utc, channel, payload_json)
-            VALUES ($createdAt, $channel, $payload)
+            INSERT INTO alert_outbox(created_at_utc, channel, payload_json, alert_event_id)
+            VALUES ($createdAt, $channel, $payload, $alertEventId)
             """;
         command.Parameters.AddWithValue("$createdAt", nowUtc.ToString("O"));
         command.Parameters.AddWithValue("$channel", channel);
         command.Parameters.AddWithValue("$payload", AlertDispatcher.Serialize(message));
+        command.Parameters.AddWithValue("$alertEventId", (object?)alertEventId ?? DBNull.Value);
         command.ExecuteNonQuery();
     }
 
-    public AlertOutboxEntry? PeekOldest() => ReadOne("SELECT * FROM alert_outbox ORDER BY id LIMIT 1");
+    public AlertOutboxEntry? PeekOldest() => ReadOne(ColumnSelect + " FROM alert_outbox ORDER BY id LIMIT 1");
 
     public void MarkSent(long id)
     {
@@ -87,7 +90,7 @@ public sealed class AlertOutboxStore : IAlertOutboxStore
         var entries = new List<AlertOutboxEntry>();
         using var connection = _connectionFactory.CreateOpenConnection();
         using var command = connection.CreateCommand();
-        command.CommandText = "SELECT * FROM alert_outbox ORDER BY id";
+        command.CommandText = ColumnSelect + " FROM alert_outbox ORDER BY id";
         using var reader = command.ExecuteReader();
         while (reader.Read())
         {
@@ -96,6 +99,9 @@ public sealed class AlertOutboxStore : IAlertOutboxStore
 
         return entries;
     }
+
+    // 显式列清单（不含 last_attempt_utc）：列序与 MapEntry 的读取索引一一对应
+    private const string ColumnSelect = "SELECT id, created_at_utc, channel, payload_json, attempts, last_error, alert_event_id";
 
     private AlertOutboxEntry? ReadOne(string sql)
     {
@@ -114,6 +120,7 @@ public sealed class AlertOutboxStore : IAlertOutboxStore
         var message = AlertDispatcher.Deserialize(reader.GetString(3)) ?? new AlertMessage("告警", "（消息负载不可解析）");
         var attempts = reader.GetInt32(4);
         var lastError = reader.IsDBNull(5) ? null : reader.GetString(5);
-        return new AlertOutboxEntry(id, createdAt, channel, message, attempts, lastError);
+        var alertEventId = reader.IsDBNull(6) ? (long?)null : reader.GetInt64(6);
+        return new AlertOutboxEntry(id, createdAt, channel, message, attempts, lastError, alertEventId);
     }
 }

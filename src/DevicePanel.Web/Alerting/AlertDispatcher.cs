@@ -33,11 +33,11 @@ public sealed class AlertDispatcher
         _notifiers = notifiers.ToList();
     }
 
-    public void Enqueue(AlertMessage message, DateTimeOffset nowUtc)
+    public void Enqueue(AlertMessage message, DateTimeOffset nowUtc, long? alertEventId = null)
     {
         foreach (var notifier in _notifiers)
         {
-            _outbox.Enqueue(notifier.ChannelName, message, nowUtc);
+            _outbox.Enqueue(notifier.ChannelName, message, nowUtc, alertEventId);
         }
     }
 
