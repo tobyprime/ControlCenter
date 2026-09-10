@@ -364,7 +364,11 @@ const historyTargetId = ref<number | null>(null)
 const historyFrom = ref('')
 
 const kindLabels: Record<string, string> = { trigger: '触发', recover: '恢复' }
-const deliveryLabels: Record<string, string> = { pending: '待发送', delivered: '已投递', failed: '投递失败' }
+// 审查口径修正（TOB-403）：failed 非终态——outbox 按无丢失契约持续补发，成功后翻转为「已投递」
+const deliveryLabels: Record<string, string> = { pending: '待发送', delivered: '已投递', failed: '投递失败（自动补发中）' }
+const deliveryHints: Record<string, string> = {
+  failed: '最近一次投递失败，系统会自动重试直至送达，成功后此状态翻转为「已投递」',
+}
 
 function sampleText(event: AlertEvent): string {
   if (!event.sample) return '—'
@@ -671,7 +675,11 @@ onMounted(async () => {
             <td>{{ sampleText(event) }}</td>
             <td class="history-content">{{ event.title }}：{{ event.content }}</td>
             <td>
-              <span class="history-delivery" :class="`delivery-${event.deliveryStatus}`">
+              <span
+                class="history-delivery"
+                :class="`delivery-${event.deliveryStatus}`"
+                :title="deliveryHints[event.deliveryStatus]"
+              >
                 {{ deliveryLabels[event.deliveryStatus] ?? event.deliveryStatus }}
               </span>
               <div v-if="event.deliveryError" class="history-delivery-error">{{ event.deliveryError }}</div>

@@ -11,7 +11,11 @@ public static class AlertEventKinds
     public const string Recover = "recover";
 }
 
-/// <summary>投递状态：待发送 → 已投递 / 投递失败（失败留待分发 worker 重试后翻转）。</summary>
+/// <summary>
+/// 投递状态（TOB-403 审查口径修正）：只有 delivered 是终态。
+/// pending＝尚未投递成功；failed＝最近一次投递失败（非终态，outbox 按无丢失契约持续补发，
+/// 成功后由分发 worker 翻转为 delivered）；界面文案须与该补发语义一致，不得让 failed 读作「已丢失/不再重试」。
+/// </summary>
 public static class AlertDeliveryStatuses
 {
     public const string Pending = "pending";

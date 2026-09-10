@@ -1,6 +1,6 @@
 -- 模块C（TOB-403 F2）：告警事件历史。触发/恢复各记一行；规则与目标信息在写入时快照
 -- （规则删除、目标更名后历史仍可读），样本值快照供"当时值"回看。
--- delivery_status 由分发链路回写：pending → delivered / failed（分发语义不变，只补记账）。
+-- delivery_status 由分发链路回写：pending / failed 均非终态（failed＝最近一次失败，outbox 持续补发），仅 delivered 为终态。
 -- alert_outbox 增加可空关联列 alert_event_id：历史机制上线前的在队消息为 NULL，不回写。
 
 CREATE TABLE alert_events (

@@ -74,7 +74,7 @@ public class AlertEventStoreTests : IDisposable
         var later = _store.Append(Draft(targetId: 2, targetName: "乙"), _clock.GetUtcNow());
         var windowStart = _clock.GetUtcNow().AddMinutes(-5);
 
-        Assert.Empty(_store.List(targetId: 1, null, null, 100).Where(e => e.Id == later));
+        Assert.DoesNotContain(later, _store.List(targetId: 1, null, null, 100).Select(e => e.Id));
         Assert.Equal([early], _store.List(targetId: 1, null, null, 100).Select(e => e.Id));
         Assert.Equal([later], _store.List(targetId: 2, null, null, 100).Select(e => e.Id));
         // 时间窗口：from 之后只命中后一条
