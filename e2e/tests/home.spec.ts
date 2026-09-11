@@ -64,6 +64,15 @@ function cardLocator(page: Page, type: string) {
   return page.locator(`[data-card-type="${type}"]`)
 }
 
+// getByLabel 为子串匹配：指标选项文本（如「采集器在线状态」）含「采集器」会与其他字段
+// 下拉撞可访问名（TOB-403 在线指标改名后的真实教训）——统一按字段 label span 全等过滤定位
+function fieldSelect(card: ReturnType<typeof cardLocator>, fieldName: string) {
+  return card
+    .locator('label.control-field')
+    .filter({ has: card.page().locator('span.control-label', { hasText: new RegExp(`^${fieldName}$`) }) })
+    .locator('select')
+}
+
 async function html5Drag(page: Page, sourceSelector: string, targetSelector: string) {
   await page.evaluate(
     ([source, target]) => {
@@ -111,11 +120,13 @@ test.describe('主页卡片面板（TOB-367）', () => {
     await createDevicesViaApi(page, 2)
     await page.reload()
 
-    // 欢迎信息保留；默认布局三张卡齐全，无空白面板
+    // 欢迎信息保留；默认布局五张卡齐全（TOB-408 F10：+ 最近告警 / 指标摘要），无空白面板
     await expect(page.getByRole('heading', { name: /欢迎/ })).toBeVisible()
     await expect(cardLocator(page, 'overview-total-devices')).toBeVisible()
     await expect(cardLocator(page, 'overview-online-devices')).toBeVisible()
     await expect(cardLocator(page, 'overview-active-alerts')).toBeVisible()
+    await expect(cardLocator(page, 'recent-alerts')).toBeVisible()
+    await expect(cardLocator(page, 'metrics-summary')).toBeVisible()
 
     // 数值与 /api/collectors 一致（并行用例可能并发增删采集器，以实时接口为准）；
     // 超时覆盖一次 15s 自动刷新周期——满载下挂载取数偶发失败由下一刷新兜底（验收 4）
@@ -191,6 +202,8 @@ test.describe('主页卡片面板（TOB-367）', () => {
       'overview-total-devices',
       'overview-online-devices',
       'overview-active-alerts',
+      'recent-alerts',
+      'metrics-summary',
     ])
 
     // 把活跃告警拖到最前
@@ -203,6 +216,8 @@ test.describe('主页卡片面板（TOB-367）', () => {
       'overview-active-alerts',
       'overview-total-devices',
       'overview-online-devices',
+      'recent-alerts',
+      'metrics-summary',
     ])
 
     await page.getByRole('button', { name: '保存布局' }).click()
@@ -211,6 +226,8 @@ test.describe('主页卡片面板（TOB-367）', () => {
       'overview-active-alerts',
       'overview-total-devices',
       'overview-online-devices',
+      'recent-alerts',
+      'metrics-summary',
     ])
     await page.screenshot({ path: `${EVIDENCE_DIR}/home-card-reorder.png`, fullPage: true })
   })
@@ -420,10 +437,10 @@ test.describe('主页指标卡（TOB-368）', () => {
   }
 
   async function configureCard(card: ReturnType<typeof cardLocator>, targetLabel: string, keyLabel: string, windowLabel: string) {
-    await card.getByLabel('采集器').selectOption({ label: targetLabel })
-    await card.getByLabel('指标').selectOption({ label: keyLabel })
+    await fieldSelect(card, '采集器').selectOption({ label: targetLabel })
+    await fieldSelect(card, '指标').selectOption({ label: keyLabel })
     if (windowLabel) {
-      await card.getByLabel('时间窗').selectOption({ label: windowLabel })
+      await fieldSelect(card, '时间窗').selectOption({ label: windowLabel })
     }
   }
 
@@ -485,7 +502,7 @@ test.describe('主页指标卡（TOB-368）', () => {
     await page.getByRole('button', { name: '添加「状态卡」' }).click()
     const statusCard = cardLocator(page, 'metric-status')
     await configureCard(statusCard, '主页概览机 1', '服务状态（svc.status）', '')
-    await expect(statusCard.getByLabel('卡片类型').locator('option[value="metric-value"]')).toHaveAttribute('disabled', /.*/)
+    await expect(fieldSelect(statusCard, '卡片类型').locator('option[value="metric-value"]')).toHaveAttribute('disabled', /.*/)
     await page.getByRole('button', { name: '保存布局' }).click()
     await expect(statusCard.locator('.overview-value')).toHaveText('online')
 
@@ -494,7 +511,7 @@ test.describe('主页指标卡（TOB-368）', () => {
     await page.getByRole('button', { name: '添加「曲线卡」' }).click()
     const chartCard = cardLocator(page, 'metric-chart')
     await configureCard(chartCard, '主页概览机 1', '在线玩家（player.count）', '')
-    await chartCard.getByLabel('卡片类型').selectOption({ label: '数值卡' })
+    await fieldSelect(chartCard, '卡片类型').selectOption({ label: '数值卡' })
     await expect(cardLocator(page, 'metric-value')).toHaveCount(2)
     await expect(chartCard).toHaveCount(0)
     await page.getByRole('button', { name: '保存布局' }).click()
@@ -669,7 +686,7 @@ test.describe('主页指标卡（TOB-368）', () => {
     await page.screenshot({ path: `${EVIDENCE_DIR}/home-metric-card-title.png`, fullPage: true })
 
     // 一期概览卡标题保持类型文案，不受指标卡标题规则影响
-    await expect(cardLocator(page, 'overview-total-devices').locator('.overview-label')).toHaveText('设备总数')
+    await expect(cardLocator(page, 'overview-total-devices').locator('.overview-label')).toHaveText('采集器总数')
 
     // 重新进入编辑：类型文案恢复展示
     await page.getByRole('button', { name: '进入编辑' }).click()
@@ -708,10 +725,10 @@ test.describe('指标来源过滤与移动端抽屉导航（TOB-374）', () => {
     await page.getByRole('button', { name: '进入编辑' }).click()
     await page.getByRole('button', { name: '添加「数值卡」' }).click()
     const card = cardLocator(page, 'metric-value')
-    const metricSelect = card.getByLabel('指标')
+    const metricSelect = fieldSelect(card, '指标')
 
     // 设备来源：出现设备内置指标，不出现服务指标（status / latency_ms）
-    await card.getByLabel('采集器').selectOption({ label: 'TOB374设备机' })
+    await fieldSelect(card, '采集器').selectOption({ label: 'TOB374设备机' })
     await expect
       .poll(async () => (await metricSelect.locator('option').allTextContents()).join('\n'))
       .not.toContain('latency_ms')
@@ -723,7 +740,7 @@ test.describe('指标来源过滤与移动端抽屉导航（TOB-374）', () => {
 
     // 服务来源：不含设备指标；切换来源后原指标被清空，需按新来源重选
     await metricSelect.selectOption({ label: 'CPU 使用率（cpu）' })
-    await card.getByLabel('采集器').selectOption({ label: 'TOB374服务机' })
+    await fieldSelect(card, '采集器').selectOption({ label: 'TOB374服务机' })
     await expect(metricSelect).toHaveValue('')
     await expect
       .poll(async () => (await metricSelect.locator('option').allTextContents()).join('\n'))
@@ -785,5 +802,124 @@ test.describe('指标来源过滤与移动端抽屉导航（TOB-374）', () => {
     await expect(page.locator('.nav-toggle')).toBeHidden()
     await expect(sidebar).toBeVisible()
     await expect.poll(async () => (await sidebar.boundingBox())?.x).toBe(0)
+  })
+})
+
+test.describe('默认布局最近告警/指标摘要卡（TOB-408 F10）', () => {
+  // F10 取数走既有端点：告警事件历史 + 按来源指标概览（mock 布局接口 → 回退服务端默认布局口径）
+  async function mockF10DataApis(page: Page) {
+    await page.route('**/api/alert-events*', (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          count: 2,
+          items: [
+            {
+              id: 12,
+              createdAtUtc: '2026-09-05T07:55:00Z',
+              ruleId: 1,
+              ruleType: 'threshold_above',
+              targetId: 1,
+              targetName: '主页概览机 1',
+              metricKey: 'player.count',
+              metricDisplayName: '在线玩家',
+              kind: 'trigger',
+              title: '在线玩家越上限',
+              content: '最新值 95 超过阈值 90',
+              sample: { timeUtc: '2026-09-05T07:55:00Z', valueNum: 95, valueText: null },
+              deliveryStatus: 'delivered',
+              deliveredAtUtc: '2026-09-05T07:55:05Z',
+              deliveryError: null,
+            },
+            {
+              id: 11,
+              createdAtUtc: '2026-09-05T07:40:00Z',
+              ruleId: 1,
+              ruleType: 'threshold_above',
+              targetId: 1,
+              targetName: '主页概览机 1',
+              metricKey: 'player.count',
+              metricDisplayName: '在线玩家',
+              kind: 'recover',
+              title: '在线玩家越上限',
+              content: '已回落到阈值以下',
+              sample: { timeUtc: '2026-09-05T07:40:00Z', valueNum: 60, valueText: null },
+              deliveryStatus: 'delivered',
+              deliveredAtUtc: '2026-09-05T07:40:05Z',
+              deliveryError: null,
+            },
+          ],
+        }),
+      }),
+    )
+    await page.route('**/api/metrics/*/overview', (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify([
+          {
+            key: 'player.count',
+            valueType: 'number',
+            displayName: '在线玩家',
+            unit: '人',
+            builtIn: false,
+            latestTimeUtc: '2026-09-05T07:59:00Z',
+            latestValueNum: 7,
+            latestValueText: null,
+          },
+        ]),
+      }),
+    )
+  }
+
+  test('默认布局含最近告警卡与指标摘要卡并渲染真实数据，1280 视口无大面积空白（验收 1）', async ({ page }) => {
+    await page.route(LAYOUT_API, (route) =>
+      route.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ error: 'x' }) }),
+    )
+    await mockF10DataApis(page)
+    await login(page)
+    await createDevicesViaApi(page, 1)
+    await page.reload()
+
+    // 最近告警卡：渲染事件快照（触发/恢复徽标 + 目标 + 内容）
+    const recentCard = cardLocator(page, 'recent-alerts')
+    await expect(recentCard.locator('.recent-alert-item')).toHaveCount(2)
+    await expect(recentCard.locator('.recent-alert-item').first()).toContainText('触发')
+    await expect(recentCard.locator('.recent-alert-item').first()).toContainText('主页概览机 1')
+    await expect(recentCard.locator('.recent-alert-item').nth(1)).toContainText('恢复')
+
+    // 指标摘要卡：按来源渲染指标最新值（含单位）。
+    // 共享后端下其他用例可能并发登记采集器，行数不锁定，只锁定本用例采集器的摘要行内容
+    const summaryCard = cardLocator(page, 'metrics-summary')
+    const f10Row = summaryCard.locator('.summary-row', { hasText: '主页概览机 1' }).filter({ hasText: '在线玩家' })
+    await expect(f10Row.first()).toContainText('7 人')
+    await expect(f10Row.first()).toBeVisible()
+
+    // 整页不留大面积空白：卡片区域有实际高度（全页截图留档 1280 视口）
+    const gridBox = (await page.locator('.overview-grid').boundingBox())!
+    expect(gridBox.height).toBeGreaterThan(200)
+    await page.screenshot({ path: `${EVIDENCE_DIR}/home-f10-default-layout.png`, fullPage: true })
+  })
+
+  test('无告警/无指标数据时卡片显示占位不报错（验收 1 边界）', async ({ page }) => {
+    await page.route(LAYOUT_API, (route) =>
+      route.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ error: 'x' }) }),
+    )
+    await page.route('**/api/alert-events*', (route) =>
+      route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ count: 0, items: [] }) }),
+    )
+    await page.route('**/api/metrics/*/overview', (route) =>
+      route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([]) }),
+    )
+    await login(page)
+    await createDevicesViaApi(page, 1)
+    await page.reload()
+
+    await expect(cardLocator(page, 'recent-alerts').getByText('近期无告警事件')).toBeVisible()
+    await expect(cardLocator(page, 'metrics-summary').getByText('暂无指标数据')).toBeVisible()
+    // 页面不崩：概览卡正常
+    await expect(cardLocator(page, 'overview-total-devices')).toBeVisible()
+    await page.screenshot({ path: `${EVIDENCE_DIR}/home-f10-empty-state.png`, fullPage: true })
   })
 })

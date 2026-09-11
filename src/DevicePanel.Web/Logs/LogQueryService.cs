@@ -60,7 +60,7 @@ public sealed class LogQueryService
                           envelope.Payload.TryGetProperty("message", out var m)
                 ? m.GetString()
                 : null;
-            pending.TrySetException(new AgentLogException(message ?? "设备无法执行日志请求"));
+            pending.TrySetException(new AgentLogException(message ?? "采集器无法执行日志请求"));
             return;
         }
 
@@ -72,7 +72,7 @@ public sealed class LogQueryService
         var channel = _connections.GetChannel(deviceId);
         if (channel is null || !channel.IsOpen)
         {
-            throw new DeviceOfflineException("设备离线，无法获取日志");
+            throw new DeviceOfflineException("采集器离线，无法获取日志");
         }
 
         var seq = Interlocked.Increment(ref _seq);
@@ -93,7 +93,7 @@ public sealed class LogQueryService
                     throw new OperationCanceledException(cancellationToken);
                 }
 
-                throw new AgentTimeoutException($"设备响应日志请求超时（{_options.RequestTimeoutSeconds}s）");
+                throw new AgentTimeoutException($"采集器响应日志请求超时（{_options.RequestTimeoutSeconds}s）");
             }
 
             var envelope = await pending.Task.ConfigureAwait(false);
@@ -110,7 +110,7 @@ public sealed class LogQueryService
         if (payload.ValueKind != JsonValueKind.Object || !payload.TryGetProperty(field, out var array) ||
             array.ValueKind != JsonValueKind.Array)
         {
-            throw new InvalidOperationException($"设备日志响应格式无效（缺少 {field}）");
+            throw new InvalidOperationException($"采集器日志响应格式无效（缺少 {field}）");
         }
 
         var items = new List<T>();

@@ -19,6 +19,9 @@ export const BUILTIN_CARD_DEFS: DashboardCardDef[] = [
   { type: 'metric-chart', label: '曲线卡', hint: '指标按时间窗的序列', multiple: true },
   // 三期模块4 控制卡：按设备组合控制器，操作即时回执（类型契约见 dashboard/controlCardConfig.ts）
   { type: 'control-card', label: '控制卡', hint: '按采集器组合控制器，操作即时回执', multiple: true },
+  // TOB-408 F10：默认布局新增两类数据卡，数据直取既有告警/指标端点，无 config
+  { type: 'recent-alerts', label: '最近告警', hint: '最近 5 条告警事件快照' },
+  { type: 'metrics-summary', label: '指标摘要', hint: '各采集器指标最新值一览' },
 ]
 
 export function cardDef(type: string): DashboardCardDef | undefined {

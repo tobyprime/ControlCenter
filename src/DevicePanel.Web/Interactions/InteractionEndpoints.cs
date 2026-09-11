@@ -21,7 +21,7 @@ public static class InteractionEndpoints
         {
             if (targets.Get(deviceId) is null)
             {
-                return Results.NotFound(new { error = "设备不存在" });
+                return Results.NotFound(new { error = "采集器不存在" });
             }
 
             var modes = catalog.GetDeclaredModeKeys(deviceId)

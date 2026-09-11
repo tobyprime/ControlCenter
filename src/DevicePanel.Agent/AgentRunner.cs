@@ -131,7 +131,7 @@ public sealed class AgentRunner
                 var result = await ConnectOnceAsync(startedAt, cancellationToken).ConfigureAwait(false);
                 if (result == ConnectResult.TokenRejected)
                 {
-                    await _output.WriteLineAsync("token 已被面板拒绝（无效/已重置/设备已删除），请更换 token 后重新启动。").ConfigureAwait(false);
+                    await _output.WriteLineAsync("token 已被面板拒绝（无效/已重置/采集器已删除），请更换 token 后重新启动。").ConfigureAwait(false);
                     return 3;
                 }
 
@@ -187,7 +187,7 @@ public sealed class AgentRunner
         }
 
         var authOk = JsonSerializer.Deserialize(reply.Payload.GetRawText(), AgentJsonContext.Default.AuthOkPayload);
-        await _output.WriteLineAsync($"认证成功：设备 #{authOk?.DeviceId}（{authOk?.Name}），心跳与指标上报周期 {_options.HeartbeatIntervalSeconds}s")
+        await _output.WriteLineAsync($"认证成功：采集器 #{authOk?.DeviceId}（{authOk?.Name}），心跳与指标上报周期 {_options.HeartbeatIntervalSeconds}s")
             .ConfigureAwait(false);
 
         // 下行通道按连接创建：断开/重连时随连接销毁（终端会话等派生资源一并终止）；

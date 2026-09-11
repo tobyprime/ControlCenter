@@ -2,7 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { fetchSession } from '@/router'
 import { listCollectors, type Collector } from '@/api/collectors'
-import { fetchActiveAlertCount } from '@/api/alerts'
+import { fetchActiveAlertCount, fetchAlertEvents, type AlertEvent } from '@/api/alerts'
 import { fetchDashboardLayout, saveDashboardLayout, type DashboardCard } from '@/api/dashboard'
 import {
   listMetricKeys,
@@ -53,6 +53,9 @@ async function refreshOverview() {
   } catch {
     // 告警计数失败仅保留占位，不影响设备概览与指标卡刷新
   }
+  void refreshRecentAlerts()
+  // targets 就绪后再取指标摘要：早于本轮调用时 summary 会因 targets 为空而跳过
+  void refreshMetricsSummary()
 }
 
 const cards = ref<DashboardCard[]>([])
@@ -60,6 +63,96 @@ const editing = ref(false)
 const draft = ref<DashboardCard[]>([])
 const saveError = ref('')
 const dragIndex = ref(-1)
+
+// TOB-408 F10：默认布局新增卡的取数。最近告警直取告警事件端点（15s 周期）；
+// 指标摘要按来源拉概览端点取最新值（30s 周期），仅在卡片可见时请求
+const recentAlerts = ref<AlertEvent[]>([])
+const kindLabels: Record<string, string> = { trigger: '触发', recover: '恢复' }
+
+const summaryByTarget = ref<Record<number, MetricOverviewItem[]>>({})
+const summaryLoading = ref(false)
+
+function hasVisibleCard(type: string): boolean {
+  return cards.value.some((card) => card.type === type && card.visible)
+}
+
+async function refreshRecentAlerts() {
+  if (!hasVisibleCard('recent-alerts')) {
+    return
+  }
+  try {
+    recentAlerts.value = (await fetchAlertEvents({ limit: 5 })).items
+  } catch {
+    // 拉取失败保留上一轮数据，下一刷新周期兜底
+  }
+}
+
+interface SummaryRow {
+  targetId: number
+  key: string
+  targetName: string
+  displayName: string
+  text: string
+  timeUtc: string | null
+}
+
+function summaryTextOf(item: MetricOverviewItem): string {
+  if (item.latestValueText !== null) {
+    return item.latestValueText
+  }
+  if (item.latestValueNum !== null) {
+    return item.unit ? `${item.latestValueNum} ${item.unit}` : String(item.latestValueNum)
+  }
+  return '—'
+}
+
+const summaryRows = computed<SummaryRow[]>(() => {
+  const rows: SummaryRow[] = []
+  for (const target of targets.value) {
+    const items = [...(summaryByTarget.value[target.id] ?? [])]
+      .filter((item) => item.latestValueNum !== null || item.latestValueText !== null)
+      .sort((a, b) => (b.latestTimeUtc ?? '').localeCompare(a.latestTimeUtc ?? ''))
+    for (const item of items) {
+      rows.push({
+        targetId: target.id,
+        key: item.key,
+        targetName: target.name,
+        displayName: item.displayName,
+        text: summaryTextOf(item),
+        timeUtc: item.latestTimeUtc,
+      })
+    }
+  }
+  return rows.slice(0, 8)
+})
+
+async function refreshMetricsSummary() {
+  if (!hasVisibleCard('metrics-summary') || targets.value.length === 0) {
+    return
+  }
+  summaryLoading.value = true
+  try {
+    const entries = await Promise.all(
+      targets.value.map(async (target) => {
+        try {
+          return [target.id, await fetchTargetOverview(target.id)] as const
+        } catch {
+          // 单来源失败按无数据处理，不阻塞其他来源
+          return [target.id, null] as const
+        }
+      }),
+    )
+    const next: Record<number, MetricOverviewItem[]> = {}
+    for (const [targetId, items] of entries) {
+      if (items) {
+        next[targetId] = items
+      }
+    }
+    summaryByTarget.value = next
+  } finally {
+    summaryLoading.value = false
+  }
+}
 
 // TOB-368 指标卡数据：来源按 target 聚合拉取，曲线按卡片各拉一条
 const metricKeys = ref<MetricKeyInfo[]>([])
@@ -324,7 +417,12 @@ function onDrop(index: number) {
 }
 
 onMounted(() => {
-  loadLayout().then(() => refreshMetricCards())
+  loadLayout().then(() => {
+    refreshMetricCards()
+    // F10 新增卡：布局加载完成后立即取一轮（refreshOverview 首轮可能早于布局就绪）
+    refreshRecentAlerts()
+    refreshMetricsSummary()
+  })
   refreshOverview()
   refreshRegistries()
   refreshTimer = window.setInterval(refreshOverview, 15000)
@@ -332,6 +430,8 @@ onMounted(() => {
     refreshRegistries()
     refreshAvailableMetrics()
     refreshMetricCards()
+    refreshRecentAlerts()
+    refreshMetricsSummary()
   }, 30000)
 })
 
@@ -384,7 +484,7 @@ onBeforeUnmount(() => {
         v-for="(card, index) in editing ? draft : visibleCards"
         :key="card.id"
         class="overview-card"
-        :class="{ 'card-hidden': editing && !card.visible, 'card-dragging': dragIndex === index, 'card-chart': card.type === 'metric-chart', 'card-control': card.type === 'control-card' }"
+        :class="{ 'card-hidden': editing && !card.visible, 'card-dragging': dragIndex === index, 'card-chart': card.type === 'metric-chart', 'card-control': card.type === 'control-card', 'card-recent-alerts': card.type === 'recent-alerts', 'card-metrics-summary': card.type === 'metrics-summary' }"
         :data-card-type="card.type"
         :draggable="editing"
         @dragstart="onDragStart(index)"
@@ -409,6 +509,41 @@ onBeforeUnmount(() => {
             <DashboardControlCardConfigForm :card="card" :targets="targets" />
           </template>
           <DashboardControlCard v-else :card="card" />
+        </template>
+
+        <!-- TOB-408 F10 最近告警卡：查看态列最近 5 条事件快照，编辑态仅展示类型文案 -->
+        <template v-else-if="card.type === 'recent-alerts'">
+          <span v-if="editing" class="overview-label">{{ cardLabel(card.type) }}</span>
+          <template v-else>
+            <span class="overview-label">{{ cardLabel(card.type) }}</span>
+            <ul v-if="recentAlerts.length > 0" class="recent-alerts-list">
+              <li v-for="event in recentAlerts" :key="event.id" class="recent-alert-item">
+                <span class="recent-alert-kind" :class="event.kind === 'trigger' ? 'kind-trigger' : 'kind-recover'">
+                  {{ kindLabels[event.kind] ?? event.kind }}
+                </span>
+                <span class="recent-alert-text">{{ event.targetName }} · {{ event.title }}：{{ event.content }}</span>
+                <span class="recent-alert-time">{{ new Date(event.createdAtUtc).toLocaleString() }}</span>
+              </li>
+            </ul>
+            <span v-else class="card-state">近期无告警事件</span>
+          </template>
+        </template>
+
+        <!-- TOB-408 F10 指标摘要卡：按来源列指标最新值 -->
+        <template v-else-if="card.type === 'metrics-summary'">
+          <span v-if="editing" class="overview-label">{{ cardLabel(card.type) }}</span>
+          <template v-else>
+            <span class="overview-label">{{ cardLabel(card.type) }}</span>
+            <div v-if="summaryRows.length > 0" class="summary-rows">
+              <div v-for="row in summaryRows" :key="`${row.targetId}-${row.key}`" class="summary-row">
+                <span class="summary-target">{{ row.targetName }}</span>
+                <span class="summary-metric">{{ row.displayName }}</span>
+                <span class="summary-value">{{ row.text }}</span>
+              </div>
+            </div>
+            <span v-else-if="summaryLoading || registriesLoading" class="card-state">加载中…</span>
+            <span v-else class="card-state">暂无指标数据</span>
+          </template>
         </template>
 
         <!-- 一期概览卡 -->
@@ -576,6 +711,100 @@ onBeforeUnmount(() => {
 /* 控制卡占满整行：组合多台设备的控制器，操作与回执需要横向空间 */
 .card-control {
   grid-column: 1 / -1;
+}
+
+/* F10 最近告警 / 指标摘要卡占满整行，列表行有横向空间 */
+.card-recent-alerts,
+.card-metrics-summary {
+  grid-column: 1 / -1;
+}
+
+.recent-alerts-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.recent-alert-item {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 0.85rem;
+  min-width: 0;
+}
+
+.recent-alert-kind {
+  flex: none;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  white-space: nowrap;
+}
+
+.recent-alert-kind.kind-trigger {
+  background: #fef2f2;
+  color: #b91c1c;
+}
+
+.recent-alert-kind.kind-recover {
+  background: #ecfdf5;
+  color: #047857;
+}
+
+.recent-alert-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.recent-alert-time {
+  flex: none;
+  color: var(--color-text-light);
+  font-size: 0.75rem;
+  white-space: nowrap;
+}
+
+.summary-rows {
+  display: flex;
+  flex-direction: column;
+}
+
+.summary-row {
+  display: grid;
+  grid-template-columns: minmax(96px, max-content) 1fr max-content;
+  gap: 12px;
+  align-items: baseline;
+  padding: 6px 0;
+  border-bottom: 1px dashed var(--color-border);
+  font-size: 0.85rem;
+}
+
+.summary-row:last-child {
+  border-bottom: none;
+}
+
+.summary-target {
+  color: var(--color-text-light);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.summary-metric {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.summary-value {
+  font-weight: 600;
+  white-space: nowrap;
 }
 
 .overview-card[draggable='true'] {

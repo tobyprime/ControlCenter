@@ -38,13 +38,13 @@ public static class TerminalEndpoints
 
             if (devices.Get(deviceId) is null)
             {
-                return Results.NotFound(new { error = "设备不存在" });
+                return Results.NotFound(new { error = "采集器不存在" });
             }
 
             var agentChannel = connections.GetChannel(deviceId);
             if (agentChannel is null)
             {
-                return Results.Conflict(new { error = "设备离线，无法打开终端" });
+                return Results.Conflict(new { error = "采集器离线，无法打开终端" });
             }
 
             var (cols, rows) = ParseSize(http);
@@ -78,7 +78,7 @@ public static class TerminalEndpoints
         {
             if (deviceId is { } id && devices.Get(id) is null)
             {
-                return Results.NotFound(new { error = "设备不存在" });
+                return Results.NotFound(new { error = "采集器不存在" });
             }
 
             if (!TryParseRange(from, to, out var fromUtc, out var toUtc, out var error))

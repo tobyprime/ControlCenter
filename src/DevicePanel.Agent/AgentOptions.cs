@@ -65,7 +65,7 @@ public sealed class AgentOptions
 
         if (string.IsNullOrWhiteSpace(Token))
         {
-            error = "缺少设备 token：请通过 --token 或环境变量 PANEL_TOKEN 指定（面板设备详情中获取）";
+            error = "缺少采集器 token：请通过 --token 或环境变量 PANEL_TOKEN 指定（面板采集器详情中获取）";
             return false;
         }
 

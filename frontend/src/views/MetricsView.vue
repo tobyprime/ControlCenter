@@ -362,7 +362,7 @@ onBeforeUnmount(() => {
             <td>{{ info.unit || '—' }}</td>
             <td>{{ info.builtIn ? '内置' : '自定义' }}</td>
             <td>
-              <button v-if="!info.builtIn" type="button" class="link-button danger" @click="onDeleteKey(info)">删除</button>
+              <button v-if="!info.builtIn" type="button" class="link-button dp-touch-inline danger" @click="onDeleteKey(info)">删除</button>
             </td>
           </tr>
         </tbody>

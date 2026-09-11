@@ -44,7 +44,7 @@ test('告警规则页：迁移播种的全局规则可见、可新建/关闭/删
   const cpuRow = rulesCard.locator('tbody tr', { hasText: 'CPU 使用率' }).first()
   await expect(cpuRow).toContainText('全局')
   await expect(cpuRow).toContainText('阈值上越限')
-  await expect(rulesCard.locator('tbody tr', { hasText: '设备在线状态' }).first()).toContainText('状态不符')
+  await expect(rulesCard.locator('tbody tr', { hasText: '采集器在线状态' }).first()).toContainText('状态不符')
 
   // 新建规则：全局 内存 阈值下越限（阈值 5）——先选类型（指标列表按类型过滤已存在规则）
   await rulesCard.getByRole('button', { name: '新建规则' }).click()

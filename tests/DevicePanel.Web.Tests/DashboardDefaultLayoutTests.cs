@@ -4,28 +4,46 @@ using Xunit;
 
 namespace DevicePanel.Web.Tests;
 
-/// <summary>服务端默认布局单测：等价一期主页概览（设备总数、在线设备、活跃告警），全部默认可见。</summary>
+/// <summary>服务端默认布局单测（TOB-408 F10）：一期概览三卡 + 最近告警 + 指标摘要，全部默认可见。</summary>
 public class DashboardDefaultLayoutTests
 {
     [Fact]
-    public void Create_Returns_Phase1_Overview_Cards_All_Visible()
+    public void Create_Returns_Overview_And_F10_Cards_All_Visible()
     {
         var layout = DashboardDefaultLayout.Create();
 
-        Assert.Equal(3, layout.Cards.Count);
+        Assert.Equal(5, layout.Cards.Count);
         Assert.Equal(
             new[]
             {
                 DashboardDefaultLayout.CardIdTotalDevices,
                 DashboardDefaultLayout.CardIdOnlineDevices,
                 DashboardDefaultLayout.CardIdActiveAlerts,
+                DashboardDefaultLayout.CardIdRecentAlerts,
+                DashboardDefaultLayout.CardIdMetricsSummary,
             },
             layout.Cards.Select(c => c.Id).ToArray());
         Assert.Equal(
-            new[] { DashboardDefaultLayout.CardTypeTotalDevices, DashboardDefaultLayout.CardTypeOnlineDevices, DashboardDefaultLayout.CardTypeActiveAlerts },
+            new[]
+            {
+                DashboardDefaultLayout.CardTypeTotalDevices,
+                DashboardDefaultLayout.CardTypeOnlineDevices,
+                DashboardDefaultLayout.CardTypeActiveAlerts,
+                DashboardDefaultLayout.CardTypeRecentAlerts,
+                DashboardDefaultLayout.CardTypeMetricsSummary,
+            },
             layout.Cards.Select(c => c.Type).ToArray());
-        Assert.Equal(new[] { 0, 1, 2 }, layout.Cards.Select(c => c.Sort).ToArray());
+        Assert.Equal(new[] { 0, 1, 2, 3, 4 }, layout.Cards.Select(c => c.Sort).ToArray());
         Assert.All(layout.Cards, c => Assert.True(c.Visible));
+    }
+
+    [Fact]
+    public void F10_Card_Types_Are_Known_Types_Accepted_By_Catalog()
+    {
+        Assert.True(DashboardCardCatalog.IsKnownType(DashboardCardCatalog.TypeRecentAlerts));
+        Assert.True(DashboardCardCatalog.IsKnownType(DashboardCardCatalog.TypeMetricsSummary));
+        Assert.False(DashboardCardCatalog.IsMetricType(DashboardCardCatalog.TypeRecentAlerts));
+        Assert.False(DashboardCardCatalog.IsMetricType(DashboardCardCatalog.TypeMetricsSummary));
     }
 
     [Fact]
