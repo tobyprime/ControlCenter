@@ -636,7 +636,7 @@ onBeforeUnmount(() => {
               <td><strong>{{ formatValue(item) }}</strong></td>
               <td>{{ formatTime(item.latestTimeUtc) }}</td>
               <td>
-                <button type="button" class="link-button" @click="chartKey = item.key; onSelectChart()">看曲线</button>
+                <button type="button" class="link-button dp-touch-inline" @click="chartKey = item.key; onSelectChart()">看曲线</button>
               </td>
             </tr>
           </tbody>
@@ -786,7 +786,7 @@ onBeforeUnmount(() => {
               <td>
                 <template v-if="rule.parameters['threshold'] !== undefined">
                   阈值 {{ rule.parameters['threshold'] }}
-                  <button type="button" class="link-button" @click="openEditThreshold(rule)">修改</button>
+                  <button type="button" class="link-button dp-touch-inline" @click="openEditThreshold(rule)">修改</button>
                 </template>
                 <template v-else-if="rule.parameters['minutes'] !== undefined">
                   {{ rule.parameters['minutes'] }} 分钟
@@ -797,7 +797,7 @@ onBeforeUnmount(() => {
               </td>
               <td>
                 {{ rule.sustainSeconds }} 秒
-                <button type="button" class="link-button" @click="openEditSustain(rule)">修改</button>
+                <button type="button" class="link-button dp-touch-inline" @click="openEditSustain(rule)">修改</button>
               </td>
               <td>
                 <span class="status-badge" :class="rule.enabled ? 'online' : 'offline'">
@@ -806,10 +806,10 @@ onBeforeUnmount(() => {
                 </span>
               </td>
               <td class="row-actions">
-                <button type="button" class="link-button" @click="onToggleRule(rule)">
+                <button type="button" class="link-button dp-touch-inline" @click="onToggleRule(rule)">
                   {{ rule.enabled ? '关闭' : '启用' }}
                 </button>
-                <button type="button" class="link-button danger" @click="onDeleteRule(rule)">删除</button>
+                <button type="button" class="link-button dp-touch-inline danger" @click="onDeleteRule(rule)">删除</button>
               </td>
             </tr>
           </tbody>

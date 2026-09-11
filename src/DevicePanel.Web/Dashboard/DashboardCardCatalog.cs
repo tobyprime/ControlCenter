@@ -14,6 +14,9 @@ public static class DashboardCardCatalog
     public const string TypeMetricStatus = "metric-status";
     public const string TypeMetricChart = "metric-chart";
     public const string TypeControl = "control-card";
+    // TOB-408 F10：默认布局新增的两类数据卡（无 config，前端直接消费既有告警/指标端点）
+    public const string TypeRecentAlerts = "recent-alerts";
+    public const string TypeMetricsSummary = "metrics-summary";
 
     /// <summary>指标卡类型：config 必须携带 { targetId, key, windowHours? }（windowHours 可选，缺省语义在前端）。</summary>
     public static bool IsMetricType(string type) =>
@@ -22,5 +25,6 @@ public static class DashboardCardCatalog
     public static bool IsKnownType(string type) =>
         type is TypeTotalDevices or TypeOnlineDevices or TypeActiveAlerts
             or TypeMetricValue or TypeMetricStatus or TypeMetricChart
-            or TypeControl;
+            or TypeControl
+            or TypeRecentAlerts or TypeMetricsSummary;
 }

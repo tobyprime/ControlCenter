@@ -194,10 +194,10 @@ public class AgentConnectionRegistryTests
         var channel = new FakeDeviceChannel();
         registry.TryAdd(1, channel);
 
-        Assert.True(registry.TryDisconnect(1, WebSocketCloseCodes.DeviceDeleted, "设备已删除"));
+        Assert.True(registry.TryDisconnect(1, WebSocketCloseCodes.DeviceDeleted, "采集器已删除"));
         Assert.False(registry.IsConnected(1));
         Assert.Equal(new[] { (int)WebSocketCloseCodes.DeviceDeleted }, channel.CloseCalls);
-        Assert.False(registry.TryDisconnect(1, WebSocketCloseCodes.DeviceDeleted, "设备已删除"));
+        Assert.False(registry.TryDisconnect(1, WebSocketCloseCodes.DeviceDeleted, "采集器已删除"));
     }
 
     [Fact]

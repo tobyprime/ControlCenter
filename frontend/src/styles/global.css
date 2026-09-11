@@ -172,3 +172,15 @@ textarea {
   position: absolute;
   inset: -6px;
 }
+
+/* F7（TOB-408）：行内文字按钮热区扩展——0.8rem 文字按钮本体约 26×17px，
+   命中区外扩至约 42×41px（≥40×40），小屏也能点中 */
+.dp-touch-inline {
+  position: relative;
+}
+
+.dp-touch-inline::before {
+  content: '';
+  position: absolute;
+  inset: -12px -8px;
+}

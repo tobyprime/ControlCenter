@@ -164,7 +164,7 @@ test.describe('日志查看（TOB-340 → 三期模块3 入口并入采集器详
 
     await openCollectorDetail(page, deviceName)
 
-    await expect(page.getByText('设备离线，无法获取日志')).toBeVisible({ timeout: 15_000 })
+    await expect(page.getByText('采集器离线，无法获取日志')).toBeVisible({ timeout: 15_000 })
   })
 
   test('跨来源同名服务可分别选中，拉取 kind 与所选条目一致（阶段 1 审查问题 1）', async ({ page }) => {

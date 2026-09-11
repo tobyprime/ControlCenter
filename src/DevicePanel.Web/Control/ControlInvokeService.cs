@@ -58,7 +58,7 @@ public sealed class ControlInvokeService
             var offline = _agents.Get(agentId)?.Controllers?.FirstOrDefault(c => c.Key == controllerKey)
                 ?? new ControllerDeclaration(controllerKey, "unknown", controllerKey, [], JsonSerializer.SerializeToElement(new { }));
             return RecordAndReturn(collector, offline, operatorName, parameters,
-                ControlLogStatuses.Failure, "设备离线，控制未送达", deviceOffline: true);
+                ControlLogStatuses.Failure, "采集器离线，控制未送达", deviceOffline: true);
         }
 
         var agent = _agents.Get(agentId);
@@ -108,7 +108,7 @@ public sealed class ControlInvokeService
                 }
 
                 return RecordAndReturn(collector, declaration, operatorName, parameters,
-                    ControlLogStatuses.Timeout, $"设备响应控制请求超时（{_options.RequestTimeoutSeconds}s）");
+                    ControlLogStatuses.Timeout, $"采集器响应控制请求超时（{_options.RequestTimeoutSeconds}s）");
             }
 
             var envelope = await pending.Task.ConfigureAwait(false);
@@ -119,7 +119,7 @@ public sealed class ControlInvokeService
                     ? m.GetString()
                     : null;
                 return RecordAndReturn(collector, declaration, operatorName, parameters,
-                    ControlLogStatuses.Failure, message ?? "设备无法执行控制请求");
+                    ControlLogStatuses.Failure, message ?? "采集器无法执行控制请求");
             }
 
             var receipt = envelope.Payload.ValueKind == JsonValueKind.Object &&

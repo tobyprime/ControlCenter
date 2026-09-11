@@ -422,11 +422,11 @@ onMounted(async () => {
     <section class="card">
       <h2 class="card-title">
         规则列表
-        <button type="button" class="primary-button" @click="openRuleForm">新建规则</button>
+        <button type="button" class="dp-btn dp-btn-primary" @click="openRuleForm">新建规则</button>
       </h2>
       <span v-if="rulesError" class="error-note">{{ rulesError }}</span>
-      <div v-if="rulesLoading" class="card-note">加载中…</div>
-      <table v-else class="override-table">
+      <div v-if="rulesLoading" class="dp-loading">加载中…</div>
+      <table v-else class="dp-table">
         <thead>
           <tr>
             <th>范围</th>
@@ -446,7 +446,7 @@ onMounted(async () => {
             <td>{{ ruleTypeLabel(rule.ruleType) }}</td>
             <td>
               {{ parameterText(rule) }}
-              <button type="button" class="link-button" @click="openEditForm(rule)">修改</button>
+              <button type="button" class="link-button dp-touch-inline" @click="openEditForm(rule)">修改</button>
             </td>
             <td>{{ rule.sustainSeconds }} 秒</td>
             <td>{{ rule.repeatMinutes === 0 ? '恢复前一次' : `${rule.repeatMinutes} 分钟` }}</td>
@@ -457,10 +457,10 @@ onMounted(async () => {
               </span>
             </td>
             <td class="row-actions">
-              <button type="button" class="link-button" @click="onToggleRule(rule)">
+              <button type="button" class="link-button dp-touch-inline" @click="onToggleRule(rule)">
                 {{ rule.enabled ? '关闭' : '启用' }}
               </button>
-              <button type="button" class="link-button danger" @click="onDeleteRule(rule)">删除</button>
+              <button type="button" class="link-button dp-touch-inline danger" @click="onDeleteRule(rule)">删除</button>
             </td>
           </tr>
         </tbody>
@@ -471,20 +471,20 @@ onMounted(async () => {
           <h2 class="dialog-title">新建告警规则</h2>
           <label class="field">
             <span class="field-label">作用范围</span>
-            <select v-model="formScope" class="control-select" @change="onFormScopeChange">
+            <select v-model="formScope" class="dp-select" @change="onFormScopeChange">
               <option value="global">全局（对所有目标生效）</option>
               <option value="target">单个目标</option>
             </select>
           </label>
           <label v-if="formScope === 'target'" class="field">
             <span class="field-label">目标</span>
-            <select v-model.number="formTargetId" class="control-select" @change="onFormScopeChange">
+            <select v-model.number="formTargetId" class="dp-select" @change="onFormScopeChange">
               <option v-for="target in targets" :key="target.id" :value="target.id">{{ target.name }}</option>
             </select>
           </label>
           <label class="field">
             <span class="field-label">指标</span>
-            <select v-model="formMetricKey" class="control-select" @change="onFormMetricChange">
+            <select v-model="formMetricKey" class="dp-select" @change="onFormMetricChange">
               <option v-for="info in availableMetricKeys" :key="info.key" :value="info.key">
                 {{ info.displayName }}（{{ info.key }}）
               </option>
@@ -492,35 +492,35 @@ onMounted(async () => {
           </label>
           <label class="field">
             <span class="field-label">规则类型</span>
-            <select v-model="formRuleType" class="control-select">
+            <select v-model="formRuleType" class="dp-select">
               <option v-for="t in formUsableTypes" :key="t.typeId" :value="t.typeId">{{ t.displayName }}</option>
             </select>
           </label>
           <p v-if="ruleTypeOf(formRuleType)" class="field-hint">{{ ruleTypeOf(formRuleType)!.description }}</p>
           <label v-if="formRuleType === 'threshold_above' || formRuleType === 'threshold_below'" class="field">
             <span class="field-label">阈值</span>
-            <input v-model="formThreshold" type="number" step="any" class="control-input" />
+            <input v-model="formThreshold" type="number" step="any" class="dp-input" />
           </label>
           <label v-if="formRuleType === 'no_data'" class="field">
             <span class="field-label">无数据判定时长（分钟）</span>
-            <input v-model="formMinutes" type="number" min="1" max="1440" class="control-input" />
+            <input v-model="formMinutes" type="number" min="1" max="1440" class="dp-input" />
           </label>
           <label v-if="formRuleType === 'state_mismatch'" class="field">
             <span class="field-label">期望状态值（bool 写 true/false）</span>
-            <input v-model="formExpected" type="text" class="control-input" placeholder="如 true / online" />
+            <input v-model="formExpected" type="text" class="dp-input" placeholder="如 true / online" />
           </label>
           <label class="field">
             <span class="field-label">持续窗口（秒，0 = 判定即告警）</span>
-            <input v-model="formSustain" type="number" min="0" max="86400" class="control-input" />
+            <input v-model="formSustain" type="number" min="0" max="86400" class="dp-input" />
           </label>
           <label class="field">
             <span class="field-label">重发间隔（分钟，0 = 恢复前只发一次）</span>
-            <input v-model="formRepeat" type="number" min="0" max="1440" class="control-input" />
+            <input v-model="formRepeat" type="number" min="0" max="1440" class="dp-input" />
           </label>
           <p v-if="formError" class="error-note">{{ formError }}</p>
           <div class="dialog-actions">
-            <button type="button" class="ghost-button" @click="showRuleForm = false">取消</button>
-            <button type="button" class="primary-button" :disabled="formSubmitting || formUsableTypes.length === 0" @click="submitRule">
+            <button type="button" class="dp-btn dp-btn-ghost" @click="showRuleForm = false">取消</button>
+            <button type="button" class="dp-btn dp-btn-primary" :disabled="formSubmitting || formUsableTypes.length === 0" @click="submitRule">
               {{ formSubmitting ? '创建中…' : '创建规则' }}
             </button>
           </div>
@@ -540,7 +540,7 @@ onMounted(async () => {
               v-if="editParamKey === 'expected'"
               v-model="editValue"
               type="text"
-              class="control-input"
+              class="dp-input"
               placeholder="如 true / online"
             />
             <input
@@ -549,14 +549,14 @@ onMounted(async () => {
               type="number"
               min="1"
               max="1440"
-              class="control-input"
+              class="dp-input"
             />
-            <input v-else v-model="editValue" type="number" step="any" class="control-input" />
+            <input v-else v-model="editValue" type="number" step="any" class="dp-input" />
           </label>
           <p v-if="editError" class="error-note">{{ editError }}</p>
           <div class="dialog-actions">
-            <button type="button" class="ghost-button" @click="showEditForm = false">取消</button>
-            <button type="button" class="primary-button" :disabled="editSubmitting" @click="submitEditRule">
+            <button type="button" class="dp-btn dp-btn-ghost" @click="showEditForm = false">取消</button>
+            <button type="button" class="dp-btn dp-btn-primary" :disabled="editSubmitting" @click="submitEditRule">
               {{ editSubmitting ? '保存中…' : '保存' }}
             </button>
           </div>
@@ -569,26 +569,26 @@ onMounted(async () => {
       <div class="form-grid">
         <label class="control-field">
           <span class="control-label">OneBot HTTP 地址</span>
-          <input v-model="napcatBaseUrl" type="url" class="control-input" placeholder="如 http://127.0.0.1:3000" />
+          <input v-model="napcatBaseUrl" type="url" class="dp-input" placeholder="如 http://127.0.0.1:3000" />
         </label>
         <label class="control-field">
           <span class="control-label">access token{{ napcat?.tokenSet ? '（已设置，留空保持不变）' : '' }}</span>
-          <input v-model="napcatToken" type="password" class="control-input" placeholder="napcat access_token" />
+          <input v-model="napcatToken" type="password" class="dp-input" placeholder="napcat access_token" />
         </label>
         <label class="control-field">
           <span class="control-label">通知目标类型</span>
-          <select v-model="napcatTargetType" class="control-select">
+          <select v-model="napcatTargetType" class="dp-select">
             <option value="private">私聊（QQ 号）</option>
             <option value="group">群聊（群号）</option>
           </select>
         </label>
         <label class="control-field">
           <span class="control-label">通知目标 ID</span>
-          <input v-model="napcatTargetId" type="text" class="control-input" placeholder="QQ 号或群号（数字）" />
+          <input v-model="napcatTargetId" type="text" class="dp-input" placeholder="QQ 号或群号（数字）" />
         </label>
       </div>
       <div class="card-actions">
-        <button type="button" class="primary-button" :disabled="savingNapcat" @click="onSaveNapcat">
+        <button type="button" class="dp-btn dp-btn-primary" :disabled="savingNapcat" @click="onSaveNapcat">
           {{ savingNapcat ? '保存中…' : '保存渠道配置' }}
         </button>
         <span v-if="napcatMessage" class="ok-note">{{ napcatMessage }}</span>
@@ -600,12 +600,12 @@ onMounted(async () => {
       <h2 class="card-title">
         待发队列
         <span class="queue-count">{{ queue?.count ?? 0 }} 条</span>
-        <button type="button" class="link-button" :disabled="loadingQueue" @click="loadQueue">
+        <button type="button" class="link-button dp-touch-inline" :disabled="loadingQueue" @click="loadQueue">
           {{ loadingQueue ? '刷新中…' : '刷新' }}
         </button>
       </h2>
       <span v-if="queueError" class="error-note">{{ queueError }}</span>
-      <table v-if="queue && queue.items.length > 0" class="override-table">
+      <table v-if="queue && queue.items.length > 0" class="dp-table">
         <thead>
           <tr>
             <th>时间</th>
@@ -625,32 +625,32 @@ onMounted(async () => {
           </tr>
         </tbody>
       </table>
-      <p v-else class="card-note">队列空闲：napcat 正常或暂无待补发的告警。</p>
+      <p v-else class="dp-empty">队列空闲：napcat 正常或暂无待补发的告警。</p>
     </section>
 
     <section class="card">
       <h2 class="card-title">
         告警历史
         <span class="queue-count">{{ history.length }} 条</span>
-        <button type="button" class="link-button" :disabled="historyLoading" @click="loadHistory">
+        <button type="button" class="link-button dp-touch-inline" :disabled="historyLoading" @click="loadHistory">
           {{ historyLoading ? '刷新中…' : '刷新' }}
         </button>
       </h2>
       <div class="history-filters">
         <label class="history-filter">
           <span class="history-filter-label">目标</span>
-          <select v-model.number="historyTargetId" class="control-select history-filter-control">
+          <select v-model.number="historyTargetId" class="dp-select history-filter-control">
             <option :value="null">全部目标</option>
             <option v-for="target in targets" :key="target.id" :value="target.id">{{ target.name }}</option>
           </select>
         </label>
         <label class="history-filter">
           <span class="history-filter-label">起始时间</span>
-          <input v-model="historyFrom" type="datetime-local" class="control-input history-filter-control" @change="loadHistory" />
+          <input v-model="historyFrom" type="datetime-local" class="dp-input history-filter-control" @change="loadHistory" />
         </label>
       </div>
       <span v-if="historyError" class="error-note">{{ historyError }}</span>
-      <table v-if="history.length > 0" class="override-table">
+      <table v-if="history.length > 0" class="dp-table">
         <thead>
           <tr>
             <th>时间</th>
@@ -687,7 +687,7 @@ onMounted(async () => {
           </tr>
         </tbody>
       </table>
-      <p v-else-if="!historyLoading" class="card-note">暂无告警记录：触发或恢复后这里会保留事件快照（规则、目标、当时值与投递结果）。</p>
+      <p v-else-if="!historyLoading" class="dp-empty">暂无告警记录：触发或恢复后这里会保留事件快照（规则、目标、当时值与投递结果）。</p>
     </section>
   </section>
 </template>
@@ -724,12 +724,6 @@ onMounted(async () => {
   gap: 10px;
 }
 
-.card-note {
-  margin: 8px 0 0;
-  font-size: 0.78rem;
-  color: var(--color-text-light);
-}
-
 .form-grid {
   display: flex;
   flex-wrap: wrap;
@@ -748,40 +742,10 @@ onMounted(async () => {
   color: var(--color-text-light);
 }
 
-.control-input,
-.control-select {
+/* 视觉基元走 dp-input/dp-select 公共类（TOB-403），局部只留布局性约束 */
+.dp-input,
+.dp-select {
   min-width: 220px;
-  padding: 8px 10px;
-  border: 1px solid var(--color-border);
-  border-radius: 8px;
-  background: var(--color-surface);
-  font-size: 0.875rem;
-  color: var(--color-text);
-}
-
-.primary-button {
-  padding: 8px 16px;
-  border: 1px solid var(--color-primary);
-  border-radius: 8px;
-  background: var(--color-primary);
-  color: #fff;
-  font-size: 0.875rem;
-  cursor: pointer;
-}
-
-.primary-button:disabled {
-  opacity: 0.55;
-  cursor: not-allowed;
-}
-
-.ghost-button {
-  padding: 8px 14px;
-  border: 1px solid var(--color-border);
-  border-radius: 8px;
-  background: transparent;
-  color: var(--color-text);
-  font-size: 0.85rem;
-  cursor: pointer;
 }
 
 .card-actions {
@@ -800,25 +764,6 @@ onMounted(async () => {
   font-size: 0.8rem;
   color: var(--color-danger);
   display: inline-block;
-}
-
-.override-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 0.85rem;
-}
-
-.override-table th,
-.override-table td {
-  padding: 8px 10px;
-  border-bottom: 1px solid var(--color-border);
-  text-align: left;
-}
-
-.override-table th {
-  color: var(--color-text-light);
-  font-weight: 500;
-  font-size: 0.78rem;
 }
 
 .row-actions {
@@ -1015,8 +960,8 @@ onMounted(async () => {
   color: var(--color-text-light);
 }
 
-.dialog .control-select,
-.dialog .control-input {
+.dialog .dp-select,
+.dialog .dp-input {
   width: 100%;
   min-width: 0;
   box-sizing: border-box;
@@ -1030,8 +975,8 @@ onMounted(async () => {
 }
 
 @media (max-width: 768px) {
-  .control-input,
-  .control-select {
+  .dp-input,
+  .dp-select {
     min-width: 0;
     width: 100%;
   }

@@ -61,7 +61,7 @@ public sealed class AgentConnectionRegistry
             {
                 _ = existing.Channel.CloseAsync(
                     (int)WebSocketCloseCodes.DuplicateSession,
-                    "该设备已有新连接接入",
+                    "该采集器已有新连接接入",
                     CancellationToken.None);
                 return true;
             }
@@ -104,7 +104,7 @@ public sealed class AgentConnectionRegistry
             return true;
         }
 
-        TryDisconnect(deviceId, WebSocketCloseCodes.DeviceDeleted, "设备已删除");
+        TryDisconnect(deviceId, WebSocketCloseCodes.DeviceDeleted, "采集器已删除");
         return false;
     }
 
