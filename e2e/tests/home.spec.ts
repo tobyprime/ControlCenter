@@ -64,6 +64,13 @@ function cardLocator(page: Page, type: string) {
   return page.locator(`[data-card-type="${type}"]`)
 }
 
+/** 卡片配置里的「采集器」下拉：按 combobox 可访问名精确匹配。
+ * F1 术语统一后指标选项含「采集器在线状态」，getByLabel('采集器') 按标签全文（含选项文本）
+ * 子串匹配会同时命中「指标」下拉，须改用 getByRole 精确名。 */
+function collectorSelect(card: ReturnType<typeof cardLocator>) {
+  return card.getByRole('combobox', { name: '采集器', exact: true })
+}
+
 async function html5Drag(page: Page, sourceSelector: string, targetSelector: string) {
   await page.evaluate(
     ([source, target]) => {
@@ -420,7 +427,7 @@ test.describe('主页指标卡（TOB-368）', () => {
   }
 
   async function configureCard(card: ReturnType<typeof cardLocator>, targetLabel: string, keyLabel: string, windowLabel: string) {
-    await card.getByLabel('采集器').selectOption({ label: targetLabel })
+    await collectorSelect(card).selectOption({ label: targetLabel })
     await card.getByLabel('指标').selectOption({ label: keyLabel })
     if (windowLabel) {
       await card.getByLabel('时间窗').selectOption({ label: windowLabel })
@@ -669,7 +676,7 @@ test.describe('主页指标卡（TOB-368）', () => {
     await page.screenshot({ path: `${EVIDENCE_DIR}/home-metric-card-title.png`, fullPage: true })
 
     // 一期概览卡标题保持类型文案，不受指标卡标题规则影响
-    await expect(cardLocator(page, 'overview-total-devices').locator('.overview-label')).toHaveText('设备总数')
+    await expect(cardLocator(page, 'overview-total-devices').locator('.overview-label')).toHaveText('采集器总数')
 
     // 重新进入编辑：类型文案恢复展示
     await page.getByRole('button', { name: '进入编辑' }).click()
@@ -711,7 +718,7 @@ test.describe('指标来源过滤与移动端抽屉导航（TOB-374）', () => {
     const metricSelect = card.getByLabel('指标')
 
     // 设备来源：出现设备内置指标，不出现服务指标（status / latency_ms）
-    await card.getByLabel('采集器').selectOption({ label: 'TOB374设备机' })
+    await collectorSelect(card).selectOption({ label: 'TOB374设备机' })
     await expect
       .poll(async () => (await metricSelect.locator('option').allTextContents()).join('\n'))
       .not.toContain('latency_ms')
@@ -723,7 +730,7 @@ test.describe('指标来源过滤与移动端抽屉导航（TOB-374）', () => {
 
     // 服务来源：不含设备指标；切换来源后原指标被清空，需按新来源重选
     await metricSelect.selectOption({ label: 'CPU 使用率（cpu）' })
-    await card.getByLabel('采集器').selectOption({ label: 'TOB374服务机' })
+    await collectorSelect(card).selectOption({ label: 'TOB374服务机' })
     await expect(metricSelect).toHaveValue('')
     await expect
       .poll(async () => (await metricSelect.locator('option').allTextContents()).join('\n'))
